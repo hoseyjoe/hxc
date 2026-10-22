@@ -9,7 +9,8 @@ import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.IlMeta;
 
 enum ExternField {
-	XField(sig:IlSigNorm);
+	// initOnly: readonly in C#, which only a constructor may store to or take the address of.
+	XField(sig:IlSigNorm, initOnly:Bool);
 	// A literal, which has no storage: it is loaded as its value.
 	XConstant(c:IlConstant);
 	XProperty(sig:IlSigNorm, getter:Null<String>, setter:Null<String>);
@@ -152,7 +153,7 @@ class ExternMembers {
 	public function field(c:TClass, cf:TClassField):ExternField {
 		var name = memberName(cf);
 		for (link in chain(c)) {
-			for (f in link.cls.cfields) if (f.fname == name) return f.fconstant != null ? XConstant(f.fconstant) : XField(f.fsig.snorm);
+			for (f in link.cls.cfields) if (f.fname == name) return f.fconstant != null ? XConstant(f.fconstant) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
 			for (p in link.cls.cprops) if (p.pname == name) {
 				var t = switch (p.psig.snorm) {
 					case LMethod(_, ret, _): ret;

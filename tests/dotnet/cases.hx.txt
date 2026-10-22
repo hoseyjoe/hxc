@@ -924,3 +924,42 @@ P.hx:26: characters 2-23 : dotnet: instance variable initializers in structs are
 P.hx:30: lines 30-32 : dotnet: struct constructors without arguments that do something are not supported yet
 P.hx:41: characters 3-15 : dotnet: assignments to fields of struct values are not supported yet
 P.hx:42: characters 15-35 : dotnet: the == operator on these types is not supported yet
+--- readonly-net-struct-fields
+class P {
+	static function main() {
+		var t = cs.system.TimeSpan.Zero.Add(cs.system.TimeSpan.FromSeconds(90));
+		Sys.println(t.TotalMinutes);
+		Sys.println(cs.system.TimeSpan.Zero.Add(cs.system.TimeSpan.FromMinutes(3)).TotalSeconds);
+		Sys.println(cs.system.DateTime.MinValue.AddDays(1).Day);
+	}
+}
+===
+[run]
+1.5
+180
+2
+# make().a.x++ is not an error: the typer hoists make().a into a local first, so gencs emits the same copy.
+--- stores-through-temporary-structs
+@:struct class Vec {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function bump():Void x++;
+}
+@:struct class Pair {
+	public var a:Vec;
+	public function new(a:Vec) this.a = a;
+}
+class P {
+	static function make():Pair return new Pair(new Vec(1));
+	static function main() {
+		make().a.x = 2;
+		make().a.x++;
+		make().a.x += 3;
+		make().a.bump();
+		Sys.println(make().a.x);
+	}
+}
+===
+[compile]
+P.hx:13: characters 3-17 : dotnet: assignments to fields of struct values are not supported yet
+P.hx:15: characters 3-18 : dotnet: assignments to fields of struct values are not supported yet

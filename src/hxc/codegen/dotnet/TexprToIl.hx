@@ -347,8 +347,9 @@ class TexprToIl {
 				var inst = instantiation(c, fa);
 				var parent = parentOf(c, inst);
 				switch (g.externs.field(c, cf)) {
-					case XField(open):
+					case XField(open, initOnly):
 						var s = ExternMembers.subst(open, inst);
+						if (initOnly) throw new Unsupported("assignments to read-only .NET fields", true);
 						if (needVal(ret)) throw new Unsupported("the value of an assignment to a .NET field", false);
 						if (!isStatic) receiver(obj, parent);
 						texpr(RValue(s), rhs);
@@ -904,7 +905,7 @@ class TexprToIl {
 			texpr(RValue(parent), obj);
 			return;
 		}
-		if (pushAddress(obj)) return;
+		if (pushAddress(obj, forStore)) return;
 		// A value with no home, such as a call's result: C# works on a copy too.
 		if (forStore) throw new Unsupported("assignments to fields of struct values", true);
 		texpr(RValue(parent), obj);
@@ -915,8 +916,9 @@ class TexprToIl {
 
 	// Pushes the address of the value-type variable `e` names, as C# takes it for a member access: a
 	// local, an argument, a struct's `this`, or an instance or static field (of a field, and so on).
-	// False, with nothing pushed, for anything else.
-	function pushAddress(e:TExpr):Bool {
+	// False, with nothing pushed, for anything else, and for a readonly .NET field, which C# copies. With
+	// `forStore`, a chain that starts at a value with no home throws, as C# rejects a store to it.
+	function pushAddress(e:TExpr, forStore:Bool):Bool {
 		switch (strip(e).expr) {
 			case TLocal(v):
 				var s = slot(v);
@@ -927,7 +929,7 @@ class TexprToIl {
 				return true;
 			case TField(obj, FInstance(c, _, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
 				var f = instanceField(c, cf);
-				receiver(obj, f.owner);
+				receiver(obj, f.owner, forStore);
 				code.opToken(IlOps.LDFLDA, f.token, 1, 1);
 				return true;
 			case TField(_, FStatic(c, cf)) if (!isExtern(c) && cf.kind.match(Var(_))):
@@ -935,10 +937,10 @@ class TexprToIl {
 				return true;
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c) && cf.kind.match(Var(_))):
 				switch (g.externs.field(c, cf)) {
-					case XField(open):
+					case XField(open, false):
 						var isStatic = fa.match(FStatic(_, _));
 						var parent = parentOf(c, instantiation(c, fa));
-						if (!isStatic) receiver(obj, parent);
+						if (!isStatic) receiver(obj, parent, forStore);
 						var token = g.mb.memberRef(g.typeTokenOf(parent), ExternMembers.memberName(cf), g.sigs.field(open));
 						code.opToken(isStatic ? IlOps.LDSFLDA : IlOps.LDFLDA, token, isStatic ? 0 : 1, 1);
 						return true;
@@ -1020,7 +1022,7 @@ class TexprToIl {
 						if (!isStatic) throw new Unsupported("instance .NET constants", true);
 						var s = constant(k);
 						coerce(s, ret);
-					case XField(open):
+					case XField(open, _):
 						if (!isStatic) receiver(obj, parent);
 						var token = g.mb.memberRef(g.typeTokenOf(parent), ExternMembers.memberName(cf), g.sigs.field(open));
 						code.opToken(isStatic ? IlOps.LDSFLD : IlOps.LDFLD, token, isStatic ? 0 : 1, 1);
