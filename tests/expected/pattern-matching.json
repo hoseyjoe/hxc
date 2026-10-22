@@ -1,0 +1,5 @@
+{
+	"abstract-over-enum-switch-is-exhaustive": "",
+	"abstract-over-enum-switch-missing-a-constructor": "P.hx:5: characters 10-11 : Unmatched patterns: EQ\nP.hx:4: lines 4-9 : Missing return: Int",
+	"abstract-over-enum-value-switch": ""
+}

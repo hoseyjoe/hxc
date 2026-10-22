@@ -1,0 +1,33 @@
+--- abstract-over-enum-switch-is-exhaustive
+enum OrderingImpl { LT; GT; EQ; }
+abstract Ordering(OrderingImpl) from OrderingImpl to OrderingImpl {}
+class P {
+	static function f(c:Ordering):Int {
+		switch c {
+			case LT: return 1;
+			case GT: return 2;
+			case EQ: return 3;
+		}
+	}
+	static function main() { trace(f(GT)); }
+}
+
+--- abstract-over-enum-switch-missing-a-constructor
+enum OrderingImpl { LT; GT; EQ; }
+abstract Ordering(OrderingImpl) from OrderingImpl to OrderingImpl {}
+class P {
+	static function f(c:Ordering):Int {
+		switch c {
+			case LT: return 1;
+			case GT: return 2;
+		}
+	}
+	static function main() { trace(f(GT)); }
+}
+
+--- abstract-over-enum-value-switch
+enum OrderingImpl { LT; GT; EQ; }
+abstract Ordering(OrderingImpl) from OrderingImpl to OrderingImpl {}
+class P {
+	static function main() { var c:Ordering = EQ; trace(switch c { case LT: 1; case GT: 2; case EQ: 3; }); }
+}

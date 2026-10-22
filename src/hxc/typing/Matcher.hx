@@ -1996,14 +1996,10 @@ class TexprConverter {
 				var effT = effectiveSubjectType(subject, cases);
 				var unmatched = unmatchedFiniteCoverage(ctx.com, effT, cases);
 				var complete = unmatched != null && unmatched.length == 0;
-				// Only a run-time-finite subject (a true enum or Bool) can drop its default branch; an enum
-				// abstract is compile-time finite, so a runtime value can be out of range and a user
-				// default must be kept.
-				var runtimeFinite = switch (TypeFunctions.follow(effT)) {
-					case TEnum(_, _): true;
-					case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): true;
-					case _: false;
-				};
+				// Only a run-time-finite subject (a true enum or Bool, or a non-core abstract over one) can
+				// drop its default branch; an enum abstract is compile-time finite, so a runtime value can be
+				// out of range and a user default must be kept.
+				var runtimeFinite = finitenessOf(effT) == FRunTimeFinite;
 				function reportUnmatched():Void {
 					var s = if (unmatched == null || unmatched.length == 0) "_" else {
 						hxc.core.StringSort.sort(unmatched);
@@ -2029,11 +2025,7 @@ class TexprConverter {
 						var subT = effectiveSubjectType(sub, subCases);
 						var subUnmatched = unmatchedFiniteCoverage(ctx.com, subT, subCases);
 						var subComplete = subUnmatched != null && subUnmatched.length == 0;
-						var subRuntimeFinite = switch (TypeFunctions.follow(subT)) {
-							case TEnum(_, _): true;
-							case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Bool"): true;
-							case _: false;
-						};
+						var subRuntimeFinite = finitenessOf(subT) == FRunTimeFinite;
 						(subComplete && subRuntimeFinite) ? false : hasFail(dflt);
 					case Leaf(_): false;
 				};
