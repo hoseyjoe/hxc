@@ -7448,10 +7448,11 @@ class Typer {
 		// typed.
 		var ctorTypes = findConstructorTypes(ctx, c, tl);
 		if (ctorTypes.length == 0) throw new TypingError(hxc.core.Globals.sTypePath(noConstructorPath(c)) + " does not have a constructor", p);
-		// Several constructors resolve as the overloads of a field call do. Only a constructor the class
-		// declares itself does: an inherited one keeps the retry below.
-		if (ctorTypes.length > 1 && c.constructor != null) {
-			var fa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(c), p), c.constructor, FHInstance(c, tl), false, p);
+		// Several constructors resolve as the overloads of a field call do. An inherited constructor is the
+		// nearest one up the chain, hosted on the class being constructed, so the whole-chain map
+		// specializes its signatures.
+		if (ctorTypes.length > 1) {
+			var fa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(c), p), superConstructor(c), FHInstance(c, tl), false, p);
 			var res = Calls.resolveFieldCall(ctx, fa, el, p, null, false, null, null, true);
 			Fields.checkConstructorAccess(ctx, c, res.cf, p);
 			var args = switch (TypeFunctions.follow(res.tf)) {
@@ -7460,7 +7461,7 @@ class Typer {
 			};
 			return {r: {el: res.args, tfunc: res.tf}, chosenArgs: args};
 		}
-		// Try each constructor signature, first success wins (overload retry).
+		// Otherwise the class has a single constructor signature.
 		var r:Dynamic = null;
 		var firstError:Null<Dynamic> = null;
 		var chosenArgs:Null<Array<hxc.core.Type.TSignatureArg>> = null;
@@ -7493,15 +7494,7 @@ class Typer {
 				if (firstError == null) firstError = e;
 			} catch (e:TypingError) {
 				if (firstFailCf == null && hoverFound != outerHover) firstFailCf = candidate(chosenIdx);
-				// A constructor resolves like a field call, whose overload attempts raise a candidate's
-				// unknown identifier alone.
-				if (ctorTypes.length > 1 && Std.isOfType(e, hxc.core.TypingError.CallError)) {
-					var u = (cast e : hxc.core.TypingError.CallError).unknownIdent;
-					if (u != null) throw new TypingError(u.message, u.pos, u.depth);
-				}
-				var prevError:Null<TypingError> = firstError == null ? null : try cast(firstError, TypingError) catch (_:Dynamic) null;
-				var prevMsg = prevError == null ? "" : prevError.message;
-				if (firstError == null || StringTools.startsWith(prevMsg, "Too many arguments") || StringTools.startsWith(prevMsg, "Not enough arguments")) firstError = e;
+				if (firstError == null) firstError = e;
 			}
 		}
 		if (r == null) {

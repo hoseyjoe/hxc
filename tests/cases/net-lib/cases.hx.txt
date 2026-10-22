@@ -163,3 +163,23 @@ class P { static function main() { new fixture.Ambiguous(null); } }
 
 --- protected-constructor-overload
 class P { static function main() { new fixture.Guarded(); new fixture.Guarded(1); } }
+
+--- inherited-constructor-overload-mismatch-error
+class E extends cs.system.Exception {}
+class P { static function main() { new E(1.5); } }
+
+--- inherited-constructor-overloads-resolve
+class E extends cs.system.Exception {}
+class P { static function main() { $type(new E()); $type(new E("m")); $type(new E("m", new cs.system.Exception())); } }
+
+--- inherited-fixture-constructor-overloads
+class Sub extends fixture.Plain {}
+class P { static function main() { $type(new Sub(3)); $type(new Sub()); new Sub("s"); } }
+
+--- inherited-ambiguous-constructor-overload
+class Sub extends fixture.Ambiguous {}
+class P { static function main() { new Sub("s"); new Sub(null); } }
+
+--- inherited-protected-constructor-overload
+class G extends fixture.Guarded {}
+class P { static function main() { new G(); new G(1); } }
