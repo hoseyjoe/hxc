@@ -1348,8 +1348,13 @@ class Operators {
 			case TAbstract(a, tl) if (a.impl != null):
 				for (au in a.unops) {
 					if (au.op != op || au.flag != flag) continue;
-					var sig = switch (TypeFunctions.follow(TypeFunctions.applyParams(a.params, tl, au.cf.type))) { case TFun(s): s; case _: null; };
-					var ret = sig != null ? sig.ret : e.type;
+					// The field's own params become monomorphs, and the overload is taken when its type is a
+					// function of the operand (of the abstract's this for an instance one), which binds them.
+					var ret = TypeFunctions.mkMono();
+					var monos = [for (_ in au.cf.params) TypeFunctions.mkMono()];
+					var tcf = TypeFunctions.applyParams(a.params, tl, TypeFunctions.applyParams(au.cf.params, monos, au.cf.type));
+					var targ = TypeFunctions.hasClassFieldFlag(au.cf, CfImpl) ? TypeFunctions.applyParams(a.params, tl, a.thisType) : e.type;
+					if (!TypeUnification.typeIseqDefault(TFun(new TSignature([new TSignatureArg("", false, targ)], ret)), tcf)) continue;
 					if (au.cf.expr == null) hxc.typing.TypeFields.forceFieldBody(ctx.com, a.impl, au.cf);
 					// Only an @:op with no body is the plain unop. One whose body a display request leaves untyped
 					// still has an expression there - an @:op field is given a stand-in body because its presence
@@ -1358,6 +1363,7 @@ class Operators {
 						return TypeFunctions.mk(TUnop(op, flag, e), ret, p);
 					var implExpr = hxc.core.TexprTools.makeStaticThis(a.impl, p);
 					var fieldExpr = FieldAccessTools.getFieldExpr(FieldAccessTools.create(implExpr, au.cf, FHStatic(a.impl), false, p), FCall);
+					fieldExpr = TypeFunctions.mk(fieldExpr.expr, tcf, fieldExpr.pos);
 					return Calls.makeCall(ctx, fieldExpr, [e], ret, p);
 				}
 			case _:
