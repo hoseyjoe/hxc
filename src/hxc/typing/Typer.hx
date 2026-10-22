@@ -1722,6 +1722,8 @@ class Typer {
 			var args:Array<TFuncArg> = [];
 			for (fa in f.fArgs) {
 				var at = Typeload.loadTypeHint(ctx.com, ctx.typeParams, fa.type, fa.opt);
+				// A null default makes the argument nullable, as for a field's arguments.
+				if (!fa.opt && fa.value != null && fa.value.expr.match(EConst(CIdent("null")))) at = ctx.com.basic.tnull(at);
 				// Every function argument, local functions included, is allocated as VUser(TVOArgument).
 				// Tail-recursion elimination keys all three of its checks off that kind (captured
 				// arguments, the tail-recursion assign arm, the argument-local test), so treating a local
