@@ -63,6 +63,7 @@ class IlOps {
 	public static inline var LDFLDA = 0x7C;
 	public static inline var STFLD = 0x7D;
 	public static inline var LDSFLD = 0x7E;
+	public static inline var LDSFLDA = 0x7F;
 	public static inline var STSFLD = 0x80;
 	public static inline var BOX = 0x8C;
 	public static inline var UNBOX_ANY = 0xA5;

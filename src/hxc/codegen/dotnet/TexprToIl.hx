@@ -904,18 +904,49 @@ class TexprToIl {
 			texpr(RValue(parent), obj);
 			return;
 		}
-		switch (strip(obj).expr) {
+		if (pushAddress(obj)) return;
+		// A value with no home, such as a call's result: C# works on a copy too.
+		if (forStore) throw new Unsupported("assignments to fields of struct values", true);
+		texpr(RValue(parent), obj);
+		var tmp = code.addLocal(parent);
+		code.stloc(tmp);
+		code.ldloca(tmp);
+	}
+
+	// Pushes the address of the value-type variable `e` names, as C# takes it for a member access: a
+	// local, an argument, a struct's `this`, or an instance or static field (of a field, and so on).
+	// False, with nothing pushed, for anything else.
+	function pushAddress(e:TExpr):Bool {
+		switch (strip(e).expr) {
 			case TLocal(v):
 				var s = slot(v);
 				if (s.arg) code.ldarga(s.index) else code.ldloca(s.index);
+				return true;
 			case TConst(TThis) if (thisSig != null && DotnetTypes.isValueType(thisSig)):
 				code.ldarg(0);
+				return true;
+			case TField(obj, FInstance(c, _, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
+				var f = instanceField(c, cf);
+				receiver(obj, f.owner);
+				code.opToken(IlOps.LDFLDA, f.token, 1, 1);
+				return true;
+			case TField(_, FStatic(c, cf)) if (!isExtern(c) && cf.kind.match(Var(_))):
+				code.opToken(IlOps.LDSFLDA, staticField(c, cf).token, 0, 1);
+				return true;
+			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c) && cf.kind.match(Var(_))):
+				switch (g.externs.field(c, cf)) {
+					case XField(open):
+						var isStatic = fa.match(FStatic(_, _));
+						var parent = parentOf(c, instantiation(c, fa));
+						if (!isStatic) receiver(obj, parent);
+						var token = g.mb.memberRef(g.typeTokenOf(parent), ExternMembers.memberName(cf), g.sigs.field(open));
+						code.opToken(isStatic ? IlOps.LDSFLDA : IlOps.LDFLDA, token, isStatic ? 0 : 1, 1);
+						return true;
+					case _:
+						return false;
+				}
 			case _:
-				if (forStore) throw new Unsupported("assignments to fields of struct values", true);
-				texpr(RValue(parent), obj);
-				var tmp = code.addLocal(parent);
-				code.stloc(tmp);
-				code.ldloca(tmp);
+				return false;
 		}
 	}
 

@@ -790,3 +790,137 @@ P.hx:6: characters 2-50 : dotnet: overrides that change the signature are not su
 P.hx:9: characters 2-12 : dotnet: interface variables are not supported yet
 P.hx:16: characters 15-28 : dotnet: B (left out: overrides that change the signature) is not supported yet
 P.hx:18: characters 23-24 : dotnet: casts to instances of generic classes are not supported yet
+--- struct-mutation-through-fields
+@:struct class Vec {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function bump():Void x++;
+}
+@:struct class Pair {
+	public var a:Vec;
+	public function new(a:Vec) this.a = a;
+}
+class Holder {
+	public static var shared = new Vec(10);
+	public var vec:Vec;
+	public var pair:Pair;
+	public function new() {
+		vec = new Vec(1);
+		pair = new Pair(new Vec(100));
+	}
+	public function bumpOwn():Void this.vec.bump();
+}
+class P {
+	static function make():Vec return new Vec(50);
+	static function main() {
+		var o = new Holder();
+		o.vec.bump();
+		o.bumpOwn();
+		Holder.shared.bump();
+		o.pair.a.bump();
+		var p = new Pair(new Vec(7));
+		p.a.bump();
+		p.a.x += 2;
+		o.pair.a.x++;
+		Holder.shared.x += 5;
+		make().bump();
+		Sys.println(o.vec.x + " " + Holder.shared.x + " " + o.pair.a.x + " " + p.a.x + " " + make().x);
+	}
+}
+===
+[run]
+3 16 102 10 50
+--- initializers-before-the-base-constructor
+class Base {
+	public function new() {
+		Sys.println("Base.new sees " + describe());
+	}
+	public function describe():String return "base";
+}
+class Implicit extends Base {
+	public var x = P.log("Implicit.x");
+	public var y = P.log("Implicit.y");
+	override public function describe():String return "x=" + x;
+}
+class Explicit extends Base {
+	public var z = P.log("Explicit.z");
+	public function new() {
+		P.log("Explicit body");
+		super();
+	}
+	override public function describe():String return "z=" + z;
+}
+class P {
+	public static function log(s:String):String {
+		Sys.println(s);
+		return s;
+	}
+	static function main() {
+		new Implicit();
+		new Explicit();
+	}
+}
+===
+[run]
+Implicit.y
+Implicit.x
+Base.new sees x=Implicit.x
+Explicit.z
+Explicit body
+Base.new sees z=Explicit.z
+--- class-and-struct-declaration-errors
+interface Named {
+	function name():Dynamic;
+}
+class Wide implements Named {
+	public function new() {}
+	public function name():String return "w";
+}
+interface Plain {
+	function name():String;
+}
+class FinalBase {
+	public function new() {}
+	public final function name():String return "b";
+}
+class FromFinal extends FinalBase implements Plain {}
+class Enumer implements cs.system.collections.IEnumerator {
+	public var Current(get, never):Dynamic;
+	public function get_Current():Dynamic return null;
+	public function new() {}
+	public function MoveNext():Bool return false;
+	public function Reset():Void {}
+}
+@:keep class Reader extends cs.system.io.StringReader {}
+@:struct class SExt extends FinalBase {}
+@:struct class SInit {
+	public var x:Int = 1;
+}
+@:struct class SCtor {
+	public var x:Int;
+	public function new() {
+		x = 1;
+	}
+}
+@:struct class V {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+}
+class P {
+	static function make():V return new V(1);
+	static function main() {
+		make().x = 2;
+		Sys.println(new V(1) == new V(1));
+	}
+}
+===
+[compile]
+P.hx:4: lines 4-7 : dotnet: interface methods implemented with other types are not supported yet
+P.hx:15: characters 1-54 : dotnet: interface methods implemented by a final inherited method are not supported yet
+P.hx:16: lines 16-22 : dotnet: properties of .NET interfaces are not supported yet
+P.hx:23: characters 8-57 : dotnet: a base class without a parameterless constructor is not supported yet
+P.hx:24: characters 10-41 : dotnet: structs that extend a class are not supported yet
+P.hx:26: characters 2-23 : dotnet: instance variable initializers in structs are not supported yet
+P.hx:30: lines 30-32 : dotnet: struct constructors without arguments that do something are not supported yet
+P.hx:41: characters 3-15 : dotnet: assignments to fields of struct values are not supported yet
+P.hx:42: characters 15-35 : dotnet: the == operator on these types is not supported yet

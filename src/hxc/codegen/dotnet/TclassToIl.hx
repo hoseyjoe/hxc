@@ -646,6 +646,17 @@ class TclassToIl {
 		return {expr: TBlock(el.slice(0, first).concat(inits).concat(el.slice(first))), type: body.type, pos: body.pos};
 	}
 
+	// For a constructor without super(...): the initializers, then the base type's parameterless
+	// constructor, as init_funcs puts them before the super() of a cloned or empty constructor; under a
+	// .NET base, whose constructor C# runs first, the other way round.
+	static function initsAndBaseCtor(g:DotnetCtx, plan:ClassPlan, code:IlCode, lower:TexprToIl):Void {
+		var inits = plan.c == null ? [] : fieldInits(plan.c);
+		var native = plan.c != null && descendsFromNative(plan.c);
+		if (native) baseCtor(g, plan, code);
+		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: plan.c.pos});
+		if (!native) baseCtor(g, plan, code);
+	}
+
 	static function emitMethod(g:DotnetCtx, plan:ClassPlan, m:MethodPlan):Void {
 		// Abstract and interface methods have no body.
 		if (m.flags & MethodAttrs.ABSTRACT != 0) return;
@@ -660,8 +671,7 @@ class TclassToIl {
 		try {
 			g.types.inParams(plan.classParams, [], () -> switch (m.kind) {
 				case MImplicitCtor:
-					baseCtor(g, plan, code);
-					if (plan.c != null) statement(lower, RVoid, {expr: TBlock(fieldInits(plan.c)), type: TypeFunctions.tDynamic, pos: plan.c.pos});
+					initsAndBaseCtor(g, plan, code, lower);
 					if (failures.length == 0) lower.finish();
 				case MToString(cf):
 					if (plan.classParams.length > 0) throw new Unsupported("instance members of generic classes", true, m.pos);
@@ -682,8 +692,7 @@ class TclassToIl {
 						}
 						var body = tf.expr;
 						if (m.name == ".ctor") {
-							if (!plan.isStruct && !hasSuperCall(body)) baseCtor(g, plan, code);
-							body = withInits(plan.c, body);
+							if (!plan.isStruct && !hasSuperCall(body)) initsAndBaseCtor(g, plan, code, lower) else body = withInits(plan.c, body);
 						}
 						statement(lower, RReturn, body);
 						if (failures.length == 0) lower.finish();
