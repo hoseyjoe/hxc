@@ -1449,10 +1449,9 @@ class ModuleLoader {
 						fieldError("Variable requires type-hint or initialization", cff.cffName.pos);
 					case FProp(_, _, th, e) if (th == null && e == null):
 						throw new ContextError("Property requires type-hint or initialization", cff.cffPos);
-					// Variable initializers infer their types; only functions and properties require explicit
-					// hints here.
-					case FVar(_, _):
-					case FProp(_, _, th, _): requireHint(th, cff.cffPos);
+					// Initializers infer their types, a property's too: only functions require explicit hints
+					// here.
+					case FVar(_, _) | FProp(_, _, _, _):
 				}
 			}
 			// Handle __init__ separately from ordinary extern-expression warnings.
