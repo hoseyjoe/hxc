@@ -407,3 +407,47 @@ class P {
 [compile]
 P.hx:6: characters 12-25 : dotnet: local functions are not supported yet
 P.hx:9: characters 17-20 : dotnet: array literals are not supported yet
+--- jumps-inside-expressions-are-errors
+class P {
+	static var n = 3;
+	static function add(a:Int, b:Int):Int return a + b;
+	@:analyzer(ignore) static function early(c:Bool):Int {
+		var x = 1;
+		x += (c ? 1 : return 0);
+		return x;
+	}
+	@:analyzer(ignore) static function main() {
+		var total = 0;
+		var i = 0;
+		while (i < n) {
+			i++;
+			total += switch (i) {
+				case 1: continue;
+				case k: k;
+			}
+			total = add(total, i > 2 ? 1 : break);
+		}
+		Sys.println(total + early(true));
+	}
+}
+===
+[compile]
+P.hx:6: characters 17-25 : dotnet: `return` inside expressions is not supported yet
+P.hx:15: characters 13-21 : dotnet: `continue` inside expressions is not supported yet
+P.hx:18: characters 35-40 : dotnet: `break` inside expressions is not supported yet
+--- dynamic-conditions-are-errors
+class P {
+	static function main() {
+		var d:Dynamic = null;
+		if (d) Sys.println("then");
+		Sys.println(!d);
+		Sys.println(Std.int(d));
+		while (d) {}
+	}
+}
+===
+[compile]
+P.hx:4: characters 3-29 : dotnet: Dynamic as a condition is not supported yet
+P.hx:5: characters 15-17 : dotnet: Dynamic with the ! operator is not supported yet
+P.hx:6: characters 15-25 : dotnet: Dynamic in Std.int is not supported yet
+P.hx:7: characters 3-15 : dotnet: Dynamic as a condition is not supported yet

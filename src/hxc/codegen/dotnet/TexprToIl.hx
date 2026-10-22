@@ -173,8 +173,11 @@ class TexprToIl {
 			case TBlock(el):
 				block(ret, el);
 			case TReturn(null):
+				// A branch out of an expression would leave its operands on the stack.
+				if (code.depth != 0) throw new Unsupported("`return` inside expressions", false);
 				code.op(IlOps.RET, 0, 0);
 			case TReturn(e1):
+				if (code.depth != 0) throw new Unsupported("`return` inside expressions", false);
 				texpr(RValue(this.ret), e1);
 				code.op(IlOps.RET, 1, 0);
 			case TParenthesis(e1) | TMeta(_, e1):
@@ -200,9 +203,12 @@ class TexprToIl {
 				switchExpr(ret, e, subject, cases, def);
 			case TBreak:
 				if (loops.length == 0) throw new Unsupported("`break` outside a loop", false);
+				// The loop's labels are reached with an empty stack.
+				if (code.depth != 0) throw new Unsupported("`break` inside expressions", false);
 				code.branch(IlOps.BR, loops[loops.length - 1].brk);
 			case TContinue:
 				if (loops.length == 0) throw new Unsupported("`continue` outside a loop", false);
+				if (code.depth != 0) throw new Unsupported("`continue` inside expressions", false);
 				code.branch(IlOps.BR, loops[loops.length - 1].cont);
 			case TField(obj, fa):
 				fieldRead(ret, e, obj, fa);
@@ -346,6 +352,12 @@ class TexprToIl {
 		var s = sig(e.type);
 		if (!isNumeric(s)) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		return s;
+	}
+
+	// Dynamic reaches Bool and Float through Runtime.toBool and toDouble in gencs, which are not
+	// ported yet.
+	function noDynamic(e:TExpr, what:String):Void {
+		if (sig(strip(e).type).match(LObject)) throw new Unsupported(what, false);
 	}
 
 	function binary(ret:Ret, e:TExpr, op:Binop, e1:TExpr, e2:TExpr):Void {
@@ -497,6 +509,8 @@ class TexprToIl {
 			case TConst(TBool(b)):
 				if (b == sense) code.branch(IlOps.BR, l);
 			case _:
+				// Dynamic would need Runtime.toBool (null is false); an unbox here would throw.
+				noDynamic(e, "Dynamic as a condition");
 				texpr(RValue(LBool), e);
 				code.branch(sense ? IlOps.BRTRUE : IlOps.BRFALSE, l);
 		}
@@ -521,6 +535,7 @@ class TexprToIl {
 	function unary(ret:Ret, e:TExpr, op:Unop, flag:UnopFlag, e1:TExpr):Void {
 		switch (op) {
 			case Not:
+				noDynamic(e1, "Dynamic with the ! operator");
 				texpr(RValue(LBool), e1);
 				not();
 				coerce(LBool, ret);
@@ -997,6 +1012,7 @@ class TexprToIl {
 		switch (callee.expr) {
 			case TField(_, FStatic(c, cf)) if (isStd(c) && cf.name == "int" && args.length == 1):
 				// As gencs writes Std.int: a C# cast.
+				noDynamic(args[0], "Dynamic in Std.int");
 				texpr(RValue(LFloat64), args[0]);
 				code.op(IlOps.CONV_I4, 1, 1);
 				coerce(LInt32, ret);
