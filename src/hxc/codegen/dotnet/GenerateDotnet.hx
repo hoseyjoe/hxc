@@ -20,6 +20,7 @@ class DotnetCtx {
 	public final sigs:SigWriter;
 	public final externs:ExternMembers;
 	public final methodTokens = new ObjectMap<TClassField, Int>();
+	public final methodPlans = new ObjectMap<TClassField, MethodPlan>();
 	public final methodSigs = new ObjectMap<TClassField, {ret:IlSigNorm, args:Array<IlSigNorm>}>();
 	public final fieldTokens = new ObjectMap<TClassField, Int>();
 	public final fieldSigs = new ObjectMap<TClassField, IlSigNorm>();
@@ -89,6 +90,36 @@ class DotnetCtx {
 		return classes.get(IlPaths.key(p));
 	}
 
+	// The token code uses for a Haxe member of `plan`'s class reached through `owner`, the class's type
+	// as the access sees it: the definition's own, or for a generic class a MemberRef on that
+	// instantiation, with the definition's signature.
+	public function memberOf(plan:ClassPlan, owner:IlSigNorm, cf:TClassField):Int {
+		var m = methodPlans.get(cf);
+		if (m != null) {
+			if (plan.classParams.length == 0) return m.token;
+			return mb.memberRef(typeTokenOf(owner), m.name, sigs.method(m.hasThis, m.ret, m.args, m.generics.length));
+		}
+		var token = fieldTokens.get(cf);
+		if (token == null) throw "internal error: no member " + plan.hxPath + "." + cf.name;
+		if (plan.classParams.length == 0) return token;
+		return mb.memberRef(typeTokenOf(owner), DotnetNames.fieldName(plan.c, cf.name), sigs.field(fieldSigs.get(cf)));
+	}
+
+	// The type of `plan`'s class with these type arguments.
+	public static function instanceOf(plan:ClassPlan, args:Array<IlSigNorm>):IlSigNorm {
+		if (plan.classParams.length == 0) return plan.thisSig;
+		return plan.isStruct ? LValueType(plan.path, args) : LClass(plan.path, args);
+	}
+
+	// The Haxe path of the class a signature names, for messages.
+	public function haxePathOf(s:IlSigNorm):String {
+		var c = switch (s) {
+			case LClass(p, _) | LValueType(p, _): classAt(p);
+			case _: null;
+		}
+		return c == null ? Std.string(s) : DotnetTypes.haxePath(TClassDecl(c));
+	}
+
 	// A class defined by Haxe code (not an extern) with type arguments.
 	public function isGenericHaxeClass(s:IlSigNorm):Bool {
 		return switch (s) {
@@ -99,26 +130,38 @@ class DotnetCtx {
 		}
 	}
 
-	// Whether a value of the non-generic class `from` already is a `to`, through its superclasses and
-	// interfaces as Haxe declares them.
+	// Whether a value of the class `from` already is a `to`, through its superclasses and interfaces as
+	// Haxe declares them.
 	public function isUpcast(from:IlSigNorm, to:IlSigNorm):Bool {
-		var c = switch (from) {
-			case LClass(p, []): classAt(p);
-			case _: null;
+		var c = null, args = [];
+		switch (from) {
+			case LClass(p, l):
+				c = classAt(p);
+				args = l;
+			case _:
 		}
 		if (c == null) return false;
-		function reaches(c:TClass, params:Array<T>):Bool {
-			var s = try types.toSig(TInst(c, params)) catch (_:Unsupported) return false;
-			if (IlPaths.sigEq(s, to)) return true;
+		// Each class's type in terms of its own type parameters, then with `args` for them.
+		function open(c:TClass, t:T):Null<IlSigNorm> {
+			return try types.withParams(c.params, [], () -> types.toSig(t)) catch (_:Unsupported) null;
+		}
+		function reaches(c:TClass, args:Array<IlSigNorm>):Bool {
+			var s = open(c, TInst(c, TypeFunctions.extractParamTypes(c.params)));
+			if (s == null) return false;
+			if (IlPaths.sigEq(DotnetTypes.substitute(s, args, []), to)) return true;
 			var supers = c.interfaces.copy();
 			if (c.superClass != null) supers.push(c.superClass);
 			for (sup in supers) {
-				var args = [for (t in sup.params) TypeFunctions.applyParams(c.params, params, t)];
-				if (reaches(sup.c, args)) return true;
+				var supSig = open(c, TInst(sup.c, sup.params));
+				switch (supSig == null ? null : DotnetTypes.substitute(supSig, args, [])) {
+					case LClass(_, l) | LValueType(_, l):
+						if (reaches(sup.c, l)) return true;
+					case _:
+				}
 			}
 			return false;
 		}
-		return reaches(c, []);
+		return reaches(c, args);
 	}
 
 	// cs.Boot.init's token when cs.Boot is one of the program's types, as gencs calls it. A cs.Boot

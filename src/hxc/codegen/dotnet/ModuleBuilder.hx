@@ -28,6 +28,7 @@ class ModuleBuilder {
 	final memberRefs = new Map<String, Int>();
 	final typeSpecs = new Map<String, Int>();
 	final standAloneSigs = new Map<String, Int>();
+	final methodSpecs = new Map<String, Int>();
 	// The TypeDef row each field and method row belongs to.
 	final fieldOwners:Array<Int> = [];
 	final methodOwners:Array<Int> = [];
@@ -153,6 +154,18 @@ class ModuleBuilder {
 		tables.typeSpec.push([heaps.blobs.add(sig)]);
 		r = (T.ITypeSpec << 24) | tables.typeSpec.length;
 		typeSpecs.set(key, r);
+		return r;
+	}
+
+	// A generic method's instantiation: `method` is its MethodDef or MemberRef token, `sig` the
+	// SigWriter.methodSpec blob of its type arguments.
+	public function methodSpec(method:Int, sig:Bytes):Int {
+		var key = method + " " + sig.toHex();
+		var r = methodSpecs.get(key);
+		if (r != null) return r;
+		tables.methodSpec.push([coded(T.IMethodDefOrRef, method), heaps.blobs.add(sig)]);
+		r = (T.IMethodSpec << 24) | tables.methodSpec.length;
+		methodSpecs.set(key, r);
 		return r;
 	}
 

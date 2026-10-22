@@ -185,12 +185,97 @@ class DotnetTypes {
 		return LObject;
 	}
 
+	static final systemType:IlPath = {ns: ["System"], nested: [], name: "Type"};
+
+	var stdClasses:Null<Map<String, TClass>> = null;
+
+	// The CLR path of a standard-library class the mapping needs, which must be kept; without it, `what`
+	// is not supported.
+	function stdClassPath(hxPath:String, what:String, plural:Bool):IlPath {
+		if (stdClasses == null) {
+			stdClasses = new Map();
+			for (mt in ctx.types) switch (mt) {
+				case TClassDecl(c): stdClasses.set(haxePath(mt), c);
+				case _:
+			}
+		}
+		var c = stdClasses.get(hxPath);
+		if (c == null) throw new Unsupported(what, plural);
+		checkKept(TClassDecl(c));
+		return DotnetNames.typePath(TClassDecl(c));
+	}
+
+	// Replaces class type parameters with `classArgs` and method type parameters with `methodArgs`.
+	public static function substitute(s:IlSigNorm, classArgs:Array<IlSigNorm>, methodArgs:Array<IlSigNorm>):IlSigNorm {
+		inline function all(l:Array<IlSigNorm>) return [for (a in l) substitute(a, classArgs, methodArgs)];
+		return switch (s) {
+			case LTypeParam(i) if (i < classArgs.length): classArgs[i];
+			case LMethodTypeParam(i) if (i < methodArgs.length): methodArgs[i];
+			case LPointer(t): LPointer(substitute(t, classArgs, methodArgs));
+			case LManagedPointer(t): LManagedPointer(substitute(t, classArgs, methodArgs));
+			case LVector(t): LVector(substitute(t, classArgs, methodArgs));
+			case LArray(t, d): LArray(substitute(t, classArgs, methodArgs), d);
+			case LValueType(p, l): LValueType(p, all(l));
+			case LClass(p, l): LClass(p, all(l));
+			case LMethod(cc, r, l): LMethod(cc, substitute(r, classArgs, methodArgs), all(l));
+			case _: s;
+		}
+	}
+
+	// The types `params` stand for where `declared`, written in terms of them, meets the applied type
+	// `actual`, as gencs infers a generic method's type arguments; Dynamic where nothing binds one.
+	public static function inferParams(params:TypeParams, declared:T, actual:T):Array<T> {
+		var bound:Array<Null<T>> = [for (_ in params) null];
+		function indexOf(c:TClass):Int {
+			for (i in 0...params.length) switch (params[i].type) {
+				case TInst(c2, _) if (c2 == c): return i;
+				case _:
+			}
+			return -1;
+		}
+		function walk(d:T, a:T, depth:Int):Void {
+			if (depth > 20) return;
+			d = TypeFunctions.follow(d);
+			a = TypeFunctions.follow(a);
+			switch (d) {
+				case TInst(c, []) if (c.kind.match(KTypeParameter(_)) && indexOf(c) >= 0):
+					var i = indexOf(c);
+					if (bound[i] == null && !a.match(TMono(_))) bound[i] = a;
+				case TInst(c, dl):
+					switch (a) {
+						case TInst(c2, al) if (c2 == c && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], depth + 1);
+						case _:
+					}
+				case TAbstract(x, dl):
+					switch (a) {
+						case TAbstract(x2, al) if (x2 == x && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], depth + 1);
+						case _:
+					}
+				case TEnum(x, dl):
+					switch (a) {
+						case TEnum(x2, al) if (x2 == x && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], depth + 1);
+						case _:
+					}
+				case TFun(ds):
+					switch (a) {
+						case TFun(as) if (as.args.length == ds.args.length):
+							for (i in 0...ds.args.length) walk(ds.args[i].t, as.args[i].t, depth + 1);
+							walk(ds.ret, as.ret, depth + 1);
+						case _:
+					}
+				case _:
+			}
+		}
+		walk(declared, actual, 0);
+		return [for (b in bound) b == null ? TypeFunctions.tDynamic : b];
+	}
+
 	public function toSig(t:T):IlSigNorm {
 		return switch (t) {
 			case TMono(m): m.type == null ? LObject : toSig(m.type);
 			case TLazy(f): toSig(TypeFunctions.lazyType(f));
 			case TDynamic(_) | TAnon(_): LObject;
-			case TFun(_): throw new Unsupported("function types", true);
+			case TFun(_): LClass(stdClassPath("cs.internal.Function", "function types", true), []);
 			case TType(d, [p]) if (isPath(d.path, ["cs"], "Ref") || isPath(d.path, ["cs"], "Out")):
 				LManagedPointer(toSig(p));
 			case TType(d, params): toSig(TypeFunctions.applyTypedef(d, params));
@@ -231,9 +316,12 @@ class DotnetTypes {
 					case "UInt": return LUInt32;
 					case "Dynamic": return LObject;
 					case "Null":
+						// gencs's haxe.lang.Null<T>, the standard library's cs.internal.Null struct.
 						var s = toSig(params[0]);
-						if (isValueType(s)) throw new Unsupported("Null<T> of a value type", false);
+						if (isValueType(s)) return LValueType(stdClassPath("cs.internal._Null.Nullable", "Null<T> of a value type", false), [s]);
 						return s;
+					case "Class" | "Enum":
+						return LClass(defined(systemType), []);
 					case _:
 				}
 				if (isPath(p, ["cs"], "Pointer")) return LPointer(toSig(params[0]));

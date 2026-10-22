@@ -124,13 +124,13 @@ class P {
 	static function main() {
 		var f = function() {};
 		Sys.println(f);
-		Sys.println([1]);
+		Sys.println({x: 1});
 	}
 }
 ===
 [compile]
 P.hx:3: characters 11-24 : dotnet: local functions are not supported yet
-P.hx:5: characters 15-18 : dotnet: array literals are not supported yet
+P.hx:5: characters 15-21 : dotnet: anonymous objects are not supported yet
 --- int-arithmetic
 class P {
 	static var max = 2147483647;
@@ -391,7 +391,7 @@ class P {
 			var g = function() {};
 			Sys.println(g);
 			if (i == 2) {
-				Sys.println([1]);
+				Sys.println({x: 1});
 				continue;
 			}
 			r += i;
@@ -406,7 +406,7 @@ class P {
 ===
 [compile]
 P.hx:6: characters 12-25 : dotnet: local functions are not supported yet
-P.hx:9: characters 17-20 : dotnet: array literals are not supported yet
+P.hx:9: characters 17-23 : dotnet: anonymous objects are not supported yet
 --- jumps-inside-expressions-are-errors
 class P {
 	static var n = 3;
@@ -789,7 +789,8 @@ class P {
 P.hx:6: characters 2-50 : dotnet: overrides that change the signature are not supported yet
 P.hx:9: characters 2-12 : dotnet: interface variables are not supported yet
 P.hx:16: characters 15-28 : dotnet: B (left out: overrides that change the signature) is not supported yet
-P.hx:18: characters 23-24 : dotnet: casts to instances of generic classes are not supported yet
+P.hx:18: characters 18-24 : dotnet: a cast between instantiations of G is not supported yet
+
 --- struct-mutation-through-fields
 @:struct class Vec {
 	public var x:Int;
@@ -963,3 +964,268 @@ class P {
 [compile]
 P.hx:13: characters 3-17 : dotnet: assignments to fields of struct values are not supported yet
 P.hx:15: characters 3-18 : dotnet: assignments to fields of struct values are not supported yet
+--- arrays
+class P {
+	static function main() {
+		var a = [3, 1, 2];
+		a.push(10);
+		a[0] = a[1] + a[3];
+		var sum = 0;
+		for (x in a) sum += x;
+		Sys.println(a.length);
+		Sys.println(sum);
+		var names = ["x", "y"];
+		Sys.println(names[1]);
+		var n = new cs.NativeArray<Int>(3);
+		n[2] = 7;
+		Sys.println(n.Length + n[2]);
+	}
+}
+===
+[run]
+4
+24
+y
+10
+--- generic-classes-and-methods
+class Box<T> {
+	public var value:T;
+	public function new(v:T) {
+		value = v;
+	}
+	public function get():T {
+		return value;
+	}
+	public static function of<U>(v:U):Box<U> {
+		return new Box(v);
+	}
+}
+class Pair<A, B> {
+	public var a:A;
+	public var b:B;
+	public function new(a:A, b:B) {
+		this.a = a;
+		this.b = b;
+	}
+	public function swap():Pair<B, A> {
+		return new Pair(b, a);
+	}
+}
+class P {
+	static function main() {
+		var b = Box.of(41);
+		Sys.println(b.get() + 1);
+		var s = new Box("str");
+		Sys.println(s.value);
+		var p = new Pair(1, "one").swap();
+		Sys.println(p.a + p.b);
+	}
+}
+===
+[run]
+42
+str
+one1
+--- generic-names @lib @module=pack.Box @dump=pack.Box`1
+package pack;
+class Box<T> {
+	public var value:T;
+	public function new(v:T) {
+		value = v;
+	}
+	public function pick<S>(s:S):T {
+		return value;
+	}
+}
+===
+[dump]
+type public beforefieldinit pack.Box`1<T> extends [mscorlib]System.Object
+  field public !0 value
+  method public hidebysig specialname rtspecialname void .ctor(!0)
+  method public virtual hidebysig newslot !0 pick<S>(!!0)
+--- type-mapping @lib @module=pack.Sig @dump=pack.Sig
+package pack;
+class Sig {
+	public static function f(a:Null<Int>, b:Dynamic, c:Array<String>, d:cs.NativeArray<Float>, e:Null<String>, g:Int->Void, h:{x:Int}, i:Class<Sig>):Void {}
+}
+===
+[dump]
+type public beforefieldinit pack.Sig extends [mscorlib]System.Object
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public static hidebysig void f(haxe.lang.Null`1<int32>, object, Array`1<string>, float64[], string, haxe.lang.Function, object, [mscorlib]System.Type)
+--- generic-statics-structs-and-uints @dump=Counter`1
+class Counter<T> {
+	public static var made = start();
+	static function start():Int {
+		Sys.println("Counter statics");
+		return 0;
+	}
+	static var log = "init";
+	public var item:T;
+	public function new(item:T) {
+		this.item = item;
+		made++;
+	}
+	public static function describe():String {
+		return log + " " + made;
+	}
+	public function boxed():Dynamic {
+		return item;
+	}
+	public function orDefault(useDefault:Bool):T {
+		if (useDefault) return null;
+		return item;
+	}
+	public function map<S>(s:S):Pair<T, S> {
+		return new Pair(item, s);
+	}
+}
+class Pair<A, B> {
+	public var a:A;
+	public var b:B;
+	public function new(a:A, b:B) {
+		this.a = a;
+		this.b = b;
+	}
+}
+class IntCounter extends Counter<Int> {
+	public function new(i:Int) {
+		super(i * 2);
+	}
+}
+@:struct class Cell<T> {
+	public var v:T;
+	public function new(v:T) {
+		this.v = v;
+	}
+	public function get():T {
+		return v;
+	}
+}
+class P {
+	static function main() {
+		var c = new Counter(5);
+		var s = new Counter("x");
+		Sys.println(Counter.describe());
+		Sys.println(c.boxed());
+		Sys.println(c.orDefault(true));
+		Sys.println(s.orDefault(true) == null);
+		var p = s.map(2.5);
+		Sys.println(p.a + p.b);
+		var ic = new IntCounter(21);
+		var base:Counter<Int> = ic;
+		Sys.println(base.item);
+		Sys.println(ic.map(true).b);
+		var u:UInt = 3;
+		var big:UInt = cast -1;
+		Sys.println(big > u);
+		Sys.println(u + 1);
+		var n = new cs.NativeArray<String>(2);
+		cs.system.Array.Resize(n, 5);
+		Sys.println(n.Length);
+		var a = [1, 2];
+		a[1] += 5;
+		a[0]++;
+		Sys.println(a[0] + a[1]);
+		var cell = new Cell("cell");
+		cell.v += "!";
+		Sys.println(cell.get());
+		a.resize(4);
+		Sys.println(a.length);
+	}
+}
+===
+[run]
+Counter statics
+init 2
+5
+0
+True
+x2.5
+42
+True
+True
+4
+5
+9
+cell!
+4
+[dump]
+type public Counter`1<T> extends [mscorlib]System.Object
+  field public !0 item
+  field public static int32 made
+  field public static string log
+  field private static bool __hx_init_called
+  method public hidebysig specialname rtspecialname void .ctor(!0)
+  method public virtual hidebysig newslot object boxed()
+  method public virtual hidebysig newslot !0 orDefault(bool)
+  method public virtual hidebysig newslot Pair`2<!0, !!0> map<S>(!!0)
+  method public static hidebysig int32 start()
+  method public static hidebysig string describe()
+  method private static hidebysig specialname rtspecialname void .cctor()
+--- generic-refusals
+class Box<T> {
+	public var v:T;
+	public function new(v:T) {
+		this.v = v;
+	}
+}
+class P {
+	static function unwrap<T>(t:T):Box<Int> {
+		return cast t;
+	}
+	static function main() {
+		var d:Dynamic = new Box(1);
+		var b:Box<Int> = d;
+		var arr = [1];
+		arr.push(2);
+		var dyn:Array<Dynamic> = cast arr;
+		var n:Null<Int> = arr.length;
+		Sys.println(unwrap(1).v + arr.length);
+	}
+}
+===
+[compile]
+P.hx:9: characters 10-16 : dotnet: a cast between instantiations of Box is not supported yet
+P.hx:13: characters 20-21 : dotnet: a cast between instantiations of Box is not supported yet
+P.hx:16: characters 28-36 : dotnet: a cast between instantiations of Array is not supported yet
+P.hx:17: characters 21-31 : dotnet: Null<T> of a value type is not supported yet
+--- array-methods
+class P {
+	static function show(a:Array<Int>):String {
+		var s = "";
+		for (x in a) s += x + ",";
+		return s;
+	}
+	static function main() {
+		var a = [1, 2, 3];
+		a.unshift(0);
+		a.insert(2, 9);
+		a.reverse();
+		Sys.println(show(a));
+		Sys.println(a.pop());
+		Sys.println(a.shift());
+		var b = a.concat([7, 8]);
+		var c = b.copy();
+		c[0] = 100;
+		Sys.println(show(b) + " " + show(c));
+		var d = c.splice(1, 2);
+		Sys.println(show(d) + " " + show(c));
+		var s = ["b", "a"];
+		s.push("c");
+		Sys.println(s[0] + s[1] + s[2] + s[5]);
+		Sys.println(s.length);
+		a.resize(1);
+		Sys.println(show(a));
+	}
+}
+===
+[run]
+3,2,9,1,0,
+0
+3
+2,9,1,7,8, 100,9,1,7,8,
+9,1, 100,7,8,
+bacnull
+3
+2,

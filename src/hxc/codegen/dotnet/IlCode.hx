@@ -41,6 +41,7 @@ class IlOps {
 	public static inline var MUL = 0x5A;
 	public static inline var DIV = 0x5B;
 	public static inline var REM = 0x5D;
+	public static inline var REM_UN = 0x5E;
 	public static inline var AND = 0x5F;
 	public static inline var OR = 0x60;
 	public static inline var XOR = 0x61;
@@ -65,7 +66,12 @@ class IlOps {
 	public static inline var LDSFLD = 0x7E;
 	public static inline var LDSFLDA = 0x7F;
 	public static inline var STSFLD = 0x80;
+	public static inline var CONV_R_UN = 0x76;
 	public static inline var BOX = 0x8C;
+	public static inline var NEWARR = 0x8D;
+	public static inline var LDLEN = 0x8E;
+	public static inline var LDELEM = 0xA3;
+	public static inline var STELEM = 0xA4;
 	public static inline var UNBOX_ANY = 0xA5;
 	public static inline var LEAVE = 0xDD;
 	public static inline var CEQ = 0xFE01;

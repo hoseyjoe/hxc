@@ -12,6 +12,8 @@ import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.codegen.dotnet.IlCode;
 import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.IlMeta;
+import hxc.codegen.dotnet.TclassToIl.ClassPlan;
+import hxc.codegen.dotnet.TclassToIl.MethodPlan;
 
 // Where an expression's value goes: onto the stack as a slot of the given type (null: its own),
 // nowhere, or out of the function (a function body, whose value is not used).
@@ -98,14 +100,27 @@ class TexprToIl {
 
 	function convert(from:Null<IlSigNorm>, to:IlSigNorm):Void {
 		if (from == null) {
+			// null as a type parameter is C#'s default(T).
+			if (isTypeParam(to)) {
+				code.op(IlOps.POP, 1, 0);
+				defaultValue(to);
+				return;
+			}
+			if (isHaxeNull(to)) throw new Unsupported("Null<T> of a value type", false);
 			if (DotnetTypes.isValueType(to)) throw new Unsupported("null as a value type", false);
 			return;
 		}
 		if (IlPaths.sigEq(from, to)) return;
+		// haxe.lang.Null<T> converts through its constructor and fields, which milestone 2 does not use.
+		if (isHaxeNull(from) || isHaxeNull(to)) throw new Unsupported("Null<T> of a value type", false);
+		// Int and UInt are both an int32 on the stack.
+		if (isIntLike(from) && isIntLike(to)) return;
 		var fromValue = DotnetTypes.isValueType(from) || isTypeParam(from);
 		var toValue = DotnetTypes.isValueType(to) || isTypeParam(to);
 		if (fromValue && !toValue) {
 			code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
+			// A boxed type parameter is an object, which may not be the reference type wanted.
+			if (isTypeParam(from) && !to.match(LObject)) castTo(to);
 		} else if (!fromValue && toValue) {
 			// gencs converts Dynamic to a primitive through Runtime.toBool, toInt and toDouble, which accept
 			// null and boxed numbers of another type; an unbox.any would throw on them.
@@ -113,18 +128,62 @@ class TexprToIl {
 			code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
 		} else if (fromValue) {
 			if (from.match(LInt32) && to.match(LFloat64)) code.op(IlOps.CONV_R8, 1, 1);
-			else if (from.match(LFloat64) && to.match(LInt32)) code.op(IlOps.CONV_I4, 1, 1);
-			else throw new Unsupported("conversions between value types", true);
+			else if (from.match(LUInt32) && to.match(LFloat64)) {
+				code.op(IlOps.CONV_R_UN, 1, 1);
+				code.op(IlOps.CONV_R8, 1, 1);
+			} else if (from.match(LFloat64) && to.match(LInt32)) code.op(IlOps.CONV_I4, 1, 1);
+			else if (isTypeParam(from) || isTypeParam(to)) {
+				// Between a type parameter and another type that is one at run time, as C# casts through object.
+				code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
+				code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
+			} else throw new Unsupported("conversions between value types", true);
 		} else if (isReference(from) && isReference(to) && !to.match(LObject)) {
 			// An upcast needs nothing; anything else may narrow.
-			if (g.isUpcast(from, to)) return;
+			if (g.isUpcast(from, to) || from.match(LVector(_)) && isSystemArray(to)) return;
 			castTo(to);
 		}
 	}
 
+	static function isSystemArray(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LClass(p, []): p.ns.length == 1 && p.ns[0] == "System" && p.nested.length == 0 && p.name == "Array";
+			case _: false;
+		}
+	}
+
+	static function isIntLike(s:IlSigNorm):Bool return s.match(LInt32 | LUInt32);
+
+	// gencs's haxe.lang.Null<T>, which Null<T> of a value type maps to.
+	function isHaxeNull(s:IlSigNorm):Bool {
+		return s.match(LValueType(_, [_])) && g.haxePathOf(s) == "cs.internal._Null.Nullable";
+	}
+
+
+	// C#'s default(T): a zeroed temporary.
+	function defaultValue(t:IlSigNorm):Void {
+		var tmp = code.addLocal(t);
+		code.ldloca(tmp);
+		code.opToken(IlOps.INITOBJ, g.typeTokenOf(t), 1, 0);
+		code.ldloc(tmp);
+	}
+
+	// gencs gives a generic Haxe class real type arguments and converts between instantiations with
+	// __hx_cast, which copies (Haxe issue 8314); castclass would throw where it converts. Milestone 3
+	// lowers these casts as the spec's "Casts between generic instantiations" says.
+	function instantiationCast(to:IlSigNorm):Unsupported {
+		return new Unsupported("a cast between instantiations of " + g.haxePathOf(to), false);
+	}
+
+	// Throws for a cast from `from` into an instantiation of a generic Haxe class that is not the same
+	// type or an upcast.
+	function checkInstantiationCast(from:IlSigNorm, to:IlSigNorm):Void {
+		if (IlPaths.sigEq(from, to) || !g.isGenericHaxeClass(to)) return;
+		if (isReference(from) && g.isUpcast(from, to)) return;
+		throw instantiationCast(to);
+	}
+
 	function castTo(to:IlSigNorm):Void {
-		// gencs erases a generic Haxe class's type arguments at run time, so castclass to one would fail.
-		if (g.isGenericHaxeClass(to)) throw new Unsupported("casts to instances of generic classes", true);
+		if (g.isGenericHaxeClass(to)) throw instantiationCast(to);
 		code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
 	}
 
@@ -139,6 +198,7 @@ class TexprToIl {
 		// The statement using it is not reported again: the declaration already was.
 		if (s == null && poisoned.exists(v.id)) throw new Unsupported("a variable whose declaration failed", false);
 		if (s == null) throw "internal error: unbound variable " + v.name;
+		if (s.sig.match(LManagedPointer(_))) throw new Unsupported("cs.Ref and cs.Out parameters", true);
 		return s;
 	}
 
@@ -212,6 +272,11 @@ class TexprToIl {
 			case TParenthesis(e1) | TMeta(_, e1):
 				texpr(ret, e1);
 			case TCast(e1, null):
+				// A cast between instantiations is reported at the cast.
+				if (!isNullConst(e1)) {
+					var from = try sig(e1.type) catch (_:Unsupported) null, to = try sig(e.type) catch (_:Unsupported) null;
+					if (from != null && to != null) checkInstantiationCast(from, to);
+				}
 				texpr(switch (ret) {
 					case RValue(null): RValue(sig(e.type));
 					case r: r;
@@ -249,12 +314,12 @@ class TexprToIl {
 				throw new Unsupported("local functions", true);
 			case TTypeExpr(_):
 				throw new Unsupported("type expressions", true);
-			case TArray(_, _):
-				throw new Unsupported("array access", false);
+			case TArray(e1, e2):
+				arrayRead(ret, e1, e2);
 			case TObjectDecl(_):
 				throw new Unsupported("anonymous objects", true);
-			case TArrayDecl(_):
-				throw new Unsupported("array literals", true);
+			case TArrayDecl(el):
+				arrayLiteral(ret, e, el);
 			case TFor(_, _, _):
 				throw new Unsupported("for loops", true);
 			case TTry(_, _):
@@ -310,10 +375,36 @@ class TexprToIl {
 
 	function staticField(c:TClass, cf:TClassField):{token:Int, sig:IlSigNorm} {
 		g.types.checkKept(TClassDecl(c));
-		if (c.params.length > 0) throw new Unsupported("static members of generic classes", true);
-		var token = g.fieldTokens.get(cf);
-		if (token == null) throw "internal error: no field " + Globals.sTypePath(c.path) + "." + cf.name;
-		return {token: token, sig: g.fieldSigs.get(cf)};
+		var plan = g.ownerOf.get(cf);
+		if (plan == null || !g.fieldTokens.exists(cf)) throw "internal error: no field " + Globals.sTypePath(c.path) + "." + cf.name;
+		return {token: g.memberOf(plan, staticOwner(plan), cf), sig: g.fieldSigs.get(cf)};
+	}
+
+	// As gencs writes it, a static member of a generic class is reached through the instantiation
+	// with object for each type parameter.
+	static function staticOwner(plan:ClassPlan):IlSigNorm {
+		return DotnetCtx.instanceOf(plan, [for (_ in plan.classParams) LObject]);
+	}
+
+	// The type arguments of `target`, a superclass or interface of `c` or `c` itself, when `c` has
+	// `params`.
+	static function argsAt(c:TClass, params:TParams, target:TClass):Null<TParams> {
+		if (c == target) return params;
+		var supers = c.interfaces.copy();
+		if (c.superClass != null) supers.push(c.superClass);
+		for (s in supers) {
+			var r = argsAt(s.c, [for (t in s.params) TypeFunctions.applyParams(c.params, params, t)], target);
+			if (r != null) return r;
+		}
+		return null;
+	}
+
+	// The type arguments of the class `plan` declares, as an access through `c` with `params` sees them.
+	function ownerArgs(c:TClass, params:TParams, plan:ClassPlan):TParams {
+		if (plan.classParams.length == 0) return [];
+		var r = argsAt(c, params, plan.c);
+		if (r == null) throw "internal error: " + plan.hxPath + " is not a supertype of " + Globals.sTypePath(c.path);
+		return r;
 	}
 
 	static function isExtern(c:TClass):Bool return TypeFunctions.hasClassFlag(c, CExtern);
@@ -326,14 +417,31 @@ class TexprToIl {
 				if (needVal(ret)) code.op(IlOps.DUP, 1, 2);
 				store(s);
 				if (needVal(ret)) coerce(s.sig, ret);
+			case TArray(e1, e2) if (isNativeArray(e1.type)):
+				var elem = pushArrayAndIndex(e1, e2);
+				texpr(RValue(elem), rhs);
+				var tmp = needVal(ret) ? keepTop(elem) : -1;
+				code.opToken(IlOps.STELEM, g.typeTokenOf(elem), 3, 0);
+				if (tmp >= 0) {
+					code.ldloc(tmp);
+					coerce(elem, ret);
+				}
+			case TArray(e1, e2) if (arrayOf(e1.type) != null):
+				var m = arrayAccessor(e1.type, "__set");
+				receiver(e1, m.owner);
+				texpr(RValue(m.args[0]), e2);
+				texpr(RValue(m.args[1]), rhs);
+				code.opToken(IlOps.CALLVIRT, m.token, 3, 1);
+				// __set returns the value it stored.
+				coerce(m.ret, ret);
 			case TField(_, FStatic(c, cf)) if (!isExtern(c)):
 				var f = staticField(c, cf);
 				texpr(RValue(f.sig), rhs);
 				if (needVal(ret)) code.op(IlOps.DUP, 1, 2);
 				code.opToken(IlOps.STSFLD, f.token, 1, 0);
 				if (needVal(ret)) coerce(f.sig, ret);
-			case TField(obj, FInstance(c, _, cf)) if (!isExtern(c) && !isStringClass(c)):
-				var f = instanceField(c, cf);
+			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c)):
+				var f = instanceField(c, cparams, cf);
 				receiver(obj, f.owner, true);
 				texpr(RValue(f.sig), rhs);
 				var tmp = needVal(ret) ? keepTop(f.sig) : -1;
@@ -388,7 +496,7 @@ class TexprToIl {
 
 	static function isStringClass(c:TClass):Bool return c.path.pack.length == 0 && c.path.name == "String";
 
-	static function isNumeric(s:IlSigNorm):Bool return s.match(LInt32 | LFloat64);
+	static function isNumeric(s:IlSigNorm):Bool return s.match(LInt32 | LUInt32 | LFloat64);
 
 	function operandSig(op:Binop, e:TExpr):IlSigNorm {
 		var s = sig(e.type);
@@ -417,7 +525,7 @@ class TexprToIl {
 				var s1 = operandSig(op, e1), s2 = operandSig(op, e2);
 				var t = sig(e.type);
 				// Bitwise operators and shifts take Int operands only.
-				if (!isArith(op) && !(s1.match(LInt32) && s2.match(LInt32) && t.match(LInt32)))
+				if (!isArith(op) && !(isIntLike(s1) && isIntLike(s2) && isIntLike(t)))
 					throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 				texpr(RValue(t), e1);
 				numericTail(op, t, e2);
@@ -433,7 +541,8 @@ class TexprToIl {
 	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr):Void {
 		var bad = new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		if (!isNumeric(t)) throw bad;
-		if (!isArith(op) && !t.match(LInt32)) throw bad;
+		if (!isArith(op) && !isIntLike(t)) throw bad;
+		var unsigned = t.match(LUInt32);
 		if (op.match(OpDiv) && !t.match(LFloat64)) throw bad;
 		switch (op) {
 			case OpShl | OpShr | OpUShr:
@@ -446,7 +555,7 @@ class TexprToIl {
 					code.ldcI4(31);
 					code.op(IlOps.AND, 2, 1);
 				}
-				code.op(op.match(OpShl) ? IlOps.SHL : op.match(OpShr) ? IlOps.SHR : IlOps.SHR_UN, 2, 1);
+				code.op(op.match(OpShl) ? IlOps.SHL : op.match(OpShr) && !unsigned ? IlOps.SHR : IlOps.SHR_UN, 2, 1);
 			case _:
 				texpr(RValue(t), e2);
 				code.op(switch (op) {
@@ -454,7 +563,7 @@ class TexprToIl {
 					case OpSub: IlOps.SUB;
 					case OpMult: IlOps.MUL;
 					case OpDiv: IlOps.DIV;
-					case OpMod: IlOps.REM;
+					case OpMod: unsigned ? IlOps.REM_UN : IlOps.REM;
 					case OpAnd: IlOps.AND;
 					case OpOr: IlOps.OR;
 					case OpXor: IlOps.XOR;
@@ -471,6 +580,8 @@ class TexprToIl {
 	function compare(ret:Ret, op:Binop, e1:TExpr, e2:TExpr):Void {
 		var equality = op.match(OpEq | OpNotEq);
 		var isFloat = false;
+		// A UInt operand makes an Int comparison unsigned, as UInt's operators take two UInts.
+		var unsigned = false;
 		var string = false;
 		if (isNullConst(e1) || isNullConst(e2)) {
 			if (!equality) throw new Unsupported("comparing null with the " + Ast.sBinop(op) + " operator", false);
@@ -483,8 +594,9 @@ class TexprToIl {
 		} else {
 			var s1 = sig(e1.type), s2 = sig(e2.type);
 			if (isNumeric(s1) && isNumeric(s2)) {
-				var t = s1.match(LFloat64) || s2.match(LFloat64) ? LFloat64 : LInt32;
+				var t = s1.match(LFloat64) || s2.match(LFloat64) ? LFloat64 : s1.match(LUInt32) || s2.match(LUInt32) ? LUInt32 : LInt32;
 				isFloat = t.match(LFloat64);
+				unsigned = t.match(LUInt32);
 				texpr(RValue(t), e1);
 				texpr(RValue(t), e2);
 			} else if (equality && s1.match(LBool) && s2.match(LBool)) {
@@ -513,15 +625,15 @@ class TexprToIl {
 					code.op(IlOps.CEQ, 2, 1);
 					not();
 				case OpLt:
-					code.op(IlOps.CLT, 2, 1);
+					code.op(unsigned ? IlOps.CLT_UN : IlOps.CLT, 2, 1);
 				case OpGt:
-					code.op(IlOps.CGT, 2, 1);
+					code.op(unsigned ? IlOps.CGT_UN : IlOps.CGT, 2, 1);
 				case OpLte:
 					// An unordered comparison is true on NaN, so inverting it makes <= false there.
-					code.op(isFloat ? IlOps.CGT_UN : IlOps.CGT, 2, 1);
+					code.op(isFloat || unsigned ? IlOps.CGT_UN : IlOps.CGT, 2, 1);
 					not();
 				case _:
-					code.op(isFloat ? IlOps.CLT_UN : IlOps.CLT, 2, 1);
+					code.op(isFloat || unsigned ? IlOps.CLT_UN : IlOps.CLT, 2, 1);
 					not();
 			}
 		}
@@ -600,11 +712,49 @@ class TexprToIl {
 		}
 	}
 
-	// A local or a Haxe class's static variable, which can be loaded and stored without a receiver.
+	// A local or a Haxe class's static variable, which can be loaded and stored without a receiver; an
+	// instance variable; an array element, whose array and index are kept in temporaries.
 	function place(e:TExpr):Null<Place> {
 		switch (e.expr) {
 			case TParenthesis(e1) | TMeta(_, e1):
 				return place(e1);
+			case TArray(e1, e2) if (isNativeArray(e1.type) || arrayOf(e1.type) != null):
+				var native = isNativeArray(e1.type);
+				var get = native ? null : arrayAccessor(e1.type, "__get");
+				var set = native ? null : arrayAccessor(e1.type, "__set");
+				var elem = native ? vectorElement(sig(e1.type)) : get.ret;
+				var arr = -1, idx = -1;
+				function reload() {
+					code.ldloc(arr);
+					code.ldloc(idx);
+				}
+				return {
+					sig: elem,
+					receiver: true,
+					prepare: () -> {
+						var arrSig = native ? sig(e1.type) : get.owner;
+						texpr(RValue(arrSig), e1);
+						arr = code.addLocal(arrSig);
+						code.stloc(arr);
+						var idxSig = native ? indexSig(e2) : get.args[0];
+						texpr(RValue(idxSig), e2);
+						idx = code.addLocal(idxSig);
+						code.stloc(idx);
+						reload();
+					},
+					load: () -> {
+						reload();
+						if (native) code.opToken(IlOps.LDELEM, g.typeTokenOf(elem), 2, 1) else code.opToken(IlOps.CALLVIRT, get.token, 2, 1);
+					},
+					store: () -> {
+						if (native) {
+							code.opToken(IlOps.STELEM, g.typeTokenOf(elem), 3, 0);
+						} else {
+							code.opToken(IlOps.CALLVIRT, set.token, 3, 1);
+							code.op(IlOps.POP, 1, 0);
+						}
+					}
+				};
 			case TLocal(v):
 				var s = slot(v);
 				return {sig: s.sig, receiver: false, prepare: () -> {}, load: () -> load(s), store: () -> store(s)};
@@ -617,8 +767,8 @@ class TexprToIl {
 					load: () -> code.opToken(IlOps.LDSFLD, f.token, 0, 1),
 					store: () -> code.opToken(IlOps.STSFLD, f.token, 1, 0)
 				};
-			case TField(obj, FInstance(c, _, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
-				var f = instanceField(c, cf);
+			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
+				var f = instanceField(c, cparams, cf);
 				return {
 					sig: f.sig,
 					receiver: true,
@@ -639,7 +789,7 @@ class TexprToIl {
 		if (p == null) throw new Unsupported("this kind of assignment", false);
 		if (!isNumeric(p.sig)) throw new Unsupported("the " + (increment ? "++" : "--") + " operator on these types", false);
 		function step() {
-			if (p.sig.match(LInt32)) code.ldcI4(1) else code.opR8(IlOps.LDC_R8, 1.0, 0, 1);
+			if (isIntLike(p.sig)) code.ldcI4(1) else code.opR8(IlOps.LDC_R8, 1.0, 0, 1);
 			code.op(increment ? IlOps.ADD : IlOps.SUB, 2, 1);
 		}
 		p.prepare();
@@ -927,8 +1077,8 @@ class TexprToIl {
 			case TConst(TThis) if (thisSig != null && DotnetTypes.isValueType(thisSig)):
 				code.ldarg(0);
 				return true;
-			case TField(obj, FInstance(c, _, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
-				var f = instanceField(c, cf);
+			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
+				var f = instanceField(c, cparams, cf);
 				receiver(obj, f.owner, forStore);
 				code.opToken(IlOps.LDFLDA, f.token, 1, 1);
 				return true;
@@ -1012,6 +1162,8 @@ class TexprToIl {
 				texpr(RValue(LString), obj);
 				callString("get_Length", LInt32, []);
 				coerce(LInt32, ret);
+			case FInstance(_, _, cf) if (cf.name == "Length" && isNativeArray(obj.type)):
+				nativeLength(ret, obj);
 			case FStatic(c, cf) | FInstance(c, _, cf) if (isExtern(c)):
 				if (!cf.kind.match(Var(_))) throw new Unsupported("method closures", true);
 				var isStatic = fa.match(FStatic(_, _));
@@ -1035,9 +1187,9 @@ class TexprToIl {
 					case _:
 						throw new Unsupported("reading a write-only .NET property", false);
 				}
-			case FInstance(c, _, cf):
+			case FInstance(c, cparams, cf):
 				if (!cf.kind.match(Var(_))) throw new Unsupported("method closures", true);
-				var f = instanceField(c, cf);
+				var f = instanceField(c, cparams, cf);
 				receiver(obj, f.owner);
 				code.opToken(IlOps.LDFLD, f.token, 1, 1);
 				coerce(f.sig, ret);
@@ -1052,6 +1204,14 @@ class TexprToIl {
 			case FEnum(_, _):
 				throw new Unsupported("enum constructors", true);
 		}
+	}
+
+	// A native array's Length: ldlen, then the native int as an Int.
+	function nativeLength(ret:Ret, obj:TExpr):Void {
+		texpr(RValue(sig(obj.type)), obj);
+		code.op(IlOps.LDLEN, 1, 1);
+		code.op(IlOps.CONV_I4, 1, 1);
+		coerce(LInt32, ret);
 	}
 
 	static function isStd(c:TClass):Bool return c.path.pack.length == 0 && c.path.name == "Std";
@@ -1125,7 +1285,15 @@ class TexprToIl {
 
 	function pushArgs(args:Array<TExpr>, slots:Array<IlSigNorm>):Void {
 		if (args.length != slots.length) throw new Unsupported("calls that leave out arguments", true);
-		for (i in 0...args.length) texpr(RValue(slots[i]), args[i]);
+		for (i in 0...args.length) switch (slots[i]) {
+			case LManagedPointer(t):
+				// cs.Ref and cs.Out: the address of a variable of exactly that type, as C#'s ref and out.
+				var s = try sig(args[i].type) catch (_:Unsupported) null;
+				if (s == null || !IlPaths.sigEq(s, t) || !pushAddress(args[i], true))
+					throw new Unsupported("by-reference arguments that are not variables of the parameter's type", true);
+			case s:
+				texpr(RValue(s), args[i]);
+		}
 	}
 
 	function call(ret:Ret, e:TExpr, callee:TExpr, args:Array<TExpr>):Void {
@@ -1142,28 +1310,28 @@ class TexprToIl {
 				coerce(LString, ret);
 			case TField(obj, FInstance(c, _, cf)) if (isStringClass(c)):
 				stringCall(ret, obj, cf, args);
+			case TField(obj, FInstance(_, _, cf)) if (cf.name == "get_Length" && args.length == 0 && isNativeArray(obj.type)):
+				nativeLength(ret, obj);
 			case TField(_, FStatic(c, cf)) if (isStringClass(c)):
 				if (cf.name != "fromCharCode") throw new Unsupported("the String function " + cf.name, false);
 				stringExtCall(ret, cf.name, null, args);
 			case TField(_, FStatic(c, cf)) if (!isExtern(c)):
 				g.types.checkKept(TClassDecl(c));
-				if (c.params.length > 0) throw new Unsupported("static members of generic classes", true);
 				var target = pickOverload(c, [], cf, args, true);
-				if (target.params.length > 0) throw new Unsupported("calls to generic methods", true);
-				var token = g.methodTokens.get(target);
-				if (token == null) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
-				var m = g.methodSigs.get(target);
+				var plan = g.ownerOf.get(target);
+				if (plan == null || !g.methodTokens.exists(target)) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
+				var m = methodRef(plan, staticOwner(plan), [], target, target.type, callee.type);
 				pushArgs(args, m.args);
-				code.opToken(IlOps.CALL, token, args.length, m.ret.match(LVoid) ? 0 : 1);
+				code.opToken(IlOps.CALL, m.token, args.length, m.ret.match(LVoid) ? 0 : 1);
 				coerce(m.ret, ret);
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c)):
-				externCall(ret, obj, fa, c, cf, args);
+				externCall(ret, obj, fa, c, cf, args, callee.type);
 			case TConst(TSuper):
 				superCtorCall(args);
 				coerce(LVoid, ret);
 			case TField(obj, FInstance(c, params, cf)):
 				if (!cf.kind.match(Method(_))) throw new Unsupported("calls of function values", true);
-				var m = haxeMethod(c, params, cf, args);
+				var m = haxeMethod(c, params, cf, args, callee.type);
 				// super.m() calls the base class's method itself.
 				var isSuper = strip(obj).expr.match(TConst(TSuper));
 				if (isSuper) code.ldarg(0) else receiver(obj, m.owner);
@@ -1188,38 +1356,65 @@ class TexprToIl {
 		return r.cf;
 	}
 
-	// A Haxe class's instance variable: its token, its type and the type of the class declaring it.
-	function instanceField(c:TClass, cf:TClassField):{token:Int, sig:IlSigNorm, owner:IlSigNorm} {
+	// A Haxe class's instance variable as an access through `c` with `params` reaches it: its token, its
+	// type there and the type of the class declaring it.
+	function instanceField(c:TClass, params:TParams, cf:TClassField):{token:Int, sig:IlSigNorm, owner:IlSigNorm} {
 		g.types.checkKept(TClassDecl(c));
 		var plan = g.ownerOf.get(cf);
-		var token = g.fieldTokens.get(cf);
-		if (plan == null || token == null) {
+		if (plan == null || !g.fieldTokens.exists(cf)) {
 			if (!TypeFunctions.isPhysicalField(cf)) throw new Unsupported("this kind of field access", false);
 			throw "internal error: no field " + Globals.sTypePath(c.path) + "." + cf.name;
 		}
-		if (plan.classParams.length > 0) throw new Unsupported("instance members of generic classes", true);
-		return {token: token, sig: g.fieldSigs.get(cf), owner: plan.thisSig};
+		var inst = [for (t in ownerArgs(c, params, plan)) sig(t)];
+		var owner = DotnetCtx.instanceOf(plan, inst);
+		return {token: g.memberOf(plan, owner, cf), sig: DotnetTypes.substitute(g.fieldSigs.get(cf), inst, []), owner: owner};
+	}
+
+	// A method's token as a call reaches it, with a MethodSpec for a generic method, and its argument
+	// and return types there. `declared` is the method's type with the class's type arguments applied;
+	// the call's `calleeType` gives the method's own.
+	function methodRef(plan:ClassPlan, owner:IlSigNorm, inst:Array<IlSigNorm>, target:TClassField, declared:T,
+			calleeType:T):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm} {
+		var token = g.memberOf(plan, owner, target);
+		var margs = [for (t in DotnetTypes.inferParams(target.params, declared, calleeType)) sig(t)];
+		if (margs.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec(margs));
+		var m = g.methodSigs.get(target);
+		return {
+			token: token,
+			args: [for (a in m.args) DotnetTypes.substitute(a, inst, margs)],
+			ret: DotnetTypes.substitute(m.ret, inst, margs)
+		};
 	}
 
 	// A Haxe class's instance method, the overload the call reaches.
-	function haxeMethod(c:TClass, params:TParams, cf:TClassField, args:Array<TExpr>):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm, owner:IlSigNorm} {
+	function haxeMethod(c:TClass, params:TParams, cf:TClassField, args:Array<TExpr>, calleeType:T):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm, owner:IlSigNorm} {
 		g.types.checkKept(TClassDecl(c));
 		var target = pickOverload(c, params, cf, args, false);
 		var plan = g.ownerOf.get(target);
-		var token = g.methodTokens.get(target);
-		if (plan == null || token == null) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
-		if (plan.classParams.length > 0) throw new Unsupported("instance members of generic classes", true);
-		if (target.params.length > 0) throw new Unsupported("calls to generic methods", true);
-		var m = g.methodSigs.get(target);
-		return {token: token, args: m.args, ret: m.ret, owner: plan.thisSig};
+		if (plan == null || !g.methodTokens.exists(target)) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
+		var hxArgs = ownerArgs(c, params, plan);
+		var inst = [for (t in hxArgs) sig(t)];
+		var owner = DotnetCtx.instanceOf(plan, inst);
+		var declared = plan.c == null ? target.type : TypeFunctions.applyParams(plan.c.params, hxArgs, target.type);
+		var m = methodRef(plan, owner, inst, target, declared, calleeType);
+		return {token: m.token, args: m.args, ret: m.ret, owner: owner};
 	}
 
 	// A method of a referenced assembly; super.m() calls the base method itself.
-	function externCall(ret:Ret, obj:TExpr, fa:TFieldAccess, c:TClass, cf:TClassField, args:Array<TExpr>):Void {
+	function externCall(ret:Ret, obj:TExpr, fa:TFieldAccess, c:TClass, cf:TClassField, args:Array<TExpr>, calleeType:T):Void {
 		var isStatic = fa.match(FStatic(_, _));
 		var isSuper = !isStatic && strip(obj).expr.match(TConst(TSuper));
 		var m = g.externs.method(c, cf);
-		if (m.genericCount > 0) throw new Unsupported("generic .NET methods", true);
+		// A generic method's type arguments, inferred from the call as for a Haxe method.
+		var margs:Array<IlSigNorm> = [];
+		if (m.genericCount > 0) {
+			if (cf.params.length != m.genericCount) throw new Unsupported("generic .NET methods", true);
+			var declared = switch (fa) {
+				case FInstance(_, params, _): TypeFunctions.applyParams(c.params, params, cf.type);
+				case _: cf.type;
+			}
+			margs = [for (t in DotnetTypes.inferParams(cf.params, declared, calleeType)) sig(t)];
+		}
 		var inst = instantiation(c, fa);
 		var parent = ExternMembers.subst(m.parent, inst);
 		var parentArgs = switch (parent) {
@@ -1235,9 +1430,10 @@ class TexprToIl {
 				throw "internal error: not a method signature";
 		}
 		if (isSuper) code.ldarg(0) else if (!isStatic) receiver(obj, parent);
-		pushArgs(args, [for (a in ilArgs) ExternMembers.subst(a, parentArgs)]);
-		var token = g.mb.memberRef(g.typeTokenOf(parent), m.name, g.sigs.methodSig(m.sig, 0));
-		var retSlot = ExternMembers.subst(ilRet, parentArgs);
+		pushArgs(args, [for (a in ilArgs) DotnetTypes.substitute(a, parentArgs, margs)]);
+		var token = g.mb.memberRef(g.typeTokenOf(parent), m.name, g.sigs.methodSig(m.sig, m.genericCount));
+		if (margs.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec(margs));
+		var retSlot = DotnetTypes.substitute(ilRet, parentArgs, margs);
 		var op = isStatic || isSuper || DotnetTypes.isValueType(parent) ? IlOps.CALL : IlOps.CALLVIRT;
 		code.opToken(op, token, args.length + (isStatic ? 0 : 1), retSlot.match(LVoid) ? 0 : 1);
 		if (retSlot.match(LVoid) && needVal(ret)) throw new Unsupported("the value of a .NET setter call", false);
@@ -1265,20 +1461,23 @@ class TexprToIl {
 
 	// A Haxe class's constructor: the one the arguments reach, or the implicit one; 0 for a struct's
 	// parameterless one, which is not declared.
-	function haxeCtor(c:TClass, params:TParams, args:Array<TExpr>):{token:Int, args:Array<IlSigNorm>} {
+	function haxeCtor(c:TClass, params:TParams, args:Array<TExpr>):{token:Int, args:Array<IlSigNorm>, owner:IlSigNorm} {
 		g.types.checkKept(TClassDecl(c));
 		var plan = g.planOf.get(c);
 		if (plan == null) throw "internal error: no plan for " + Globals.sTypePath(c.path);
-		if (plan.classParams.length > 0) throw new Unsupported("instances of generic classes", true);
+		var inst = [for (p in params) sig(p)];
+		var owner = DotnetCtx.instanceOf(plan, inst);
+		var m:Null<MethodPlan> = null;
 		if (c.constructor == null || TypeFunctions.hasClassFieldFlag(c.constructor, CfExtern)) {
-			for (m in plan.methods) if (m.name == ".ctor") return {token: m.token, args: m.args};
-			return {token: 0, args: []};
+			for (x in plan.methods) if (x.name == ".ctor") m = x;
+		} else {
+			var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
+			m = g.methodPlans.get(r == null ? c.constructor : r.cf);
 		}
-		var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
-		var target = r == null ? c.constructor : r.cf;
-		var token = g.methodTokens.get(target);
-		if (token == null) return {token: 0, args: []};
-		return {token: token, args: g.methodSigs.get(target).args};
+		if (m == null) return {token: 0, args: [], owner: owner};
+		// A generic class's constructor is a MemberRef on the instantiation.
+		var token = plan.classParams.length == 0 ? m.token : g.mb.memberRef(g.typeTokenOf(owner), ".ctor", g.sigs.method(true, LVoid, m.args, 0));
+		return {token: token, args: [for (a in m.args) DotnetTypes.substitute(a, inst, [])], owner: owner};
 	}
 
 	// super(...): the base class's constructor on `this`.
@@ -1306,6 +1505,15 @@ class TexprToIl {
 			coerce(LString, ret);
 			return;
 		}
+		if (isNativeArrayClass(c)) {
+			// new NativeArray<T>(n): newarr.
+			if (args.length != 1) throw "internal error: NativeArray takes one argument";
+			var elem = sig(params[0]);
+			texpr(RValue(LInt32), args[0]);
+			code.opToken(IlOps.NEWARR, g.typeTokenOf(elem), 1, 1);
+			coerce(LVector(elem), ret);
+			return;
+		}
 		if (isExtern(c)) {
 			var ctor = externCtor(c, params, args);
 			code.opToken(IlOps.NEWOBJ, ctor.token, args.length, 1);
@@ -1313,7 +1521,7 @@ class TexprToIl {
 			return;
 		}
 		var ctor = haxeCtor(c, params, args);
-		var t = g.planOf.get(c).thisSig;
+		var t = ctor.owner;
 		if (ctor.token == 0) {
 			// A struct without a constructor that takes arguments: a zeroed value.
 			if (!DotnetTypes.isValueType(t) || args.length > 0) throw "internal error: no constructor of " + Globals.sTypePath(c.path);
@@ -1328,13 +1536,100 @@ class TexprToIl {
 		coerce(t, ret);
 	}
 
+	static function isNativeArrayClass(c:TClass):Bool {
+		return c.path.name == "NativeArray" && c.path.pack.length == 1 && c.path.pack[0] == "cs";
+	}
+
+	static function isNativeArray(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, [_]): isNativeArrayClass(c);
+			case _: false;
+		}
+	}
+
+	// The standard library's Array class and its type arguments, when `t` is an Array.
+	static function arrayOf(t:T):Null<{c:TClass, params:TParams}> {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, params) if (c.path.pack.length == 0 && c.path.name == "Array" && !isExtern(c)): {c: c, params: params};
+			case _: null;
+		}
+	}
+
+	static function vectorElement(s:IlSigNorm):IlSigNorm {
+		return switch (s) {
+			case LVector(t): t;
+			case _: throw "internal error: not a native array: " + s;
+		}
+	}
+
+	// An index is an Int, or a UInt, which is the same int32 on the stack.
+	function indexSig(e:TExpr):IlSigNorm {
+		var s = sig(e.type);
+		return isIntLike(s) ? s : LInt32;
+	}
+
+	// Array's __get or __set on an Array of type `t`.
+	function arrayAccessor(t:T, name:String):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm, owner:IlSigNorm} {
+		var a = arrayOf(t);
+		var cf = a.c.fields.get(name);
+		if (cf == null) throw new Unsupported("Array." + name, false);
+		return haxeMethod(a.c, a.params, cf, [], cf.type);
+	}
+
+	// Pushes a native array and an index into it; returns the element type.
+	function pushArrayAndIndex(e1:TExpr, e2:TExpr):IlSigNorm {
+		var vec = sig(e1.type);
+		texpr(RValue(vec), e1);
+		texpr(RValue(indexSig(e2)), e2);
+		return vectorElement(vec);
+	}
+
+	// a[i]: ldelem on a native array, Array's __get on an Array.
+	function arrayRead(ret:Ret, e1:TExpr, e2:TExpr):Void {
+		if (isNativeArray(e1.type)) {
+			var elem = pushArrayAndIndex(e1, e2);
+			code.opToken(IlOps.LDELEM, g.typeTokenOf(elem), 2, 1);
+			coerce(elem, ret);
+			return;
+		}
+		if (arrayOf(e1.type) == null) throw new Unsupported("array access", false);
+		var m = arrayAccessor(e1.type, "__get");
+		receiver(e1, m.owner);
+		texpr(RValue(m.args[0]), e2);
+		code.opToken(IlOps.CALLVIRT, m.token, 2, 1);
+		coerce(m.ret, ret);
+	}
+
+	// [e1, e2]: a native array filled with stelem, then new Array<T>(native).
+	function arrayLiteral(ret:Ret, e:TExpr, el:Array<TExpr>):Void {
+		var a = arrayOf(e.type);
+		if (a == null) throw new Unsupported("array literals", true);
+		g.types.checkKept(TClassDecl(a.c));
+		var plan = g.planOf.get(a.c);
+		var elem = sig(a.params[0]);
+		var owner = DotnetCtx.instanceOf(plan, [elem]);
+		var ctor = null;
+		for (m in plan.methods) if (m.name == ".ctor" && m.args.length == 1 && IlPaths.sigEq(m.args[0], LVector(LTypeParam(0)))) ctor = m;
+		if (ctor == null) throw "internal error: Array has no constructor from a native array";
+		var elemToken = g.typeTokenOf(elem);
+		code.ldcI4(el.length);
+		code.opToken(IlOps.NEWARR, elemToken, 1, 1);
+		for (i in 0...el.length) {
+			code.op(IlOps.DUP, 1, 2);
+			code.ldcI4(i);
+			texpr(RValue(elem), el[i]);
+			code.opToken(IlOps.STELEM, elemToken, 3, 0);
+		}
+		code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(owner), ".ctor", g.sigs.method(true, LVoid, ctor.args, 0)), 1, 1);
+		coerce(owner, ret);
+	}
+
 	// cast(e, C): castclass, unless it is an upcast.
 	function checkedCast(ret:Ret, e:TExpr, e1:TExpr):Void {
 		var to = sig(e.type);
 		var from = sig(e1.type);
 		if (!isReference(to) || to.match(LObject) || !isReference(from)) throw new Unsupported("checked casts", true);
-		if (!IlPaths.sigEq(from, to) && !g.isUpcast(from, to) && g.isGenericHaxeClass(to))
-			throw new Unsupported("casts to instances of generic classes", true);
+		checkInstantiationCast(from, to);
 		texpr(RValue(from), e1);
 		if (!IlPaths.sigEq(from, to) && !g.isUpcast(from, to)) castTo(to);
 		coerce(to, ret);

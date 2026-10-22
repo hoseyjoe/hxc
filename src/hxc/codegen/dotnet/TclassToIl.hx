@@ -55,6 +55,9 @@ typedef ClassPlan = {
 	// The class's own type, as `this` has it.
 	thisSig:IlSigNorm,
 	isStruct:Bool,
+	// A generic class with a .cctor: gencs's `static bool __hx_init_called`, which lets the .cctor of
+	// only the first instantiation run, since the CLR runs one per instantiation.
+	initFlag:Bool,
 	token:Int
 };
 
@@ -85,6 +88,7 @@ class MethodAttrs {
 }
 
 class FieldAttrs {
+	public static inline var PRIVATE = 0x1;
 	public static inline var PUBLIC = 0x6;
 	public static inline var STATIC = 0x10;
 }
@@ -96,6 +100,7 @@ class FieldAttrs {
 class TclassToIl {
 	static final objectPath:IlPath = {ns: ["System"], nested: [], name: "Object"};
 	static final valueTypePath:IlPath = {ns: ["System"], nested: [], name: "ValueType"};
+	static inline final initFlagName = "__hx_init_called";
 
 	static function functionSig(g:DotnetCtx, t:T):{args:Array<IlSigNorm>, names:Array<String>, ret:IlSigNorm} {
 		return switch (TypeFunctions.follow(t)) {
@@ -263,6 +268,7 @@ class TclassToIl {
 			isStd: isStd,
 			thisSig: g.types.toSig(TInst(c, TypeFunctions.extractParamTypes(c.params))),
 			isStruct: isStruct,
+			initFlag: hasCctor && c.params.length > 0,
 			token: 0
 		};
 	}
@@ -534,6 +540,7 @@ class TclassToIl {
 			isStd: false,
 			thisSig: LClass(path, []),
 			isStruct: false,
+			initFlag: false,
 			token: 0
 		};
 	}
@@ -553,11 +560,13 @@ class TclassToIl {
 			g.fieldSigs.set(f.cf, f.sig);
 			g.ownerOf.set(f.cf, plan);
 		}
+		if (plan.initFlag) mb.field(plan.token, FieldAttrs.PRIVATE | FieldAttrs.STATIC, initFlagName, g.sigs.field(LBool));
 		for (m in plan.methods) {
 			m.token = mb.method(plan.token, m.flags, 0, m.name, g.sigs.method(m.hasThis, m.ret, m.args, m.generics.length), m.argNames);
 			switch (m.kind) {
 				case MField(cf):
 					g.methodTokens.set(cf, m.token);
+					g.methodPlans.set(cf, m);
 					g.methodSigs.set(cf, {ret: m.ret, args: m.args});
 					g.ownerOf.set(cf, plan);
 				case MEntryPoint:
@@ -674,9 +683,8 @@ class TclassToIl {
 					initsAndBaseCtor(g, plan, code, lower);
 					if (failures.length == 0) lower.finish();
 				case MToString(cf):
-					if (plan.classParams.length > 0) throw new Unsupported("instance members of generic classes", true, m.pos);
 					code.ldarg(0);
-					code.opToken(plan.isStruct ? IlOps.CALL : IlOps.CALLVIRT, g.methodTokens.get(cf), 1, 1);
+					code.opToken(plan.isStruct ? IlOps.CALL : IlOps.CALLVIRT, g.memberOf(plan, plan.thisSig, cf), 1, 1);
 					code.op(IlOps.RET, 1, 0);
 				case MField(cf):
 					if (TypeFunctions.hasMeta(":functionCode", cf.meta)) throw new Unsupported("@:functionCode", false, cf.pos);
@@ -703,6 +711,7 @@ class TclassToIl {
 					if (g.ctx.main != null) statement(lower, RVoid, g.ctx.main);
 					if (failures.length == 0) lower.finish();
 				case MCctor:
+					if (plan.initFlag) initGuard(g, plan, code);
 					cctor(plan, lower);
 					if (failures.length == 0) lower.finish();
 			});
@@ -730,6 +739,20 @@ class TclassToIl {
 			return;
 		}
 		lower.texpr(ret, {expr: TBlock([e]), type: e.type, pos: e.pos});
+	}
+
+	// gencs's guard: `if (C<object>.__hx_init_called) return; C<object>.__hx_init_called = true;`.
+	static function initGuard(g:DotnetCtx, plan:ClassPlan, code:IlCode):Void {
+		var inst = [for (_ in plan.classParams) LObject];
+		var owner = plan.isStruct ? LValueType(plan.path, inst) : LClass(plan.path, inst);
+		var flag = g.mb.memberRef(g.typeTokenOf(owner), initFlagName, g.sigs.field(LBool));
+		var go = code.newLabel();
+		code.opToken(IlOps.LDSFLD, flag, 0, 1);
+		code.branch(IlOps.BRFALSE, go);
+		code.op(IlOps.RET, 0, 0);
+		code.mark(go);
+		code.ldcI4(1);
+		code.opToken(IlOps.STSFLD, flag, 1, 0);
 	}
 
 	// gencommon's order: @:readOnly initializers, which C# runs as field initializers first, then
