@@ -102,6 +102,9 @@ class TexprToIl {
 		if (fromValue && !toValue) {
 			code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 		} else if (!fromValue && toValue) {
+			// gencs converts Dynamic to a primitive through Runtime.toBool, toInt and toDouble, which accept
+			// null and boxed numbers of another type; an unbox.any would throw on them.
+			if (from.match(LObject) && isPrimitive(to)) throw new Unsupported("Dynamic to Bool/Int/Float conversions", true);
 			code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
 		} else if (fromValue) {
 			if (from.match(LInt32) && to.match(LFloat64)) code.op(IlOps.CONV_R8, 1, 1);
@@ -111,6 +114,10 @@ class TexprToIl {
 			// An unsafe cast may narrow; on a widening one castclass costs nothing.
 			code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
 		}
+	}
+
+	static function isPrimitive(s:IlSigNorm):Bool {
+		return s.match(LBool | LChar | LInt8 | LUInt8 | LInt16 | LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64);
 	}
 
 	static function isReference(s:IlSigNorm):Bool return s.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _));

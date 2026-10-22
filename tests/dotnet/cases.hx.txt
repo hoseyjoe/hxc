@@ -451,3 +451,33 @@ P.hx:4: characters 3-29 : dotnet: Dynamic as a condition is not supported yet
 P.hx:5: characters 15-17 : dotnet: Dynamic with the ! operator is not supported yet
 P.hx:6: characters 15-25 : dotnet: Dynamic in Std.int is not supported yet
 P.hx:7: characters 3-15 : dotnet: Dynamic as a condition is not supported yet
+--- dynamic-to-primitive-is-an-error
+class P {
+	static function flag(b:Bool):Int return b ? 1 : 0;
+	static function half(f:Float):Float return f / 2;
+	static function back(d:Dynamic):Float return d;
+	static function main() {
+		var d:Dynamic = null;
+		if (cast d) Sys.println("then");
+		if ((d : Bool)) Sys.println("then");
+		Sys.println(!(cast d));
+		Sys.println(Std.int(cast d));
+		var b:Bool = d;
+		var f:Float = d;
+		var i:Int = d;
+		Sys.println(flag(d));
+		Sys.println(half(d));
+	}
+}
+===
+[compile]
+P.hx:4: characters 47-48 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+P.hx:7: characters 12-13 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+P.hx:8: characters 8-9 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+P.hx:9: characters 22-23 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+P.hx:10: characters 28-29 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+P.hx:11: characters 16-17 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+P.hx:12: characters 17-18 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+P.hx:13: characters 15-16 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+P.hx:14: characters 20-21 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+P.hx:15: characters 20-21 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
