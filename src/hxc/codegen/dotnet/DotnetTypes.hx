@@ -58,6 +58,9 @@ class DotnetTypes {
 		}
 	}
 
+	// The class type parameters signatures are being written in terms of.
+	public function currentClassParams():TypeParams return classParams;
+
 	public function inParams(classParams:TypeParams, methodParams:TypeParams, f:() -> Void):Void {
 		withParams(classParams, methodParams, () -> {
 			f();
@@ -213,7 +216,9 @@ class DotnetTypes {
 					TypeFunctions.hasMeta(":struct", c.meta) ? LValueType(p, args) : LClass(p, args);
 				} else {
 					checkKept(TClassDecl(c));
-					LClass(DotnetNames.typePath(TClassDecl(c)), [for (a in params) toSig(a)]);
+					var p = DotnetNames.typePath(TClassDecl(c));
+					var args = [for (a in params) toSig(a)];
+					TypeFunctions.hasMeta(":struct", c.meta) ? LValueType(p, args) : LClass(p, args);
 				}
 			case TAbstract(a, params):
 				var p = a.path;

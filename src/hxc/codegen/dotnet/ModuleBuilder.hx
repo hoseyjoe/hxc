@@ -84,6 +84,11 @@ class ModuleBuilder {
 		tables.typeDef[row(typeDefToken) - 1][3] = typeDefOrRef;
 	}
 
+	// Must be added in key order: by type, then by the interface's coded index.
+	public function interfaceImpl(typeDefToken:Int, typeDefOrRef:Int):Void {
+		tables.interfaceImpl.push([row(typeDefToken), typeDefOrRef]);
+	}
+
 	public function field(owner:Int, flags:Int, name:String, sig:Bytes):Int {
 		tables.field.push([flags, heaps.strings.add(name), heaps.blobs.add(sig)]);
 		fieldOwners.push(row(owner));

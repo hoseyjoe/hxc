@@ -24,8 +24,9 @@ enum Ret {
 // A local or argument slot.
 private typedef Slot = {arg:Bool, index:Int, sig:IlSigNorm};
 
-// Something that can be loaded and stored without a receiver.
-private typedef Place = {sig:IlSigNorm, load:Void->Void, store:Void->Void};
+// Something that can be loaded and stored. `prepare` pushes the receiver, if there is one; `load` keeps
+// it under the value and `store` takes both.
+private typedef Place = {sig:IlSigNorm, receiver:Bool, prepare:Void->Void, load:Void->Void, store:Void->Void};
 
 // One method body's expressions as IL. Anything outside the subset this milestone compiles throws
 // Unsupported naming it.
@@ -44,6 +45,10 @@ class TexprToIl {
 	// Set for user code: a statement that fails to lower is reported here and lowering goes on with
 	// the next one. Unset, the Unsupported propagates.
 	public var onError:Null<Unsupported->Void> = null;
+
+	// The class whose method this is, and its own type as `this` has it (null in a static method).
+	public var cls:Null<TClass> = null;
+	public var thisSig:Null<IlSigNorm> = null;
 
 	public function new(g:DotnetCtx, code:IlCode, ret:IlSigNorm) {
 		this.g = g;
@@ -111,9 +116,16 @@ class TexprToIl {
 			else if (from.match(LFloat64) && to.match(LInt32)) code.op(IlOps.CONV_I4, 1, 1);
 			else throw new Unsupported("conversions between value types", true);
 		} else if (isReference(from) && isReference(to) && !to.match(LObject)) {
-			// An unsafe cast may narrow; on a widening one castclass costs nothing.
-			code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
+			// An upcast needs nothing; anything else may narrow.
+			if (g.isUpcast(from, to)) return;
+			castTo(to);
 		}
+	}
+
+	function castTo(to:IlSigNorm):Void {
+		// gencs erases a generic Haxe class's type arguments at run time, so castclass to one would fail.
+		if (g.isGenericHaxeClass(to)) throw new Unsupported("casts to instances of generic classes", true);
+		code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
 	}
 
 	static function isPrimitive(s:IlSigNorm):Bool {
@@ -157,7 +169,11 @@ class TexprToIl {
 				code.op(IlOps.LDNULL, 0, 1);
 				coerce(null, ret);
 			case TConst(TThis):
-				throw new Unsupported("`this`", false);
+				if (thisSig == null) throw new Unsupported("`this`", false);
+				code.ldarg(0);
+				// A struct's `this` is its address.
+				if (DotnetTypes.isValueType(thisSig)) code.opToken(IlOps.LDOBJ, g.typeTokenOf(thisSig), 1, 1);
+				coerce(thisSig, ret);
 			case TConst(TSuper):
 				throw new Unsupported("`super`", false);
 			case TLocal(v):
@@ -185,8 +201,14 @@ class TexprToIl {
 				code.op(IlOps.RET, 0, 0);
 			case TReturn(e1):
 				if (code.depth != 0) throw new Unsupported("`return` inside expressions", false);
-				texpr(RValue(this.ret), e1);
-				code.op(IlOps.RET, 1, 0);
+				if (this.ret.match(LVoid)) {
+					// `return f()` with a Void f.
+					texpr(RVoid, e1);
+					if (code.reachable()) code.op(IlOps.RET, 0, 0);
+				} else {
+					texpr(RValue(this.ret), e1);
+					code.op(IlOps.RET, 1, 0);
+				}
 			case TParenthesis(e1) | TMeta(_, e1):
 				texpr(ret, e1);
 			case TCast(e1, null):
@@ -239,6 +261,8 @@ class TexprToIl {
 				throw new Unsupported("try/catch", false);
 			case TThrow(_):
 				throw new Unsupported("`throw`", false);
+			case TCast(e1, TClassDecl(_)):
+				checkedCast(ret, e, e1);
 			case TCast(_, _):
 				throw new Unsupported("checked casts", true);
 			case TEnumParameter(_, _, _) | TEnumIndex(_):
@@ -308,6 +332,16 @@ class TexprToIl {
 				if (needVal(ret)) code.op(IlOps.DUP, 1, 2);
 				code.opToken(IlOps.STSFLD, f.token, 1, 0);
 				if (needVal(ret)) coerce(f.sig, ret);
+			case TField(obj, FInstance(c, _, cf)) if (!isExtern(c) && !isStringClass(c)):
+				var f = instanceField(c, cf);
+				receiver(obj, f.owner, true);
+				texpr(RValue(f.sig), rhs);
+				var tmp = needVal(ret) ? keepTop(f.sig) : -1;
+				code.opToken(IlOps.STFLD, f.token, 2, 0);
+				if (tmp >= 0) {
+					code.ldloc(tmp);
+					coerce(f.sig, ret);
+				}
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c)):
 				var isStatic = fa.match(FStatic(_, _));
 				var inst = instantiation(c, fa);
@@ -326,7 +360,7 @@ class TexprToIl {
 						if (!isStatic) receiver(obj, parent);
 						texpr(RValue(s), rhs);
 						var token = g.mb.memberRef(g.typeTokenOf(parent), setter, g.sigs.method(!isStatic, LVoid, [open], 0));
-						code.opToken(isStatic || parent.match(LValueType(_, _)) ? IlOps.CALL : IlOps.CALLVIRT, token, isStatic ? 1 : 2, 0);
+						code.opToken(isStatic || DotnetTypes.isValueType(parent) ? IlOps.CALL : IlOps.CALLVIRT, token, isStatic ? 1 : 2, 0);
 					case _:
 						throw new Unsupported("assignments to a read-only .NET member", true);
 				}
@@ -572,13 +606,27 @@ class TexprToIl {
 				return place(e1);
 			case TLocal(v):
 				var s = slot(v);
-				return {sig: s.sig, load: () -> load(s), store: () -> store(s)};
+				return {sig: s.sig, receiver: false, prepare: () -> {}, load: () -> load(s), store: () -> store(s)};
 			case TField(_, FStatic(c, cf)) if (!isExtern(c) && cf.kind.match(Var(_))):
 				var f = staticField(c, cf);
 				return {
 					sig: f.sig,
+					receiver: false,
+					prepare: () -> {},
 					load: () -> code.opToken(IlOps.LDSFLD, f.token, 0, 1),
 					store: () -> code.opToken(IlOps.STSFLD, f.token, 1, 0)
+				};
+			case TField(obj, FInstance(c, _, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
+				var f = instanceField(c, cf);
+				return {
+					sig: f.sig,
+					receiver: true,
+					prepare: () -> receiver(obj, f.owner, true),
+					load: () -> {
+						code.op(IlOps.DUP, 1, 2);
+						code.opToken(IlOps.LDFLD, f.token, 1, 1);
+					},
+					store: () -> code.opToken(IlOps.STFLD, f.token, 2, 0)
 				};
 			case _:
 				return null;
@@ -593,27 +641,48 @@ class TexprToIl {
 			if (p.sig.match(LInt32)) code.ldcI4(1) else code.opR8(IlOps.LDC_R8, 1.0, 0, 1);
 			code.op(increment ? IlOps.ADD : IlOps.SUB, 2, 1);
 		}
+		p.prepare();
 		p.load();
 		if (!needVal(ret)) {
 			step();
 			p.store();
 			return;
 		}
+		var tmp = -1;
 		if (postfix) {
-			code.op(IlOps.DUP, 1, 2);
+			tmp = keep(p);
 			step();
 			p.store();
 		} else {
 			step();
-			code.op(IlOps.DUP, 1, 2);
+			tmp = keep(p);
 			p.store();
 		}
+		if (tmp >= 0) code.ldloc(tmp);
 		coerce(p.sig, ret);
+	}
+
+	// Copies the value on top for after the place's store: it stays under the value, or goes to a temp
+	// when the receiver is under it.
+	function keep(p:Place):Int {
+		if (!p.receiver) {
+			code.op(IlOps.DUP, 1, 2);
+			return -1;
+		}
+		return keepTop(p.sig);
+	}
+
+	function keepTop(s:IlSigNorm):Int {
+		code.op(IlOps.DUP, 1, 2);
+		var tmp = code.addLocal(s);
+		code.stloc(tmp);
+		return tmp;
 	}
 
 	function compound(ret:Ret, op:Binop, lhs:TExpr, rhs:TExpr):Void {
 		var p = place(lhs);
 		if (p == null) throw new Unsupported("this kind of assignment", false);
+		p.prepare();
 		p.load();
 		if (op.match(OpAdd) && p.sig.match(LString)) {
 			stringifyTop(LString);
@@ -622,9 +691,12 @@ class TexprToIl {
 		} else {
 			numericTail(op, p.sig, rhs);
 		}
-		if (needVal(ret)) code.op(IlOps.DUP, 1, 2);
+		var tmp = needVal(ret) ? keep(p) : -1;
 		p.store();
-		if (needVal(ret)) coerce(p.sig, ret);
+		if (needVal(ret)) {
+			if (tmp >= 0) code.ldloc(tmp);
+			coerce(p.sig, ret);
+		}
 	}
 
 	// `+` on Strings: String.Concat over operands that cannot be null.
@@ -825,17 +897,21 @@ class TexprToIl {
 		}
 	}
 
-	// The object an instance member is reached through; a value type's address.
-	function receiver(obj:TExpr, parent:IlSigNorm):Void {
-		if (!parent.match(LValueType(_, _))) {
+	// The object an instance member is reached through; a value type's address. A field store needs
+	// the address of a variable, not of a copy.
+	function receiver(obj:TExpr, parent:IlSigNorm, forStore = false):Void {
+		if (!DotnetTypes.isValueType(parent)) {
 			texpr(RValue(parent), obj);
 			return;
 		}
-		switch (obj.expr) {
+		switch (strip(obj).expr) {
 			case TLocal(v):
 				var s = slot(v);
 				if (s.arg) code.ldarga(s.index) else code.ldloca(s.index);
+			case TConst(TThis) if (thisSig != null && DotnetTypes.isValueType(thisSig)):
+				code.ldarg(0);
 			case _:
+				if (forStore) throw new Unsupported("assignments to fields of struct values", true);
 				texpr(RValue(parent), obj);
 				var tmp = code.addLocal(parent);
 				code.stloc(tmp);
@@ -921,13 +997,17 @@ class TexprToIl {
 					case XProperty(open, getter, _) if (getter != null):
 						if (!isStatic) receiver(obj, parent);
 						var token = g.mb.memberRef(g.typeTokenOf(parent), getter, g.sigs.method(!isStatic, open, [], 0));
-						code.opToken(isStatic || parent.match(LValueType(_, _)) ? IlOps.CALL : IlOps.CALLVIRT, token, isStatic ? 0 : 1, 1);
+						code.opToken(isStatic || DotnetTypes.isValueType(parent) ? IlOps.CALL : IlOps.CALLVIRT, token, isStatic ? 0 : 1, 1);
 						coerce(ExternMembers.subst(open, inst), ret);
 					case _:
 						throw new Unsupported("reading a write-only .NET property", false);
 				}
-			case FInstance(_, _, _):
-				throw new Unsupported("instance fields of Haxe classes", true);
+			case FInstance(c, _, cf):
+				if (!cf.kind.match(Var(_))) throw new Unsupported("method closures", true);
+				var f = instanceField(c, cf);
+				receiver(obj, f.owner);
+				code.opToken(IlOps.LDFLD, f.token, 1, 1);
+				coerce(f.sig, ret);
 			case FStatic(_, _):
 				throw new Unsupported("this kind of field access", false);
 			case FAnon(_):
@@ -1035,43 +1115,29 @@ class TexprToIl {
 			case TField(_, FStatic(c, cf)) if (!isExtern(c)):
 				g.types.checkKept(TClassDecl(c));
 				if (c.params.length > 0) throw new Unsupported("static members of generic classes", true);
-				if (cf.params.length > 0) throw new Unsupported("calls to generic methods", true);
-				var token = g.methodTokens.get(cf);
+				var target = pickOverload(c, [], cf, args, true);
+				if (target.params.length > 0) throw new Unsupported("calls to generic methods", true);
+				var token = g.methodTokens.get(target);
 				if (token == null) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
-				var m = g.methodSigs.get(cf);
+				var m = g.methodSigs.get(target);
 				pushArgs(args, m.args);
 				code.opToken(IlOps.CALL, token, args.length, m.ret.match(LVoid) ? 0 : 1);
 				coerce(m.ret, ret);
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c)):
-				var isStatic = fa.match(FStatic(_, _));
-				var m = g.externs.method(c, cf);
-				if (m.genericCount > 0) throw new Unsupported("generic .NET methods", true);
-				var inst = instantiation(c, fa);
-				var parent = ExternMembers.subst(m.parent, inst);
-				var parentArgs = switch (parent) {
-					case LClass(_, l) | LValueType(_, l): l;
-					case _: [];
-				}
-				var ilRet:IlSigNorm, ilArgs:Array<IlSigNorm>;
-				switch (m.sig) {
-					case LMethod(_, r, l):
-						ilRet = r;
-						ilArgs = l;
-					case _:
-						throw "internal error: not a method signature";
-				}
-				if (!isStatic) receiver(obj, parent);
-				pushArgs(args, [for (a in ilArgs) ExternMembers.subst(a, parentArgs)]);
-				var token = g.mb.memberRef(g.typeTokenOf(parent), m.name, g.sigs.methodSig(m.sig, 0));
-				var retSlot = ExternMembers.subst(ilRet, parentArgs);
-				var op = isStatic || parent.match(LValueType(_, _)) ? IlOps.CALL : IlOps.CALLVIRT;
-				code.opToken(op, token, args.length + (isStatic ? 0 : 1), retSlot.match(LVoid) ? 0 : 1);
-				if (retSlot.match(LVoid) && needVal(ret)) throw new Unsupported("the value of a .NET setter call", false);
-				coerce(retSlot, ret);
+				externCall(ret, obj, fa, c, cf, args);
 			case TConst(TSuper):
-				throw new Unsupported("`super` calls", true);
-			case TField(_, FInstance(_, _, _)):
-				throw new Unsupported("instance methods of Haxe classes", true);
+				superCtorCall(args);
+				coerce(LVoid, ret);
+			case TField(obj, FInstance(c, params, cf)):
+				if (!cf.kind.match(Method(_))) throw new Unsupported("calls of function values", true);
+				var m = haxeMethod(c, params, cf, args);
+				// super.m() calls the base class's method itself.
+				var isSuper = strip(obj).expr.match(TConst(TSuper));
+				if (isSuper) code.ldarg(0) else receiver(obj, m.owner);
+				pushArgs(args, m.args);
+				var op = isSuper || DotnetTypes.isValueType(m.owner) ? IlOps.CALL : IlOps.CALLVIRT;
+				code.opToken(op, m.token, args.length + 1, m.ret.match(LVoid) ? 0 : 1);
+				coerce(m.ret, ret);
 			case TIdent(_):
 				throw new Unsupported("untyped code", false);
 			case _:
@@ -1079,15 +1145,74 @@ class TexprToIl {
 		}
 	}
 
-	function construct(ret:Ret, c:TClass, params:TParams, args:Array<TExpr>):Void {
-		if (isStringClass(c)) {
-			// new String(s) is s.
-			if (args.length != 1) throw new Unsupported("this String constructor", false);
-			texpr(RValue(LString), args[0]);
-			coerce(LString, ret);
-			return;
+	// The overload a call of a Haxe method reaches, as the JVM generator picks it.
+	function pickOverload(c:TClass, params:TParams, cf:TClassField, args:Array<TExpr>, isStatic:Bool):TClassField {
+		if (cf.overloads.length == 0 && !TypeFunctions.hasClassFieldFlag(cf, CfOverload)) return cf;
+		var mapType = (t:T) -> TypeFunctions.applyParams(c.params, params, t);
+		var r = isStatic ? OverloadResolution.filterOverloads(OverloadResolution.findOverload(mapType, c, cf, args)) : OverloadResolution.maybeResolveInstanceOverload(false,
+			mapType, c, cf, args);
+		if (r == null) throw new Unsupported("this call of an overloaded method", false);
+		return r.cf;
+	}
+
+	// A Haxe class's instance variable: its token, its type and the type of the class declaring it.
+	function instanceField(c:TClass, cf:TClassField):{token:Int, sig:IlSigNorm, owner:IlSigNorm} {
+		g.types.checkKept(TClassDecl(c));
+		var plan = g.ownerOf.get(cf);
+		var token = g.fieldTokens.get(cf);
+		if (plan == null || token == null) {
+			if (!TypeFunctions.isPhysicalField(cf)) throw new Unsupported("this kind of field access", false);
+			throw "internal error: no field " + Globals.sTypePath(c.path) + "." + cf.name;
 		}
-		if (!isExtern(c)) throw new Unsupported("instances of Haxe classes", true);
+		if (plan.classParams.length > 0) throw new Unsupported("instance members of generic classes", true);
+		return {token: token, sig: g.fieldSigs.get(cf), owner: plan.thisSig};
+	}
+
+	// A Haxe class's instance method, the overload the call reaches.
+	function haxeMethod(c:TClass, params:TParams, cf:TClassField, args:Array<TExpr>):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm, owner:IlSigNorm} {
+		g.types.checkKept(TClassDecl(c));
+		var target = pickOverload(c, params, cf, args, false);
+		var plan = g.ownerOf.get(target);
+		var token = g.methodTokens.get(target);
+		if (plan == null || token == null) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
+		if (plan.classParams.length > 0) throw new Unsupported("instance members of generic classes", true);
+		if (target.params.length > 0) throw new Unsupported("calls to generic methods", true);
+		var m = g.methodSigs.get(target);
+		return {token: token, args: m.args, ret: m.ret, owner: plan.thisSig};
+	}
+
+	// A method of a referenced assembly; super.m() calls the base method itself.
+	function externCall(ret:Ret, obj:TExpr, fa:TFieldAccess, c:TClass, cf:TClassField, args:Array<TExpr>):Void {
+		var isStatic = fa.match(FStatic(_, _));
+		var isSuper = !isStatic && strip(obj).expr.match(TConst(TSuper));
+		var m = g.externs.method(c, cf);
+		if (m.genericCount > 0) throw new Unsupported("generic .NET methods", true);
+		var inst = instantiation(c, fa);
+		var parent = ExternMembers.subst(m.parent, inst);
+		var parentArgs = switch (parent) {
+			case LClass(_, l) | LValueType(_, l): l;
+			case _: [];
+		}
+		var ilRet:IlSigNorm, ilArgs:Array<IlSigNorm>;
+		switch (m.sig) {
+			case LMethod(_, r, l):
+				ilRet = r;
+				ilArgs = l;
+			case _:
+				throw "internal error: not a method signature";
+		}
+		if (isSuper) code.ldarg(0) else if (!isStatic) receiver(obj, parent);
+		pushArgs(args, [for (a in ilArgs) ExternMembers.subst(a, parentArgs)]);
+		var token = g.mb.memberRef(g.typeTokenOf(parent), m.name, g.sigs.methodSig(m.sig, 0));
+		var retSlot = ExternMembers.subst(ilRet, parentArgs);
+		var op = isStatic || isSuper || DotnetTypes.isValueType(parent) ? IlOps.CALL : IlOps.CALLVIRT;
+		code.opToken(op, token, args.length + (isStatic ? 0 : 1), retSlot.match(LVoid) ? 0 : 1);
+		if (retSlot.match(LVoid) && needVal(ret)) throw new Unsupported("the value of a .NET setter call", false);
+		coerce(retSlot, ret);
+	}
+
+	// A .NET constructor: its MemberRef, with the arguments pushed.
+	function externCtor(c:TClass, params:TParams, args:Array<TExpr>):{token:Int, parent:IlSigNorm} {
 		var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
 		if (r == null) throw "internal error: no constructor of " + Globals.sTypePath(c.path) + " fits";
 		if (r.c != c) throw new Unsupported("inherited .NET constructors", true);
@@ -1102,8 +1227,83 @@ class TexprToIl {
 			case _: throw "internal error: not a method signature";
 		}
 		pushArgs(args, [for (a in ilArgs) ExternMembers.subst(a, parentArgs)]);
-		var token = g.mb.memberRef(g.typeTokenOf(parent), ".ctor", g.sigs.methodSig(m.sig, 0));
-		code.opToken(IlOps.NEWOBJ, token, args.length, 1);
-		coerce(parent, ret);
+		return {token: g.mb.memberRef(g.typeTokenOf(parent), ".ctor", g.sigs.methodSig(m.sig, 0)), parent: parent};
+	}
+
+	// A Haxe class's constructor: the one the arguments reach, or the implicit one; 0 for a struct's
+	// parameterless one, which is not declared.
+	function haxeCtor(c:TClass, params:TParams, args:Array<TExpr>):{token:Int, args:Array<IlSigNorm>} {
+		g.types.checkKept(TClassDecl(c));
+		var plan = g.planOf.get(c);
+		if (plan == null) throw "internal error: no plan for " + Globals.sTypePath(c.path);
+		if (plan.classParams.length > 0) throw new Unsupported("instances of generic classes", true);
+		if (c.constructor == null || TypeFunctions.hasClassFieldFlag(c.constructor, CfExtern)) {
+			for (m in plan.methods) if (m.name == ".ctor") return {token: m.token, args: m.args};
+			return {token: 0, args: []};
+		}
+		var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
+		var target = r == null ? c.constructor : r.cf;
+		var token = g.methodTokens.get(target);
+		if (token == null) return {token: 0, args: []};
+		return {token: token, args: g.methodSigs.get(target).args};
+	}
+
+	// super(...): the base class's constructor on `this`.
+	function superCtorCall(args:Array<TExpr>):Void {
+		var s = cls == null ? null : cls.superClass;
+		if (s == null || thisSig == null) throw new Unsupported("`super` calls", true);
+		if (isExtern(s.c)) {
+			code.ldarg(0);
+			var ctor = externCtor(s.c, s.params, args);
+			code.opToken(IlOps.CALL, ctor.token, args.length + 1, 0);
+			return;
+		}
+		var ctor = haxeCtor(s.c, s.params, args);
+		if (ctor.token == 0) throw "internal error: no constructor of " + Globals.sTypePath(s.c.path);
+		code.ldarg(0);
+		pushArgs(args, ctor.args);
+		code.opToken(IlOps.CALL, ctor.token, args.length + 1, 0);
+	}
+
+	function construct(ret:Ret, c:TClass, params:TParams, args:Array<TExpr>):Void {
+		if (isStringClass(c)) {
+			// new String(s) is s.
+			if (args.length != 1) throw new Unsupported("this String constructor", false);
+			texpr(RValue(LString), args[0]);
+			coerce(LString, ret);
+			return;
+		}
+		if (isExtern(c)) {
+			var ctor = externCtor(c, params, args);
+			code.opToken(IlOps.NEWOBJ, ctor.token, args.length, 1);
+			coerce(ctor.parent, ret);
+			return;
+		}
+		var ctor = haxeCtor(c, params, args);
+		var t = g.planOf.get(c).thisSig;
+		if (ctor.token == 0) {
+			// A struct without a constructor that takes arguments: a zeroed value.
+			if (!DotnetTypes.isValueType(t) || args.length > 0) throw "internal error: no constructor of " + Globals.sTypePath(c.path);
+			var tmp = code.addLocal(t);
+			code.ldloca(tmp);
+			code.opToken(IlOps.INITOBJ, g.typeTokenOf(t), 1, 0);
+			code.ldloc(tmp);
+		} else {
+			pushArgs(args, ctor.args);
+			code.opToken(IlOps.NEWOBJ, ctor.token, args.length, 1);
+		}
+		coerce(t, ret);
+	}
+
+	// cast(e, C): castclass, unless it is an upcast.
+	function checkedCast(ret:Ret, e:TExpr, e1:TExpr):Void {
+		var to = sig(e.type);
+		var from = sig(e1.type);
+		if (!isReference(to) || to.match(LObject) || !isReference(from)) throw new Unsupported("checked casts", true);
+		if (!IlPaths.sigEq(from, to) && !g.isUpcast(from, to) && g.isGenericHaxeClass(to))
+			throw new Unsupported("casts to instances of generic classes", true);
+		texpr(RValue(from), e1);
+		if (!IlPaths.sigEq(from, to) && !g.isUpcast(from, to)) castTo(to);
+		coerce(to, ret);
 	}
 }

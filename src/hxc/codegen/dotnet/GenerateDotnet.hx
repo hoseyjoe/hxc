@@ -24,6 +24,8 @@ class DotnetCtx {
 	public final fieldTokens = new ObjectMap<TClassField, Int>();
 	public final fieldSigs = new ObjectMap<TClassField, IlSigNorm>();
 	public final planOf = new ObjectMap<TClass, ClassPlan>();
+	// The plan of the class declaring each Haxe field and method.
+	public final ownerOf = new ObjectMap<TClassField, ClassPlan>();
 	public var plans:Array<ClassPlan> = [];
 	// "skipped", "stubbed" and "ignored" lines for -D dotnet-stub-report.
 	public final records:Array<String> = [];
@@ -69,6 +71,54 @@ class DotnetCtx {
 				if (p != null) ModuleBuilder.typeDefOrRefToken(mb.typeToken(p, DotnetTypes.isValueType(s)));
 				else mb.typeSpec(sigs.typeSpec(s));
 		}
+	}
+
+	var classes:Null<Map<String, TClass>> = null;
+
+	// The Haxe class, extern or not, that a .NET path names.
+	public function classAt(p:IlPath):Null<TClass> {
+		if (classes == null) {
+			classes = new Map();
+			for (mt in ctx.types) switch (mt) {
+				case TClassDecl(c):
+					var path = if (!TypeFunctions.hasClassFlag(c, CExtern)) DotnetNames.typePath(mt) else try types.externPath(c) catch (_:Unsupported) null;
+					if (path != null && !classes.exists(IlPaths.key(path))) classes.set(IlPaths.key(path), c);
+				case _:
+			}
+		}
+		return classes.get(IlPaths.key(p));
+	}
+
+	// A class defined by Haxe code (not an extern) with type arguments.
+	public function isGenericHaxeClass(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LClass(p, args) | LValueType(p, args) if (args.length > 0):
+				var c = classAt(p);
+				c != null && !TypeFunctions.hasClassFlag(c, CExtern);
+			case _: false;
+		}
+	}
+
+	// Whether a value of the non-generic class `from` already is a `to`, through its superclasses and
+	// interfaces as Haxe declares them.
+	public function isUpcast(from:IlSigNorm, to:IlSigNorm):Bool {
+		var c = switch (from) {
+			case LClass(p, []): classAt(p);
+			case _: null;
+		}
+		if (c == null) return false;
+		function reaches(c:TClass, params:Array<T>):Bool {
+			var s = try types.toSig(TInst(c, params)) catch (_:Unsupported) return false;
+			if (IlPaths.sigEq(s, to)) return true;
+			var supers = c.interfaces.copy();
+			if (c.superClass != null) supers.push(c.superClass);
+			for (sup in supers) {
+				var args = [for (t in sup.params) TypeFunctions.applyParams(c.params, params, t)];
+				if (reaches(sup.c, args)) return true;
+			}
+			return false;
+		}
+		return reaches(c, []);
 	}
 
 	// cs.Boot.init's token when cs.Boot is one of the program's types, as gencs calls it. A cs.Boot

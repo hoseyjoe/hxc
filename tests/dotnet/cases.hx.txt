@@ -481,3 +481,312 @@ P.hx:12: characters 17-18 : dotnet: Dynamic to Bool/Int/Float conversions are no
 P.hx:13: characters 15-16 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
 P.hx:14: characters 20-21 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
 P.hx:15: characters 20-21 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+--- classes-and-inheritance
+class Animal {
+	public var name:String;
+	public function new(name:String) {
+		this.name = name;
+	}
+	public function speak():String {
+		return name + " makes a sound";
+	}
+}
+class Dog extends Animal {
+	public function new() {
+		super("Rex");
+	}
+	override public function speak():String {
+		return super.speak() + ": woof";
+	}
+}
+interface Greeter {
+	function greet():String;
+}
+class Hello implements Greeter {
+	public function new() {}
+	public function greet():String {
+		return "hello";
+	}
+	public function toString():String {
+		return "Hello!";
+	}
+}
+class P {
+	static function main() {
+		var a:Animal = new Dog();
+		Sys.println(a.speak());
+		var g:Greeter = new Hello();
+		Sys.println(g.greet());
+		Sys.println(a.name);
+		Sys.println("" + new Hello());
+	}
+}
+===
+[run]
+Rex makes a sound: woof
+hello
+Rex
+Hello!
+--- constructors-and-field-inits
+class Base {
+	public var items = 3;
+	public function new() {}
+}
+class Counter extends Base {
+	public var count:Int = 10;
+	public function new() {
+		super();
+		count += items;
+	}
+}
+class NoCtor {
+	public static function hi() return "hi";
+}
+class Child extends NoCtor {
+	public function new() {}
+}
+class P {
+	static function main() {
+		Sys.println(new Counter().count);
+		Sys.println(new Child() != null);
+		Sys.println(NoCtor.hi());
+	}
+}
+===
+[run]
+13
+True
+hi
+--- static-init-order
+class A {
+	public static var x = B.y + 1;
+}
+class B {
+	public static var y = 41;
+}
+class P {
+	static function main() {
+		Sys.println(A.x);
+	}
+}
+===
+[run]
+42
+--- extends-native-exception @dump=MyError
+class MyError extends cs.system.Exception {
+	public var code:Int;
+	public function new(code:Int) {
+		super("my error");
+		this.code = code;
+	}
+}
+class P {
+	static function main() {
+		var e = new MyError(7);
+		Sys.println(e.Message + " " + e.code);
+	}
+}
+===
+[run]
+my error 7
+[dump]
+type public beforefieldinit MyError extends [mscorlib]System.Exception
+  field public int32 code
+  method public hidebysig specialname rtspecialname void .ctor(int32)
+--- clr-names @lib @module=pack.Thing @dump=pack.IRun,pack.Thing,pack.Sealed
+package pack;
+interface IRun {
+	function run(x:Int):Void;
+}
+class Thing implements IRun {
+	public var Thing:Int;
+	public var other:String;
+	public function new() {}
+	public function run(x:Int):Void {}
+	public final function stop():Void {}
+	public static function make():Thing {
+		return new Thing();
+	}
+}
+final class Sealed {
+	public function new() {}
+	public function go():Void {}
+}
+===
+[dump]
+type public interface abstract pack.IRun
+  method public virtual hidebysig newslot abstract void run(int32)
+type public beforefieldinit pack.Thing extends [mscorlib]System.Object implements pack.IRun
+  field public int32 Thing_Thing
+  field public string other
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public virtual hidebysig newslot void run(int32)
+  method public hidebysig void stop()
+  method public static hidebysig pack.Thing make()
+type public sealed beforefieldinit pack.Sealed extends [mscorlib]System.Object
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public hidebysig void go()
+--- structs-and-field-updates @dump=Vec
+@:struct class Vec {
+	public var x:Int;
+	public var y:Int;
+	public function new(x:Int, y:Int) {
+		this.x = x;
+		this.y = y;
+	}
+	public function sum():Int return x + y;
+	public function bump():Void {
+		x++;
+		this.y += 10;
+	}
+	public function toString():String return "Vec(" + x + "," + y + ")";
+}
+class Inits {
+	public var a = 1;
+	public var b = "two";
+}
+class InitsSub extends Inits {
+	public function new() {}
+}
+class P {
+	static function main() {
+		var v = new Vec(1, 2);
+		v.bump();
+		Sys.println(v.sum());
+		Sys.println("" + v);
+		Sys.println(new Vec(0, 0).x);
+		var i = new InitsSub();
+		i.a += 5;
+		i.a++;
+		var post = i.a++;
+		Sys.println(i.a + " " + post + " " + i.b + " " + (++i.a) + " " + (i.b += "!"));
+	}
+}
+===
+[run]
+14
+Vec(2,12)
+0
+8 7 two 9 two!
+[dump]
+type public sealed sequential beforefieldinit Vec extends [mscorlib]System.ValueType
+  field public int32 x
+  field public int32 y
+  method public hidebysig specialname rtspecialname void .ctor(int32, int32)
+  method public hidebysig int32 sum()
+  method public hidebysig void bump()
+  method public hidebysig string toString()
+  method public virtual hidebysig string ToString()
+--- virtual-dispatch-and-casts @dump=Shape,Fin,Over
+abstract class Shape {
+	public function new() {}
+	public abstract function area():Float;
+	public function describe():String return "shape " + area();
+}
+class Sq extends Shape {
+	var s:Float;
+	public function new(s:Float) {
+		super();
+		this.s = s;
+	}
+	public function area():Float return s * s;
+}
+interface Named {
+	function name():String;
+}
+interface Titled extends Named {
+	function title():String;
+}
+class Base {
+	public function new() {}
+	public function name():String return "base";
+}
+class Sub extends Base implements Titled {
+	public function title():String return "Dr " + name();
+}
+final class Fin implements Named {
+	public function new() {}
+	public function name():String return "fin";
+}
+class Over {
+	public function new() {}
+	@:overload public function f(x:Int):String return "int " + x;
+	@:overload public function f(x:String):String return "str " + x;
+}
+class Res implements cs.system.IDisposable {
+	public static var disposed = 0;
+	public function new() {}
+	public function Dispose():Void disposed++;
+}
+class Ex extends cs.system.Exception {
+	public function new() super("ex");
+	@:overload override public function ToString():String return "Ex " + super.ToString().length;
+}
+class P {
+	static function main() {
+		var sh:Shape = new Sq(3);
+		Sys.println(sh.describe());
+		var t:Titled = new Sub();
+		var n:Named = t;
+		Sys.println(t.title() + " " + n.name());
+		n = new Fin();
+		Sys.println(n.name());
+		var o = new Over();
+		Sys.println(o.f(3) + " " + o.f("s"));
+		(new Res() : cs.system.IDisposable).Dispose();
+		Sys.println(Res.disposed);
+		Sys.println(new Ex().ToString());
+		var d:Dynamic = sh;
+		var sq = cast(d, Sq);
+		var back:Sq = cast sh;
+		Sys.println(sq.area() + " " + (back == sq));
+	}
+}
+===
+[run]
+shape 9
+Dr base base
+fin
+int 3 str s
+1
+Ex 6
+9 true
+[dump]
+type public abstract beforefieldinit Shape extends [mscorlib]System.Object
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public virtual hidebysig newslot abstract float64 area()
+  method public virtual hidebysig newslot string describe()
+type public sealed beforefieldinit Fin extends [mscorlib]System.Object implements Named
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public final virtual hidebysig newslot string name()
+type public beforefieldinit Over extends [mscorlib]System.Object
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public virtual hidebysig newslot string f(int32)
+  method public virtual hidebysig newslot string f(string)
+--- class-declarations-that-are-errors
+class A {
+	public function new() {}
+	public function get():Dynamic return 1;
+}
+class B extends A {
+	override public function get():String return "s";
+}
+interface HasVar {
+	var x:Int;
+}
+class G<T> {
+	public function new() {}
+}
+class P {
+	static function main() {
+		Sys.println(new B().get());
+		var d:Dynamic = null;
+		var g:G<Int> = cast d;
+	}
+}
+===
+[compile]
+P.hx:6: characters 2-50 : dotnet: overrides that change the signature are not supported yet
+P.hx:9: characters 2-12 : dotnet: interface variables are not supported yet
+P.hx:16: characters 15-28 : dotnet: B (left out: overrides that change the signature) is not supported yet
+P.hx:18: characters 23-24 : dotnet: casts to instances of generic classes are not supported yet

@@ -113,7 +113,7 @@ class ExternMembers {
 		}
 	}
 
-	public function method(c:TClass, cf:TClassField):{parent:IlSigNorm, name:String, sig:IlSigNorm, isStatic:Bool, genericCount:Int} {
+	public function method(c:TClass, cf:TClassField):{parent:IlSigNorm, name:String, sig:IlSigNorm, isStatic:Bool, genericCount:Int, isVirtual:Bool} {
 		var isCtor = cf.name == "new";
 		var isStatic = !isCtor && TypeFunctions.hasClassFieldFlag(cf, CfStatic);
 		var name = isCtor ? ".ctor" : memberName(cf);
@@ -132,7 +132,17 @@ class ExternMembers {
 				if (m.mname != name || m.margs.length != want.length) continue;
 				if ((m.mflags.contract.indexOf(CMStatic) >= 0) != isStatic) continue;
 				var got = [for (a in m.margs) isStatic ? eraseClassParams(a.sig.snorm) : subst(a.sig.snorm, args)];
-				if (IlPaths.sigsEq(got, want)) return {parent: link.parent, name: name, sig: m.msig.snorm, isStatic: isStatic, genericCount: m.mtypes.length};
+				if (IlPaths.sigsEq(got, want)) {
+					var contract = m.mflags.contract;
+					return {
+						parent: link.parent,
+						name: name,
+						sig: m.msig.snorm,
+						isStatic: isStatic,
+						genericCount: m.mtypes.length,
+						isVirtual: contract.indexOf(CMVirtual) >= 0 && contract.indexOf(CMFinal) < 0
+					};
+				}
 			}
 			if (isCtor) break;
 		}
