@@ -24,6 +24,9 @@ enum Ret {
 // A local or argument slot.
 private typedef Slot = {arg:Bool, index:Int, sig:IlSigNorm};
 
+// Something that can be loaded and stored without a receiver.
+private typedef Place = {sig:IlSigNorm, load:Void->Void, store:Void->Void};
+
 // One method body's expressions as IL. Anything outside the subset this milestone compiles throws
 // Unsupported naming it.
 
@@ -35,6 +38,8 @@ class TexprToIl {
 	// Variables whose declaration failed to lower; a failing statement that uses one is not reported
 	// again.
 	final poisoned = new Map<Int, Bool>();
+	// Where break and continue go, innermost loop last.
+	final loops:Array<{brk:Label, cont:Label}> = [];
 
 	// Set for user code: a statement that fails to lower is reported here and lowering goes on with
 	// the next one. Unset, the Unsupported propagates.
@@ -100,6 +105,7 @@ class TexprToIl {
 			code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
 		} else if (fromValue) {
 			if (from.match(LInt32) && to.match(LFloat64)) code.op(IlOps.CONV_R8, 1, 1);
+			else if (from.match(LFloat64) && to.match(LInt32)) code.op(IlOps.CONV_I4, 1, 1);
 			else throw new Unsupported("conversions between value types", true);
 		} else if (isReference(from) && isReference(to) && !to.match(LObject)) {
 			// An unsafe cast may narrow; on a widening one castclass costs nothing.
@@ -180,8 +186,24 @@ class TexprToIl {
 				}, e1);
 			case TBinop(OpAssign, lhs, rhs):
 				assign(ret, lhs, rhs);
-			case TBinop(op = OpAdd | OpSub | OpMult | OpDiv, e1, e2):
-				arith(ret, e, op, e1, e2);
+			case TBinop(OpAssignOp(op), lhs, rhs):
+				compound(ret, op, lhs, rhs);
+			case TBinop(op, e1, e2):
+				binary(ret, e, op, e1, e2);
+			case TUnop(op, flag, e1):
+				unary(ret, e, op, flag, e1);
+			case TIf(cond, eif, eelse):
+				ifExpr(ret, e, cond, eif, eelse);
+			case TWhile(cond, body, flag):
+				whileLoop(ret, cond, body, flag);
+			case TSwitch(subject, cases, def):
+				switchExpr(ret, e, subject, cases, def);
+			case TBreak:
+				if (loops.length == 0) throw new Unsupported("`break` outside a loop", false);
+				code.branch(IlOps.BR, loops[loops.length - 1].brk);
+			case TContinue:
+				if (loops.length == 0) throw new Unsupported("`continue` outside a loop", false);
+				code.branch(IlOps.BR, loops[loops.length - 1].cont);
 			case TField(obj, fa):
 				fieldRead(ret, e, obj, fa);
 			case TCall(callee, args):
@@ -194,28 +216,14 @@ class TexprToIl {
 				throw new Unsupported("type expressions", true);
 			case TArray(_, _):
 				throw new Unsupported("array access", false);
-			case TBinop(op, _, _):
-				throw new Unsupported("the " + Ast.sBinop(op) + " operator", false);
 			case TObjectDecl(_):
 				throw new Unsupported("anonymous objects", true);
 			case TArrayDecl(_):
 				throw new Unsupported("array literals", true);
-			case TUnop(op, _, _):
-				throw new Unsupported("the " + Ast.sUnop(op) + " operator", false);
 			case TFor(_, _, _):
 				throw new Unsupported("for loops", true);
-			case TIf(_, _, _):
-				throw new Unsupported("if expressions", true);
-			case TWhile(_, _, _):
-				throw new Unsupported("while loops", true);
-			case TSwitch(_, _, _):
-				throw new Unsupported("switch expressions", true);
 			case TTry(_, _):
 				throw new Unsupported("try/catch", false);
-			case TBreak:
-				throw new Unsupported("`break`", false);
-			case TContinue:
-				throw new Unsupported("`continue`", false);
 			case TThrow(_):
 				throw new Unsupported("`throw`", false);
 			case TCast(_, _):
@@ -314,22 +322,469 @@ class TexprToIl {
 		}
 	}
 
-	function arith(ret:Ret, e:TExpr, op:Binop, e1:TExpr, e2:TExpr):Void {
-		var t = sig(e.type);
-		var opcode = switch (op) {
-			case OpAdd: IlOps.ADD;
-			case OpSub: IlOps.SUB;
-			case OpMult: IlOps.MUL;
-			case _: IlOps.DIV;
+	static function strip(e:TExpr):TExpr {
+		return switch (e.expr) {
+			case TParenthesis(e1) | TMeta(_, e1): strip(e1);
+			case _: e;
 		}
-		inline function numeric(s:IlSigNorm) return s.match(LInt32 | LFloat64);
-		if (t.match(LString)) throw new Unsupported("string concatenation", false);
-		if (!numeric(t) || !numeric(sig(e1.type)) || !numeric(sig(e2.type)) || (op.match(OpDiv) && !t.match(LFloat64)))
-			throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
-		texpr(RValue(t), e1);
-		texpr(RValue(t), e2);
-		code.op(opcode, 2, 1);
-		coerce(t, ret);
+	}
+
+	static function isNullConst(e:TExpr):Bool return strip(e).expr.match(TConst(TNull));
+
+	static function constInt(e:TExpr):Null<Int> {
+		return switch (strip(e).expr) {
+			case TConst(TInt(v)): v;
+			case _: null;
+		}
+	}
+
+	static function isStringClass(c:TClass):Bool return c.path.pack.length == 0 && c.path.name == "String";
+
+	static function isNumeric(s:IlSigNorm):Bool return s.match(LInt32 | LFloat64);
+
+	function operandSig(op:Binop, e:TExpr):IlSigNorm {
+		var s = sig(e.type);
+		if (!isNumeric(s)) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+		return s;
+	}
+
+	function binary(ret:Ret, e:TExpr, op:Binop, e1:TExpr, e2:TExpr):Void {
+		switch (op) {
+			case OpBoolAnd | OpBoolOr:
+				boolValue(ret, e);
+			case OpEq | OpNotEq | OpLt | OpLte | OpGt | OpGte:
+				compare(ret, op, e1, e2);
+			case OpAdd if (sig(e.type).match(LString)):
+				pushString(e1);
+				pushString(e2);
+				concat();
+				coerce(LString, ret);
+			case OpAdd | OpSub | OpMult | OpDiv | OpMod | OpAnd | OpOr | OpXor | OpShl | OpShr | OpUShr:
+				var s1 = operandSig(op, e1), s2 = operandSig(op, e2);
+				var t = sig(e.type);
+				// Bitwise operators and shifts take Int operands only.
+				if (!isArith(op) && !(s1.match(LInt32) && s2.match(LInt32) && t.match(LInt32)))
+					throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+				texpr(RValue(t), e1);
+				numericTail(op, t, e2);
+				coerce(t, ret);
+			case _:
+				throw new Unsupported("the " + Ast.sBinop(op) + " operator", false);
+		}
+	}
+
+	static function isArith(op:Binop):Bool return op.match(OpAdd | OpSub | OpMult | OpDiv | OpMod);
+
+	// The left operand, of type `t`, is on the stack; this pushes the right one and applies `op`.
+	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr):Void {
+		var bad = new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+		if (!isNumeric(t)) throw bad;
+		if (!isArith(op) && !t.match(LInt32)) throw bad;
+		if (op.match(OpDiv) && !t.match(LFloat64)) throw bad;
+		switch (op) {
+			case OpShl | OpShr | OpUShr:
+				// The count is masked as C# does.
+				var n = constInt(e2);
+				if (n != null) {
+					code.ldcI4(n & 31);
+				} else {
+					texpr(RValue(LInt32), e2);
+					code.ldcI4(31);
+					code.op(IlOps.AND, 2, 1);
+				}
+				code.op(op.match(OpShl) ? IlOps.SHL : op.match(OpShr) ? IlOps.SHR : IlOps.SHR_UN, 2, 1);
+			case _:
+				texpr(RValue(t), e2);
+				code.op(switch (op) {
+					case OpAdd: IlOps.ADD;
+					case OpSub: IlOps.SUB;
+					case OpMult: IlOps.MUL;
+					case OpDiv: IlOps.DIV;
+					case OpMod: IlOps.REM;
+					case OpAnd: IlOps.AND;
+					case OpOr: IlOps.OR;
+					case OpXor: IlOps.XOR;
+					case _: throw bad;
+				}, 2, 1);
+		}
+	}
+
+	function not():Void {
+		code.ldcI4(0);
+		code.op(IlOps.CEQ, 2, 1);
+	}
+
+	function compare(ret:Ret, op:Binop, e1:TExpr, e2:TExpr):Void {
+		var equality = op.match(OpEq | OpNotEq);
+		var isFloat = false;
+		var string = false;
+		if (isNullConst(e1) || isNullConst(e2)) {
+			if (!equality) throw new Unsupported("comparing null with the " + Ast.sBinop(op) + " operator", false);
+			var other = isNullConst(e1) ? e2 : e1;
+			if (isNullConst(other)) throw new Unsupported("comparing null with null", false);
+			var s = sig(other.type);
+			if (DotnetTypes.isValueType(s) || isTypeParam(s)) throw new Unsupported("comparing a value type with null", false);
+			texpr(RValue(null), e1);
+			texpr(RValue(null), e2);
+		} else {
+			var s1 = sig(e1.type), s2 = sig(e2.type);
+			if (isNumeric(s1) && isNumeric(s2)) {
+				var t = s1.match(LFloat64) || s2.match(LFloat64) ? LFloat64 : LInt32;
+				isFloat = t.match(LFloat64);
+				texpr(RValue(t), e1);
+				texpr(RValue(t), e2);
+			} else if (equality && s1.match(LBool) && s2.match(LBool)) {
+				texpr(RValue(LBool), e1);
+				texpr(RValue(LBool), e2);
+			} else if (equality && s1.match(LString) && s2.match(LString)) {
+				string = true;
+				texpr(RValue(LString), e1);
+				texpr(RValue(LString), e2);
+			} else if (equality && isReference(s1) && isReference(s2) && !s1.match(LObject) && !s2.match(LObject)) {
+				texpr(RValue(null), e1);
+				texpr(RValue(null), e2);
+			} else {
+				throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+			}
+		}
+		if (string) {
+			var eq = g.mb.memberRef(g.typeTokenOf(LString), "op_Equality", g.sigs.method(false, LBool, [LString, LString], 0));
+			code.opToken(IlOps.CALL, eq, 2, 1);
+			if (op.match(OpNotEq)) not();
+		} else {
+			switch (op) {
+				case OpEq:
+					code.op(IlOps.CEQ, 2, 1);
+				case OpNotEq:
+					code.op(IlOps.CEQ, 2, 1);
+					not();
+				case OpLt:
+					code.op(IlOps.CLT, 2, 1);
+				case OpGt:
+					code.op(IlOps.CGT, 2, 1);
+				case OpLte:
+					// An unordered comparison is true on NaN, so inverting it makes <= false there.
+					code.op(isFloat ? IlOps.CGT_UN : IlOps.CGT, 2, 1);
+					not();
+				case _:
+					code.op(isFloat ? IlOps.CLT_UN : IlOps.CLT, 2, 1);
+					not();
+			}
+		}
+		coerce(LBool, ret);
+	}
+
+	// Jumps to `l` when the condition equals `sense`, else falls through.
+	function jumpIf(e:TExpr, l:Label, sense:Bool):Void {
+		if (!code.reachable()) return;
+		switch (e.expr) {
+			case TParenthesis(e1) | TMeta(_, e1):
+				jumpIf(e1, l, sense);
+			case TUnop(Not, _, e1):
+				jumpIf(e1, l, !sense);
+			case TBinop(OpBoolAnd, a, b) | TBinop(OpBoolOr, a, b):
+				// `a && b` jumps on false when either is false; it jumps on true only when both are true.
+				var isAnd = e.expr.match(TBinop(OpBoolAnd, _, _));
+				if (isAnd != sense) {
+					jumpIf(a, l, sense);
+					jumpIf(b, l, sense);
+				} else {
+					var skip = code.newLabel();
+					jumpIf(a, skip, !sense);
+					jumpIf(b, l, sense);
+					code.markIfUsed(skip);
+				}
+			case TConst(TBool(b)):
+				if (b == sense) code.branch(IlOps.BR, l);
+			case _:
+				texpr(RValue(LBool), e);
+				code.branch(sense ? IlOps.BRTRUE : IlOps.BRFALSE, l);
+		}
+	}
+
+	// `&&` and `||` as a value.
+	function boolValue(ret:Ret, e:TExpr):Void {
+		var f = code.newLabel(), end = code.newLabel();
+		jumpIf(e, f, false);
+		if (code.reachable()) {
+			code.ldcI4(1);
+			code.branch(IlOps.BR, end);
+		}
+		if (code.targeted(f)) {
+			code.mark(f);
+			code.ldcI4(0);
+		}
+		code.markIfUsed(end);
+		coerce(LBool, ret);
+	}
+
+	function unary(ret:Ret, e:TExpr, op:Unop, flag:UnopFlag, e1:TExpr):Void {
+		switch (op) {
+			case Not:
+				texpr(RValue(LBool), e1);
+				not();
+				coerce(LBool, ret);
+			case Neg:
+				var t = sig(e.type);
+				if (!isNumeric(t)) throw new Unsupported("the - operator on these types", false);
+				texpr(RValue(t), e1);
+				code.op(IlOps.NEG, 1, 1);
+				coerce(t, ret);
+			case NegBits:
+				var t = sig(e.type);
+				if (!t.match(LInt32)) throw new Unsupported("the ~ operator on these types", false);
+				texpr(RValue(t), e1);
+				code.op(IlOps.NOT, 1, 1);
+				coerce(t, ret);
+			case Increment | Decrement:
+				incDec(ret, op.match(Increment), flag.match(Postfix), e1);
+			case Spread:
+				throw new Unsupported("the spread operator", false);
+		}
+	}
+
+	// A local or a Haxe class's static variable, which can be loaded and stored without a receiver.
+	function place(e:TExpr):Null<Place> {
+		switch (e.expr) {
+			case TParenthesis(e1) | TMeta(_, e1):
+				return place(e1);
+			case TLocal(v):
+				var s = slot(v);
+				return {sig: s.sig, load: () -> load(s), store: () -> store(s)};
+			case TField(_, FStatic(c, cf)) if (!isExtern(c) && cf.kind.match(Var(_))):
+				var f = staticField(c, cf);
+				return {
+					sig: f.sig,
+					load: () -> code.opToken(IlOps.LDSFLD, f.token, 0, 1),
+					store: () -> code.opToken(IlOps.STSFLD, f.token, 1, 0)
+				};
+			case _:
+				return null;
+		}
+	}
+
+	function incDec(ret:Ret, increment:Bool, postfix:Bool, e1:TExpr):Void {
+		var p = place(e1);
+		if (p == null) throw new Unsupported("this kind of assignment", false);
+		if (!isNumeric(p.sig)) throw new Unsupported("the " + (increment ? "++" : "--") + " operator on these types", false);
+		function step() {
+			if (p.sig.match(LInt32)) code.ldcI4(1) else code.opR8(IlOps.LDC_R8, 1.0, 0, 1);
+			code.op(increment ? IlOps.ADD : IlOps.SUB, 2, 1);
+		}
+		p.load();
+		if (!needVal(ret)) {
+			step();
+			p.store();
+			return;
+		}
+		if (postfix) {
+			code.op(IlOps.DUP, 1, 2);
+			step();
+			p.store();
+		} else {
+			step();
+			code.op(IlOps.DUP, 1, 2);
+			p.store();
+		}
+		coerce(p.sig, ret);
+	}
+
+	function compound(ret:Ret, op:Binop, lhs:TExpr, rhs:TExpr):Void {
+		var p = place(lhs);
+		if (p == null) throw new Unsupported("this kind of assignment", false);
+		p.load();
+		if (op.match(OpAdd) && p.sig.match(LString)) {
+			stringifyTop(LString);
+			pushString(rhs);
+			concat();
+		} else {
+			numericTail(op, p.sig, rhs);
+		}
+		if (needVal(ret)) code.op(IlOps.DUP, 1, 2);
+		p.store();
+		if (needVal(ret)) coerce(p.sig, ret);
+	}
+
+	// `+` on Strings: String.Concat over operands that cannot be null.
+	function concat():Void {
+		var token = g.mb.memberRef(g.typeTokenOf(LString), "Concat", g.sigs.method(false, LString, [LString, LString], 0));
+		code.opToken(IlOps.CALL, token, 2, 1);
+	}
+
+	// Pushes the operand of a String concatenation as a String; null becomes "null", as Runtime.toString
+	// writes it.
+	function pushString(e:TExpr):Void {
+		var inner = strip(e);
+		switch (inner.expr) {
+			case TConst(TString(_)):
+				texpr(RValue(LString), inner);
+				return;
+			case TConst(TNull):
+				code.opToken(IlOps.LDSTR, g.mb.userString("null"), 0, 1);
+				return;
+			case TBinop(OpAdd, _, _) if (sig(inner.type).match(LString)):
+				// A concatenation is never null.
+				texpr(RValue(LString), inner);
+				return;
+			case _:
+		}
+		var s = sig(e.type);
+		stringKind(s);
+		texpr(RValue(s), e);
+		stringifyTop(s);
+	}
+
+	// Throws for the types a String conversion does not handle yet.
+	static function stringKind(s:IlSigNorm):Void {
+		switch (s) {
+			case LObject:
+				throw new Unsupported("Dynamic in string concatenation", false);
+			case LTypeParam(_) | LMethodTypeParam(_):
+				throw new Unsupported("generic values in string concatenation", true);
+			case LString | LBool | LClass(_, _) | LVector(_) | LArray(_, _):
+			case _ if (DotnetTypes.isValueType(s)):
+			case _:
+				throw new Unsupported("this type in string concatenation", false);
+		}
+	}
+
+	// The value of type `s` on the stack becomes a String.
+	function stringifyTop(s:IlSigNorm):Void {
+		stringKind(s);
+		function nullText() code.opToken(IlOps.LDSTR, g.mb.userString("null"), 0, 1);
+		switch (s) {
+			case LString:
+				var notNull = code.newLabel();
+				code.op(IlOps.DUP, 1, 2);
+				code.branch(IlOps.BRTRUE, notNull);
+				code.op(IlOps.POP, 1, 0);
+				nullText();
+				code.mark(notNull);
+			case LBool:
+				var isTrue = code.newLabel(), end = code.newLabel();
+				code.branch(IlOps.BRTRUE, isTrue);
+				code.opToken(IlOps.LDSTR, g.mb.userString("false"), 0, 1);
+				code.branch(IlOps.BR, end);
+				code.mark(isTrue);
+				code.opToken(IlOps.LDSTR, g.mb.userString("true"), 0, 1);
+				code.mark(end);
+			case _ if (DotnetTypes.isValueType(s)):
+				code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+				objectToString();
+			case _:
+				var notNull = code.newLabel(), end = code.newLabel();
+				code.op(IlOps.DUP, 1, 2);
+				code.branch(IlOps.BRTRUE, notNull);
+				code.op(IlOps.POP, 1, 0);
+				nullText();
+				code.branch(IlOps.BR, end);
+				code.mark(notNull);
+				objectToString();
+				code.mark(end);
+		}
+	}
+
+	function objectToString():Void {
+		var token = g.mb.memberRef(g.typeTokenOf(LObject), "ToString", g.sigs.method(true, LString, [], 0));
+		code.opToken(IlOps.CALLVIRT, token, 1, 1);
+	}
+
+	// The type of a value `if` or `switch`: the surrounding one, else its own.
+	function valueRet(ret:Ret, e:TExpr):Ret {
+		return switch (ret) {
+			case RValue(null):
+				var t = sig(e.type);
+				t.match(LVoid) ? ret : RValue(t);
+			case _: ret;
+		}
+	}
+
+	function ifExpr(ret:Ret, e:TExpr, cond:TExpr, eif:TExpr, eelse:Null<TExpr>):Void {
+		if (eelse == null && needVal(ret)) throw new Unsupported("Void values", true);
+		var r = valueRet(ret, e);
+		var other = code.newLabel();
+		jumpIf(cond, other, false);
+		texpr(r, eif);
+		if (eelse == null) {
+			code.markIfUsed(other);
+			return;
+		}
+		var end = code.newLabel();
+		if (code.reachable()) code.branch(IlOps.BR, end);
+		code.markIfUsed(other);
+		texpr(r, eelse);
+		code.markIfUsed(end);
+	}
+
+	function whileLoop(ret:Ret, cond:TExpr, body:TExpr, flag:WhileFlag):Void {
+		// A loop head is a backward branch target, which needs an empty stack.
+		if (code.depth != 0) throw new Unsupported("loops inside expressions", true);
+		var top = code.newLabel(), cont = code.newLabel(), brk = code.newLabel();
+		code.mark(top);
+		var isDo = flag.match(DoWhile);
+		loops.push({brk: brk, cont: isDo ? cont : top});
+		try {
+			if (isDo) {
+				texpr(RVoid, body);
+				code.markIfUsed(cont);
+				jumpIf(cond, top, true);
+			} else {
+				jumpIf(cond, brk, false);
+				texpr(RVoid, body);
+				if (code.reachable()) code.branch(IlOps.BR, top);
+			}
+		} catch (x:Dynamic) {
+			loops.pop();
+			throw x;
+		}
+		loops.pop();
+		code.markIfUsed(brk);
+		coerce(LVoid, ret);
+	}
+
+	// A chain of comparisons in case order, then the default.
+	function switchExpr(ret:Ret, e:TExpr, subject:TExpr, cases:Array<TSwitchCase>, def:Null<TExpr>):Void {
+		if (def == null && needVal(ret)) throw new Unsupported("switch expressions without a default", true);
+		var r = valueRet(ret, e);
+		var st = sig(subject.type);
+		var isString = st.match(LString);
+		if (!isString && !st.match(LInt32 | LBool)) throw new Unsupported("switch on this type", false);
+		var local:Null<Slot> = null;
+		switch (strip(subject).expr) {
+			case TLocal(v): local = slot(v);
+			case _:
+		}
+		var tmp = -1;
+		if (local == null) {
+			texpr(RValue(st), subject);
+			tmp = code.addLocal(st);
+			code.stloc(tmp);
+		}
+		var bodies = [for (_ in cases) code.newLabel()];
+		var eq = isString ? g.mb.memberRef(g.typeTokenOf(LString), "op_Equality", g.sigs.method(false, LBool, [LString, LString], 0)) : 0;
+		for (i in 0...cases.length) for (v in cases[i].values) {
+			if (local != null) load(local) else code.ldloc(tmp);
+			texpr(RValue(st), v);
+			if (isString) {
+				code.opToken(IlOps.CALL, eq, 2, 1);
+				code.branch(IlOps.BRTRUE, bodies[i]);
+			} else {
+				code.branch(IlOps.BEQ, bodies[i]);
+			}
+		}
+		var end = code.newLabel();
+		var defLabel = def == null ? end : code.newLabel();
+		code.branch(IlOps.BR, defLabel);
+		for (i in 0...cases.length) {
+			code.markIfUsed(bodies[i]);
+			texpr(r, cases[i].expr);
+			if (code.reachable()) code.branch(IlOps.BR, end);
+		}
+		if (def != null) {
+			code.mark(defLabel);
+			texpr(r, def);
+		}
+		code.markIfUsed(end);
 	}
 
 	// The class type arguments a field access sees: a static one gets Dynamic for each.
@@ -421,6 +876,11 @@ class TexprToIl {
 				if (!needVal(ret)) return;
 				code.opToken(IlOps.LDSFLD, f.token, 0, 1);
 				coerce(f.sig, ret);
+			case FInstance(c, _, cf) if (isStringClass(c)):
+				if (cf.name != "length") throw new Unsupported("the String field " + cf.name, false);
+				texpr(RValue(LString), obj);
+				callString("get_Length", LInt32, []);
+				coerce(LInt32, ret);
 			case FStatic(c, cf) | FInstance(c, _, cf) if (isExtern(c)):
 				if (!cf.kind.match(Var(_))) throw new Unsupported("method closures", true);
 				var isStatic = fa.match(FStatic(_, _));
@@ -459,6 +919,75 @@ class TexprToIl {
 		}
 	}
 
+	static function isStd(c:TClass):Bool return c.path.pack.length == 0 && c.path.name == "Std";
+
+	// The expression whose static type Std.string can print directly, else null.
+	function stringArg(e:TExpr):Null<TExpr> {
+		var inner = switch (strip(e).expr) {
+			case TCast(x, null): strip(x);
+			case _: strip(e);
+		}
+		try {
+			stringKind(sig(inner.type));
+		} catch (_:Unsupported) {
+			return null;
+		}
+		return inner;
+	}
+
+	// An instance member of System.String, with the receiver on the stack.
+	function callString(name:String, retSig:IlSigNorm, argSigs:Array<IlSigNorm>):Void {
+		var token = g.mb.memberRef(g.typeTokenOf(LString), name, g.sigs.method(true, retSig, argSigs, 0));
+		code.opToken(IlOps.CALLVIRT, token, argSigs.length + 1, retSig.match(LVoid) ? 0 : 1);
+	}
+
+	// String members, as gencs maps them.
+	function stringCall(ret:Ret, obj:TExpr, cf:TClassField, args:Array<TExpr>):Void {
+		switch (cf.name) {
+			case "toUpperCase" | "toLowerCase":
+				texpr(RValue(LString), obj);
+				callString(cf.name == "toUpperCase" ? "ToUpperInvariant" : "ToLowerInvariant", LString, []);
+				coerce(LString, ret);
+			case "toString":
+				texpr(RValue(LString), obj);
+				coerce(LString, ret);
+			case "charAt" | "charCodeAt" | "indexOf" | "lastIndexOf" | "split" | "substring" | "substr":
+				stringExtCall(ret, cf.name, obj, args);
+			case _:
+				// The private externs name the System.String member.
+				var argSigs, retSig;
+				switch (TypeFunctions.follow(cf.type)) {
+					case TFun(fsig):
+						argSigs = [for (a in fsig.args) sig(a.t)];
+						retSig = sig(fsig.ret);
+					case _:
+						throw "internal error: String." + cf.name + " is not a function";
+				}
+				texpr(RValue(LString), obj);
+				pushArgs(args, argSigs);
+				callString(ExternMembers.memberName(cf), retSig, argSigs);
+				coerce(retSig, ret);
+		}
+	}
+
+	// A static method of cs.internal.StringExt (haxe.lang.StringExt in the assembly), the receiver first.
+	function stringExtCall(ret:Ret, name:String, receiver:Null<TExpr>, args:Array<TExpr>):Void {
+		var found = null;
+		for (mt in g.ctx.types) switch (mt) {
+			case TClassDecl(c) if (DotnetTypes.haxePath(mt) == "cs.internal.StringExt"):
+				g.types.checkKept(mt);
+				var cf = c.statics.get(name);
+				var token = cf == null ? null : g.methodTokens.get(cf);
+				if (token != null) found = {token: token, m: g.methodSigs.get(cf)};
+			case _:
+		}
+		if (found == null) throw new Unsupported("String." + name, false);
+		var all = receiver == null ? args : [receiver].concat(args);
+		pushArgs(all, found.m.args);
+		code.opToken(IlOps.CALL, found.token, all.length, found.m.ret.match(LVoid) ? 0 : 1);
+		coerce(found.m.ret, ret);
+	}
+
 	function pushArgs(args:Array<TExpr>, slots:Array<IlSigNorm>):Void {
 		if (args.length != slots.length) throw new Unsupported("calls that leave out arguments", true);
 		for (i in 0...args.length) texpr(RValue(slots[i]), args[i]);
@@ -466,6 +995,20 @@ class TexprToIl {
 
 	function call(ret:Ret, e:TExpr, callee:TExpr, args:Array<TExpr>):Void {
 		switch (callee.expr) {
+			case TField(_, FStatic(c, cf)) if (isStd(c) && cf.name == "int" && args.length == 1):
+				// As gencs writes Std.int: a C# cast.
+				texpr(RValue(LFloat64), args[0]);
+				code.op(IlOps.CONV_I4, 1, 1);
+				coerce(LInt32, ret);
+			case TField(_, FStatic(c, cf)) if (isStd(c) && cf.name == "string" && args.length == 1 && stringArg(args[0]) != null):
+				// A value of a known type prints as in a concatenation, Bool as true or false.
+				pushString(stringArg(args[0]));
+				coerce(LString, ret);
+			case TField(obj, FInstance(c, _, cf)) if (isStringClass(c)):
+				stringCall(ret, obj, cf, args);
+			case TField(_, FStatic(c, cf)) if (isStringClass(c)):
+				if (cf.name != "fromCharCode") throw new Unsupported("the String function " + cf.name, false);
+				stringExtCall(ret, cf.name, null, args);
 			case TField(_, FStatic(c, cf)) if (!isExtern(c)):
 				g.types.checkKept(TClassDecl(c));
 				if (c.params.length > 0) throw new Unsupported("static members of generic classes", true);
@@ -514,6 +1057,13 @@ class TexprToIl {
 	}
 
 	function construct(ret:Ret, c:TClass, params:TParams, args:Array<TExpr>):Void {
+		if (isStringClass(c)) {
+			// new String(s) is s.
+			if (args.length != 1) throw new Unsupported("this String constructor", false);
+			texpr(RValue(LString), args[0]);
+			coerce(LString, ret);
+			return;
+		}
 		if (!isExtern(c)) throw new Unsupported("instances of Haxe classes", true);
 		var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
 		if (r == null) throw "internal error: no constructor of " + Globals.sTypePath(c.path) + " fits";

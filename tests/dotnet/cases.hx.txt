@@ -124,10 +124,286 @@ class P {
 	static function main() {
 		var f = function() {};
 		Sys.println(f);
-		Sys.println(cs.system.Math.Max(1, 2) < 2);
+		Sys.println([1]);
 	}
 }
 ===
 [compile]
 P.hx:3: characters 11-24 : dotnet: local functions are not supported yet
-P.hx:5: characters 15-43 : dotnet: the < operator is not supported yet
+P.hx:5: characters 15-18 : dotnet: array literals are not supported yet
+--- int-arithmetic
+class P {
+	static var max = 2147483647;
+	static var m7 = -7;
+	static var m1 = -1;
+	static var m16 = -16;
+	static var one = 1;
+	static var six = 6;
+	static var seven = 7;
+	static function main() {
+		Sys.println(max + one);
+		Sys.println(m7 % 3);
+		Sys.println(m1 >>> 28);
+		Sys.println(m16 >> 2);
+		Sys.println(one << 33);
+		Sys.println(((six & 3) | 8) ^ one);
+		Sys.println(~six);
+		Sys.println(Std.int(seven / 2));
+		Sys.println(Std.int(m7 / 2));
+	}
+}
+===
+[run]
+-2147483648
+-1
+15
+-4
+2
+11
+-7
+3
+-3
+--- float-compare-nan
+class P {
+	static var nan = Math.NaN;
+	static var one = 1.0;
+	static function main() {
+		Sys.println(nan < one);
+		Sys.println(nan >= one);
+		Sys.println(!(nan < one));
+		Sys.println(nan == nan);
+		Sys.println(nan != nan);
+		Sys.println(one <= 1);
+	}
+}
+===
+[run]
+False
+False
+True
+False
+True
+True
+--- control-flow
+class P {
+	static var n = 5;
+	static function main() {
+		var i = 0;
+		var sum = 0;
+		while (true) {
+			i++;
+			if (i > n * 2) break;
+			if (i % 2 == 0) continue;
+			sum += i;
+		}
+		Sys.println(sum);
+		var j = 10;
+		do j -= 3 while (j > 0);
+		Sys.println(j);
+		Sys.println(n > 3 ? "big" : "small");
+		var k = 0;
+		for (x in 0...n) k += x;
+		Sys.println(k);
+	}
+}
+===
+[run]
+25
+-2
+big
+10
+--- switch
+class P {
+	static function name(i:Int):String {
+		return switch (i) {
+			case 1: "one";
+			case 2 | 3: "few";
+			default: "many";
+		}
+	}
+	static function kind(s:String):Int {
+		switch (s) {
+			case "a": return 1;
+			case "b": return 2;
+		}
+		return 0;
+	}
+	static function main() {
+		Sys.println(name(1) + name(3) + name(9));
+		Sys.println(kind("b") + kind("z"));
+	}
+}
+===
+[run]
+onefewmany
+2
+--- strings
+class P {
+	static var s = "héllo";
+	static var t = "h\u00e9llo";
+	static var i = 42;
+	static var b = true;
+	static var m = -3;
+	static var nothing:String = null;
+	static var emoji = "😀";
+	static function main() {
+		Sys.println(s == t);
+		Sys.println(s.length);
+		Sys.println(emoji.length);
+		Sys.println("n=" + i + "," + b + "," + m + "," + nothing);
+		Sys.println(s.toUpperCase() == "HÉLLO");
+	}
+}
+===
+[run]
+True
+5
+2
+n=42,true,-3,null
+True
+--- many-locals-and-deep-stack
+import haxe.macro.Expr;
+class P {
+	static var seed = 0;
+	static macro function locals(n:Int):Expr {
+		var block = [];
+		var sum = macro 0;
+		for (i in 0...n) {
+			var id = "v" + i;
+			block.push(macro var $id = P.seed + $v{i});
+			sum = macro $sum + $i{id};
+		}
+		block.push(sum);
+		return macro $b{block};
+	}
+	static macro function nested(n:Int):Expr {
+		var e = macro P.seed;
+		for (i in 0...n) e = macro P.seed + $v{n - i} + ($e);
+		return e;
+	}
+	@:analyzer(ignore) static function main() {
+		Sys.println(locals(300));
+		Sys.println(nested(20));
+	}
+}
+===
+[run]
+44850
+210
+--- compound-assignment-and-increment
+class P {
+	static var a = 5;
+	static var f = 2.5;
+	static var s:String = null;
+	static var t = "x";
+	static function main() {
+		a += 3;
+		a -= 1;
+		a *= 2;
+		a %= 5;
+		a <<= 3;
+		a |= 1;
+		a ^= 3;
+		a >>= 1;
+		a >>>= 1;
+		a &= 7;
+		Sys.println(a);
+		f *= 2;
+		f /= 4;
+		f += 1;
+		Sys.println(f);
+		var x = a++ + ++a;
+		Sys.println(x);
+		Sys.println(a--);
+		Sys.println(--a);
+		var q = f++;
+		Sys.println(q + " " + f);
+		t += "y";
+		t += 12;
+		t += s;
+		Sys.println(t);
+	}
+}
+===
+[run]
+0
+2.25
+2
+2
+0
+2.25 3.25
+xy12null
+--- short-circuit-and-conditions
+class P {
+	static var flag = true;
+	static var calls = 0;
+	static function both(x:Bool, y:Bool):Bool return x && y;
+	static function either(x:Bool, y:Bool):Bool return x || y;
+	static function touch(r:Bool):Bool {
+		calls++;
+		return r;
+	}
+	static function pick(x:Bool, y:Bool):Int {
+		if (x && y || !x) return 1;
+		if (!(x || y)) return 2;
+		return 3;
+	}
+	static function main() {
+		Sys.println(both(true, false));
+		Sys.println(either(false, true));
+		Sys.println(pick(true, true) + pick(false, false) * 10 + pick(true, false) * 100);
+		var m = flag && touch(false) && touch(true);
+		Sys.println(m + " " + calls);
+		var n = !flag || touch(true) || touch(false);
+		Sys.println(n + " " + calls);
+		if (flag && !touch(false)) Sys.println("then") else Sys.println("else");
+		Sys.println(calls);
+	}
+}
+===
+[run]
+False
+True
+311
+false 1
+true 2
+then
+3
+--- extern-double-constants
+class P {
+	static function main() {
+		Sys.println(cs.system.Math.PI);
+		Sys.println(cs.system.Double.NaN);
+		Sys.println(Math.PI > 3.14);
+	}
+}
+===
+[run]
+3.141592653589793
+NaN
+True
+--- unsupported-statements-in-loops
+class P {
+	static var n = 3;
+	static function count(i:Int):Int {
+		var r = 0;
+		while (i > 0) {
+			var g = function() {};
+			Sys.println(g);
+			if (i == 2) {
+				Sys.println([1]);
+				continue;
+			}
+			r += i;
+			i--;
+		}
+		return if (n > 1) r else -r;
+	}
+	static function main() {
+		Sys.println(count(3));
+	}
+}
+===
+[compile]
+P.hx:6: characters 12-25 : dotnet: local functions are not supported yet
+P.hx:9: characters 17-20 : dotnet: array literals are not supported yet

@@ -68,7 +68,9 @@ class IlOps {
 	public static inline var LEAVE = 0xDD;
 	public static inline var CEQ = 0xFE01;
 	public static inline var CGT = 0xFE02;
+	public static inline var CGT_UN = 0xFE03;
 	public static inline var CLT = 0xFE04;
+	public static inline var CLT_UN = 0xFE05;
 	public static inline var LDARG = 0xFE09;
 	public static inline var LDARGA = 0xFE0A;
 	public static inline var STARG = 0xFE0B;
@@ -130,6 +132,14 @@ class IlCode {
 			depth = d >= 0 ? d : 0;
 			labelDepth[l] = depth;
 		}
+	}
+
+	// Whether a branch already goes to the label.
+	public inline function targeted(l:Label):Bool return labelDepth[l] >= 0;
+
+	// Marks the label unless nothing reaches it, so code after a transfer stays unreachable.
+	public function markIfUsed(l:Label):Void {
+		if (depth >= 0 || labelDepth[l] >= 0) mark(l);
 	}
 
 	// Recovery after a user-code statement failed to lower: its IL is thrown away, so the stack is

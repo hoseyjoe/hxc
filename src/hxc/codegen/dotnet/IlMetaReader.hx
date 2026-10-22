@@ -184,8 +184,11 @@ class IlMetaReader {
 			case CInt64 | CUInt64: IInt64(sreadI64(c));
 			case CFloat32: IFloat32(haxe.io.FPHelper.i32ToFloat(sreadRealI32(c)));
 			case CFloat64:
-				var v = sreadI64(c);
-				IFloat64(haxe.io.FPHelper.i64ToDouble(v.low, v.high));
+				// Unlike the 64-bit integer reader, which keeps the reference's offset, this reads the eight
+				// bytes as they are: the emitter writes the value into code.
+				var lo = sreadRealI32(c);
+				var hi = sreadRealI32(c);
+				IFloat64(haxe.io.FPHelper.i64ToDouble(lo, hi));
 			case CString:
 				if (sget(s, c.pos) == 0xff) {
 					c.pos++;
