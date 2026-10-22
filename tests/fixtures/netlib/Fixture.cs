@@ -8,5 +8,22 @@ namespace Fixture {
 	}
 	internal class Hidden {}
 	public class UsesLambda { public System.Func<int, int> F() => x => x + 1; }
+	public class Box<T> { public T Value; public U Map<U>(System.Func<T, U> f) => default; public class Nested { public T Item; } }
+	public class Pair<A, B> where A : class where B : struct { public A First; public B Second; }
+	public class Outer { public class Inner { public int V; } }
+	public class Outer_Inner { public string W; }
+	public class lowerName { public int X; }
+	public class UsesNames { public Box<int>.Nested N; public Box<string> G; public Pair<string, int> P; public lowerName L; public Box<int>.Nested[] NA; }
+	public class UsesInner { public Outer.Inner I; }
+	public class UsesOuterInner { public Outer_Inner O; }
+	public class Outer2<T> { public class Mid<U> { public class Leaf { public T A; public U B; } } }
+	public class Derived : Box<string> { public string D; }
+	public interface IGen<T> { T Get(); }
+	public delegate R Fn<A, R>(A a);
+	public class GenStatics { public static T Id<T>(T x) => x; public static void Two<A, B>(A a, B b) {} }
+	public class WithEnum { public enum Kind { A, B } public Kind K; }
+	public class Uses2 { public Outer2<int>.Mid<string>.Leaf L; public IGen<Box<int>> G; public Fn<int, string> F; public WithEnum.Kind K; }
+	public class Keywords { public int @in; public void @cast() {} public int @var; }
 }
 namespace Fixture.Sub { public class Thing {} }
+namespace Fixture.MixedCase.Deep { public class InDeep {} }

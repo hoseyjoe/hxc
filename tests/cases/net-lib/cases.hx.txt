@@ -30,3 +30,60 @@ class P { static function main() { var p = new fixture.Plain(); $type(p.Other); 
 
 --- not-an-assembly + --net-lib NotAnAssembly.dll
 class P { static function main() {} }
+
+--- generic-class-and-method
+class P { static function main() { var b = new fixture.Box_1<String>(); $type(b.Value); $type(b.Map); } }
+
+--- generic-constraints
+class P { static function main() { var p = new fixture.Pair_2<String, Int>(); $type(p.First); $type(p.Second); } }
+
+--- nested-type-in-outer-module
+class P { static function main() { var i = new fixture.Outer.Outer_Inner(); $type(i.V); } }
+
+--- nested-name-collision
+class P { static function main() { $type(new fixture.Outer_Inner().W); } }
+
+--- nested-and-top-level-redefined
+class P { static function main() { var a = new fixture.Outer_Inner(); var b = new fixture.Outer.Outer_Inner(); } }
+
+--- nested-in-generic
+class P { static function main() { var n = new fixture.Box_1.Box_1_Nested<Int>(); $type(n.Item); } }
+
+--- lowercase-class-is-capitalized
+class P { static function main() { $type(new fixture.LowerName().X); } }
+
+--- lowercase-class-original-name-not-found
+class P { static function main() { new fixture.lowerName(); } }
+
+--- haxe-keyword-members
+class P { static function main() { var k = new fixture.Keywords(); $type(k); $type(k._in); $type(k._cast); $type(k._var); } }
+
+--- type-references-by-name
+class P { static function main() { var u = new fixture.UsesNames(); $type(u.N); $type(u.G); $type(u.P); $type(u.L); $type(u.N.Item); $type(u.NA); } }
+
+--- type-references-a-nested-type
+class P { static function main() { var u = new fixture.UsesInner(); $type(u.I); $type(u.I.V); } }
+
+--- nested-generic-chain
+class P { static function main() { var l = new fixture.Outer2_1.Outer2_1_Mid_1_Leaf<Int, String>(); $type(l.A); $type(l.B); } }
+
+--- nested-generic-middle-type
+class P { static function main() { var l = new fixture.Outer2_1.Outer2_1_Mid_1<Int, String>(); $type(l); } }
+
+--- nested-generic-chain-in-signature
+class P { static function main() { var u = new fixture.Uses2(); $type(u.L); $type(u.G); $type(u.F); $type(u.K); $type(u.L.A); $type(u.L.B); } }
+
+--- generic-base-class-members
+class P { static function main() { var d = new fixture.Derived(); $type(d.Value); $type(d.D); $type(d.Map); } }
+
+--- generic-methods-on-plain-class
+class P { static function main() { $type(fixture.GenStatics.Id); $type(fixture.GenStatics.Two); } }
+
+--- generic-interface-and-delegate
+class P { static function main() { var l:fixture.IGen_1<Int> = null; $type(l.Get); var f:fixture.Fn_2<Int, String> = null; $type(f); } }
+
+--- nested-enum
+class P { static function main() { $type(new fixture.WithEnum().K); $type(fixture.WithEnum.WithEnum_Kind.A); } }
+
+--- namespace-segments-are-lowercased
+class P { static function main() { $type(new fixture.mixedcase.deep.InDeep()); } }

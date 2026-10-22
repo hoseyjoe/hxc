@@ -1729,20 +1729,20 @@ class ModuleLoader {
 	// Make module, register, build types.
 	// The module types in a context of its own at PBuildModule, so a load its imports make does not flush;
 	// only the load that asked for the module, back in its own context, does.
-	static function typeModule(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
+	static function typeModule(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>, ?p:Position):ModuleDef {
 		var savedPass = ctx.currentPass;
 		ctx.currentPass = Context.PBuildModule;
-		var m = try typeModuleInner(ctx, mpath, file, tdecls) catch (e:Dynamic) { ctx.currentPass = savedPass; throw e; };
+		var m = try typeModuleInner(ctx, mpath, file, tdecls, p) catch (e:Dynamic) { ctx.currentPass = savedPass; throw e; };
 		ctx.currentPass = savedPass;
 		return m;
 	}
 
-	static function typeModuleInner(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>):ModuleDef {
+	static function typeModuleInner(ctx:Context, mpath:Path, file:String, tdecls:Array<TypeDecl>, ?p:Position):ModuleDef {
 		var m = makeModule(ctx, mpath, file);
 		// Here, before createModuleTypes. We add types after building.
 		createModuleTypes(ctx, m, handleImportHx(ctx, m, tdecls), false, false, true);
 		m.hxcGlobalMetaPending = m.types.copy();
-		addModule(ctx, m);
+		addModule(ctx, m, p);
 		// Every module depends on StdTypes, and loading the core type String loads String (and through it
 		// Array) and records the dependency, before the imports are reached. The std module is still the
 		// null module while StdTypes itself types, so it does neither.
@@ -2089,7 +2089,7 @@ class ModuleLoader {
 		// The decls the loader produced are typed as an extern module.
 		if (externDecls != null) {
 			var requester0 = ctx.currentModule;
-			var loaded0 = try typeModule(ctx, m, file, externDecls) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
+			var loaded0 = try typeModule(ctx, m, file, externDecls, p) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
 			loaded0.extra.kind = MExtern;
 			addDependency(requester0, loaded0);
 			return loaded0;
@@ -2139,7 +2139,7 @@ class ModuleLoader {
 		// A forbidden package met while typing this module adds the position this module was requested at
 		// ("referenced here"), unless that is the null position.
 		var decls = sameArray(remap, m.pack) ? pkg.decls : remapDecls(pkg.decls, remap, m);
-		var loaded = try typeModule(ctx, m, file, decls) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
+		var loaded = try typeModule(ctx, m, file, decls, p) catch (fp:hxc.core.TypingError.ForbidPackage) { addForbidReference(fp, p); throw fp; };
 		addDependency(requester, loaded);
 		return loaded;
 	}
