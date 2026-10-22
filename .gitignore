@@ -3,3 +3,5 @@ out/
 .aedifex/
 *.tmp
 .vscode/
+tests/fixtures/*/bin/
+tests/fixtures/*/obj/

@@ -12,3 +12,18 @@ class P { static function main() {} }
 
 --- net-std-without-the-digraph + --net-std . -D net-ver=40
 class P { static function main() {} }
+
+--- std-type-resolves
+class P { static function main() { $type(new cs.system.text.StringBuilder()); } }
+
+--- native-array-works
+class P { static function main() { var a = new cs.NativeArray<Int>(3); $type(a); $type(a.Length); $type(a[0]); } }
+
+--- net40-std-loads + -D net-ver=40
+class P { static function main() { $type(cs.system.Console.Out); $type(cs.system.Environment.ProcessorCount); } }
+
+--- default-net-ver-is-20
+class P { static function main() { #if (NET_20 && !NET_21) $type("net20"); #end #if net $type("net"); #end } }
+
+--- net-ver-40-defines-up-to-40 + -D net-ver=40
+class P { static function main() { #if (NET_40 && !NET_45) $type("net40"); #end } }

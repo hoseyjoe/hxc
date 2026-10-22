@@ -111,6 +111,10 @@ class Context {
 	// directory-read order.
 	public var netStd:Array<String> = [];
 	public var netStdFiles:Array<String> = [];
+	// The loaded .NET libraries in the order they were added, std ones first, and every type they
+	// define: the IL path of each Haxe path (keyed by sTypePath), the last library read winning.
+	public var netLibs:Array<hxc.codegen.dotnet.NetLibrary> = [];
+	public var netPathMap:Map<String, hxc.codegen.dotnet.IlData.IlPath> = new Map();
 
 	public var displaySpec:Null<String>;
 

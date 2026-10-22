@@ -57,6 +57,27 @@ class NetSetup {
 		for (dir in matched)
 			for (f in FileSystem.readDirectory(dir))
 				if (StringTools.endsWith(f.toLowerCase(), ".dll")) ctx.netStdFiles.push(dir + "/" + f);
+		// each std library is read as soon as it is found
+		for (f in ctx.netStdFiles) addNetLib(ctx, f, true, false).load();
+	}
+
+	// Registers the library: it is looked up by Haxe path after every library added before it, and
+	// its types are built by the first extern loader that has them. The caller reads it with load().
+	public static function addNetLib(ctx:Context, file:String, isStd:Bool, isExtern:Bool):NetLibrary {
+		var realFile = if (FileSystem.exists(file)) file else {
+			var f = ModuleLoader.findFileOpt(ctx, file);
+			if (f == null) f = ModuleLoader.findFileOpt(ctx, file + ".dll");
+			if (f == null) throw ".NET lib " + file + " not found";
+			f;
+		}
+		var lib = new NetLibrary(ctx, file, realFile, isStd);
+		lib.isExtern = isExtern;
+		ctx.netLibs.push(lib);
+		ctx.loadExternType.push({
+			name: realFile,
+			load: function(path:hxc.core.Globals.Path, p:hxc.ast.Position) return lib.build(path, p)
+		});
+		return lib;
 	}
 
 	// OCaml's int_of_string for a decimal value: an optional sign and digits only.

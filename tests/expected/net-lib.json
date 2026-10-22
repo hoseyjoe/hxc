@@ -1,0 +1,13 @@
+{
+	"plain-class-members": "P.hx:1: characters 72-79 : Warning : Int\nP.hx:1: characters 88-95 : Warning : Float\nP.hx:1: characters 104-122 : Warning : String\nP.hx:1: characters 131-148 : Warning : Int\nP.hx:1: characters 157-168 : Warning : Int\nP.hx:1: characters 177-195 : Warning : (v : haxe.Int64) -> haxe.Int64\nP.hx:1: characters 204-213 : Warning : cs.NativeArray<cs.types.UInt8>\nP.hx:1: characters 222-234 : Warning : UInt\nP.hx:1: characters 243-250 : Warning : Dynamic",
+	"namespace-is-lowercased": "P.hx:1: characters 42-65 : Warning : fixture.sub.Thing",
+	"internal-type-is-loaded": "P.hx:1: characters 71-72 : Warning : fixture.Hidden",
+	"lambda-closure-class-is-not-found": "P.hx:1: characters 42-70 : Warning : cs.system.Func_2<Int, Int>\nP.hx:1: characters 79-120 : Module fixture.UsesLambda does not define type UsesLambda__x60__x62_c",
+	"assigning-a-readonly-field": "P.hx:1: characters 56-61 : This expression cannot be accessed for writing",
+	"two-libraries-same-type": "P.hx:1: characters 71-78 : Warning : Int\nP.hx:1: characters 89-94 : fixture.Plain has no field Other\nP.hx:1: characters 87-94 : Warning : Unknown<0>",
+	"missing-net-lib": "Error: .NET lib Missing.dll not found",
+	"bad-std-suffix": "Error: unsupported file@`std` format: Fixture.dll@std@x",
+	"net-lib-as-std": "P.hx:1: characters 62-67 : fixture.Plain has no field Other\nP.hx:1: characters 42-67 : Warning : Unknown<0>",
+	"two-std-dirs-in-command-line-order": "P.hx:1: characters 71-78 : Warning : Int\nP.hx:1: characters 89-94 : fixture.Plain has no field Count\nP.hx:1: characters 87-94 : Warning : Unknown<0>",
+	"not-an-assembly": "PeReader.Error_message(\"MZ magic header not found: Is the target file really a PE?\")"
+}

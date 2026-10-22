@@ -517,6 +517,8 @@ class Compiler {
 		}
 		catch (af:ArgFailure) fatalArgError(af.message)
 		catch (e:hxc.core.JsonRpc.InvalidArgument) fatalArgError(e.message, false)
+		// a .NET assembly the reader cannot read prints as the reference's raw exception
+		catch (e:hxc.codegen.dotnet.PeData.PeErrorMessage) fatalArgError(e.message, false)
 		catch (e:Dynamic) fatalArgError(Std.string(e));
 	}
 
@@ -818,6 +820,9 @@ class Compiler {
 				case "--java-lib-extern":
 					// type checking only, so nothing of it is generated.
 					nativeLibs.push({file: argValue(args, i++, a), isExtern: true});
+				case "-net-lib" | "--net-lib":
+					// Like --java-lib; on cs a `@std` suffix marks the library as a std one.
+					nativeLibs.push({file: argValue(args, i++, a), isExtern: false});
 				case "-net-std" | "--net-std":
 					ctx.netStd.push(argValue(args, i++, a));
 				case "-c-arg" | "--c-arg":
@@ -825,7 +830,6 @@ class Compiler {
 					ctx.cArgs.unshift(argValue(args, i++, a));
 				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
 					| "--swf-version" | "-swf-header" | "--swf-header"
-					| "-net-lib" | "--net-lib"
 					| "--connect" | "--neko-lib-path":
 					// Options without an implementation here; the value must still be consumed.
 					// --neko-lib-path collects neko link paths; there is no neko generator here, so the
@@ -4378,9 +4382,24 @@ class Compiler {
 		return null;
 	}
 
-	// Only the java target has a loader here; a directory contributes each .jar inside it .
+	// The java and cs targets have a loader here; for java a directory contributes each .jar inside it.
 	static function registerNativeLibs(ctx:Context, platform:Platform, libs:Array<{file:String, isExtern:Bool}>):Void {
 		if (libs.length == 0) return;
+		if (platform == Cs) {
+			// every library is registered, then every one is read
+			var added = [];
+			for (lib in libs) {
+				var parts = lib.file.split("@");
+				var isStd = switch (parts) {
+					case [_]: false;
+					case [_, "std"]: true;
+					case _: throw "unsupported file@`std` format: " + lib.file;
+				}
+				added.push(hxc.codegen.dotnet.NetSetup.addNetLib(ctx, parts[0], isStd, lib.isExtern));
+			}
+			for (l in added) l.load();
+			return;
+		}
 		if (platform != Java)
 			throw "Target " + hxc.core.Globals.platformName(platform)
 				+ " does not support native libraries (trying to load " + libs[0].file + ")";

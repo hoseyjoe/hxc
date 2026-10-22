@@ -1,1 +1,2 @@
 tests/** text eol=lf
+tests/**/*.dll binary

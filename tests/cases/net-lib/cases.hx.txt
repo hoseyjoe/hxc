@@ -1,0 +1,32 @@
+--- plain-class-members
+class P { static function main() { var p = new fixture.Plain(3); $type(p.Count); $type(p.Ratio); $type(fixture.Plain.Name); $type(fixture.Plain.Max); $type(p.Add(1, 2)); $type(fixture.Plain.Wide); $type(p.Bytes()); $type(p.Unsigned()); $type(p.Any()); } }
+
+--- namespace-is-lowercased
+class P { static function main() { $type(new fixture.sub.Thing()); } }
+
+--- internal-type-is-loaded
+class P { static function main() { var h:fixture.Hidden = null; $type(h); } }
+
+--- lambda-closure-class-is-not-found
+class P { static function main() { $type(new fixture.UsesLambda().F()); var c:fixture.UsesLambda.UsesLambda__x60__x62_c = null; } }
+
+--- assigning-a-readonly-field
+class P { static function main() { new fixture.Plain().Ratio = 1.0; } }
+
+--- two-libraries-same-type + --net-lib Fixture2.dll
+class P { static function main() { var p = new fixture.Plain(); $type(p.Count); $type(p.Other); } }
+
+--- missing-net-lib + --net-lib Missing.dll
+class P { static function main() {} }
+
+--- bad-std-suffix + --net-lib Fixture.dll@std@x
+class P { static function main() {} }
+
+--- net-lib-as-std + --net-lib Fixture2.dll@std
+class P { static function main() { $type(new fixture.Plain().Other); } }
+
+--- two-std-dirs-in-command-line-order + --net-std netlib --net-std stdA --net-std stdB
+class P { static function main() { var p = new fixture.Plain(); $type(p.Other); $type(p.Count); } }
+
+--- not-an-assembly + --net-lib NotAnAssembly.dll
+class P { static function main() {} }
