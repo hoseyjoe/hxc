@@ -43,12 +43,13 @@ class NetSetup {
 			netTarget + "-" + netcoreVer;
 		} else
 			netTarget + "-" + netVer;
-		// the last std path ends up first, as in the reference
+		// the reference conses both com.net_std and its matches, so the two reversals cancel and the
+		// directories are read in command-line order
 		var matched = [];
 		var stds = ctx.netStd.length == 0 ? ["netlib"] : ctx.netStd;
 		for (std in stds) {
 			var dir = ModuleLoader.findFileOpt(ctx, std + "/" + digraph);
-			if (dir != null && FileSystem.exists(dir) && FileSystem.isDirectory(dir)) matched.unshift(dir);
+			if (dir != null && FileSystem.exists(dir) && FileSystem.isDirectory(dir)) matched.push(dir);
 		}
 		if (matched.length == 0)
 			throw "No .NET std lib directory with the pattern '" + digraph + "' was found in the -net-std search path. "
