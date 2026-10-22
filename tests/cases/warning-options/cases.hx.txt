@@ -1,0 +1,14 @@
+--- no-deprecation-warnings-applies-in-macros + -D no-deprecation-warnings
+class P { macro static function m() { var x = E.A; return macro null; } static function main() { m(); } }
+@:enum
+abstract E(Int) { var A; }
+
+--- disabled-warning-applies-in-macros + -w -WDeprecatedEnumAbstract
+class P { macro static function m() { var x = E.A; return macro null; } static function main() { m(); } }
+@:enum
+abstract E(Int) { var A; }
+
+--- deprecation-warning-without-the-define
+class P { macro static function m() { var x = E.A; return macro null; } static function main() { m(); } }
+@:enum
+abstract E(Int) { var A; }

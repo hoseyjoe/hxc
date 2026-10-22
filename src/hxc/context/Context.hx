@@ -582,6 +582,9 @@ class Context {
 		c.moduleNonexistentLut = this.moduleNonexistentLut;
 		// Forward macro-world warnings to the main context; keep macro recovery diagnostics local.
 		c.forwardWarningsTo = this;
+		// The macro world is a clone of the host's settings, so -w and -D no-deprecation-warnings filter its
+		// warnings too.
+		c.warningOptions = this.warningOptions.copy();
 		// Copy debug settings while starting a fresh feature table.
 		c.debug = this.debug;
 		c.verbose = this.verbose;
