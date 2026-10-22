@@ -120,19 +120,29 @@ class MetaTables {
 		];
 	}
 
+	static function compareBy(a:Row, b:Row, columns:Array<Int>):Int {
+		for (c in columns) if (a[c] != b[c]) return a[c] < b[c] ? -1 : 1;
+		return 0;
+	}
+
 	// Stable, so rows with equal keys keep the order they were added in.
 	static function sortBy(rows:Array<Row>, columns:Array<Int>):Void {
-		haxe.ds.ArraySort.sort(rows, function(a, b) {
-			for (c in columns) if (a[c] != b[c]) return a[c] < b[c] ? -1 : 1;
-			return 0;
-		});
+		haxe.ds.ArraySort.sort(rows, (a, b) -> compareBy(a, b, columns));
+	}
+
+	// Tables whose row numbers other rows point at cannot be reordered here, so they must be added in
+	// key order.
+	static function checkSorted(name:String, rows:Array<Row>, columns:Array<Int>):Void {
+		for (i in 1...rows.length)
+			if (compareBy(rows[i - 1], rows[i], columns) > 0) throw "internal error: " + name + " rows are not in key order";
 	}
 
 	public function writeMetadata(h:MetaHeaps):{bytes:Bytes, mvidOffset:Int} {
-		sortBy(interfaceImpl, [0, 1]);
+		// Nothing points at a CustomAttribute row, so that table alone is sorted here.
 		sortBy(customAttribute, [0]);
-		sortBy(genericParam, [2, 0]);
-		sortBy(genericParamConstraint, [0]);
+		checkSorted("InterfaceImpl", interfaceImpl, [0, 1]);
+		checkSorted("GenericParam", genericParam, [2, 0]);
+		checkSorted("GenericParamConstraint", genericParamConstraint, [0]);
 
 		var rowCounts = [for (_ in 0...64) 0];
 		for (w in written) rowCounts[w.table] = w.rows.length;
