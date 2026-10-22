@@ -1,5 +1,6 @@
 // Rebuild: dotnet build -c Release, then copy bin/Release/netstandard2.0/Fixture.dll to tests/cases/net-lib/fixture/.
-// A rebuild changes the module hash recorded in the nested-and-top-level-redefined case, so re-record it.
+// tests/cases/net-lib/fixture/stdB/net-40/Fixture.dll is an older build of this file (from commit 57ca212c). The
+// two-std-dirs-in-command-line-order case only needs it to define fixture.Plain, so a current build can replace it.
 namespace Fixture {
 	public class Plain {
 		public Plain() {} public Plain(int x) {}

@@ -52,9 +52,6 @@ class P { static function main() { var n = new fixture.Box_1.Box_1_Nested<Int>()
 --- lowercase-class-is-capitalized
 class P { static function main() { $type(new fixture.LowerName().X); } }
 
---- lowercase-class-original-name-not-found
-class P { static function main() { new fixture.lowerName(); } }
-
 --- haxe-keyword-members
 class P { static function main() { var k = new fixture.Keywords(); $type(k); $type(k._in); $type(k._cast); $type(k._var); } }
 

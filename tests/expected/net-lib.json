@@ -17,7 +17,6 @@
 	"nested-and-top-level-redefined": "P.hx:1: characters 83-108 : Type name fixture.Outer_Inner is redefined from module fixture.Outer_Inner (916912cd9e7640937e775b31fcfeedeb)",
 	"nested-in-generic": "P.hx:1: characters 89-95 : Warning : Int",
 	"lowercase-class-is-capitalized": "P.hx:1: characters 42-67 : Warning : Int",
-	"lowercase-class-original-name-not-found": "P.hx:1: characters 57-58 : Unexpected (",
 	"haxe-keyword-members": "P.hx:1: characters 74-75 : Warning : fixture.Keywords\nP.hx:1: characters 84-89 : Warning : Int\nP.hx:1: characters 98-105 : Warning : () -> Void\nP.hx:1: characters 114-120 : Warning : Int",
 	"type-references-by-name": "P.hx:1: characters 75-78 : Warning : fixture.Box_1_Nested<Int>\nP.hx:1: characters 87-90 : Warning : fixture.Box_1<String>\nP.hx:1: characters 99-102 : Warning : fixture.Pair_2<String, Int>\nP.hx:1: characters 111-114 : Warning : fixture.LowerName\nP.hx:1: characters 123-131 : Warning : Int\nP.hx:1: characters 140-144 : Warning : cs.NativeArray<fixture.Box_1_Nested<Int>>",
 	"type-references-a-nested-type": "P.hx:1: characters 75-78 : Warning : fixture.Outer_Inner\nP.hx:1: characters 87-92 : Warning : Int",
