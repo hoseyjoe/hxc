@@ -783,7 +783,14 @@ class Compiler {
 					setPlatform(Neko);
 					targetDir = "neko";
 					ctx.file = argValue(args, i++, a);
-				case "-php" | "--php" | "-swf" | "--swf" | "-cs" | "--cs"
+				case "-cs" | "--cs":
+					// Set like for java. The cs std overlay imports cs.system types that resolve only
+					// once the .NET std DLLs (ctx.netStdFiles) are read.
+					setPlatform(Cs);
+					targetDir = "cs";
+					ownPackages = ["cs"];
+					ctx.file = argValue(args, i++, a);
+				case "-php" | "--php" | "-swf" | "--swf"
 					| "-python" | "--python" | "-lua" | "--lua"
 					| "-hl" | "--hl":
 					// Targets without a generator here; the output-file value must still be consumed
@@ -797,7 +804,6 @@ class Compiler {
 					ownPackages = switch (a) {
 						case "-php" | "--php": ["php"];
 						case "-swf" | "--swf": ["flash"];
-						case "-cs" | "--cs": ["cs"];
 						case "-python" | "--python": ["python"];
 						case "-lua" | "--lua": ["lua"];
 						case _: ["hl"];
@@ -812,13 +818,15 @@ class Compiler {
 				case "--java-lib-extern":
 					// type checking only, so nothing of it is generated.
 					nativeLibs.push({file: argValue(args, i++, a), isExtern: true});
+				case "-net-std" | "--net-std":
+					ctx.netStd.push(argValue(args, i++, a));
 				case "-c-arg" | "--c-arg":
 					// The argument is prepended to cArgs.
 					ctx.cArgs.unshift(argValue(args, i++, a));
 				case "-swf-lib" | "--swf-lib" | "-swf-lib-extern" | "--swf-lib-extern" | "-swf-version"
 					| "--swf-version" | "-swf-header" | "--swf-header"
-					| "-net-lib" | "--net-lib" | "-net-std"
-					| "--net-std" | "--connect" | "--neko-lib-path":
+					| "-net-lib" | "--net-lib"
+					| "--connect" | "--neko-lib-path":
 					// Options without an implementation here; the value must still be consumed.
 					// --neko-lib-path collects neko link paths; there is no neko generator here, so the
 					// directory is consumed and dropped.
@@ -995,6 +1003,7 @@ class Compiler {
 				ctx.forbiddenPackages.remove("jvm");
 			}
 		}
+		if (platform == Cs) hxc.codegen.dotnet.NetSetup.beforeGenerate(ctx);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 		// Run while the arguments are processed: a --display request whose mode does not type the whole
 		// compile (usage, diagnostics and statistics do) defines `display` as that mode, "1" for the empty
@@ -4480,6 +4489,14 @@ class Compiler {
 				acc.push(a);
 				acc.push(l[i + 1]);
 				l = ["-lib", "hxjava"].concat(l.slice(i + 2));
+				i = 0;
+				continue;
+			}
+			// A C# target likewise pulls in hxcs.
+			if ((a == "--cs" || a == "-cs") && hasValue) {
+				acc.push(a);
+				acc.push(l[i + 1]);
+				l = ["-lib", "hxcs"].concat(l.slice(i + 2));
 				i = 0;
 				continue;
 			}

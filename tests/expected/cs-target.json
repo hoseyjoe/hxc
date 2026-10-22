@@ -1,0 +1,7 @@
+{
+	"net-ver-not-a-number": "Error: Invalid value for -D net-ver. Expected format: xx (e.g. 20, 35, 40, 45, 50)",
+	"net-ver-below-20": "Error: .NET version is defined to target .NET 10, but the compiler can only output code to versions equal or superior to .NET 2.0 (defined as 20)",
+	"no-std-dir-for-net-ver": "Error: No .NET std lib directory with the pattern 'net-99' was found in the -net-std search path. Try updating the hxcs lib to the latest version, or specifying another -net-std path.",
+	"netcore-without-netcore-ver": "Error: .NET target is defined as netcore but -D netcore-ver is missing",
+	"net-std-without-the-digraph": "Error: No .NET std lib directory with the pattern 'net-40' was found in the -net-std search path. Try updating the hxcs lib to the latest version, or specifying another -net-std path."
+}

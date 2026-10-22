@@ -113,6 +113,23 @@ class PlatformConfig {
 		return c;
 	}
 
+	// C#: like java (wrapped-ref captures, native overloads, `this` untouchable before super()), with
+	// cs.system.Exception as the native exception type.
+	public static function cs():PlatformConfig {
+		var c:PlatformConfig = {
+			isStatic: true, sys: true, supportsOverload: true, capturePolicy: CPWrapRef,
+			padNulls: true, addFinalReturn: false, canSkipNonNullableArgument: true,
+			supportsRestArgs: true, usesUtf16: true, supportsUnicode: true,
+			supportsThreads: true, supportsAtomics: true,
+		};
+		c.thisBeforeSuper = false;
+		c.nativeThrows = ["cs.system.Exception", "haxe.Exception"];
+		c.nativeCatches = ["cs.system.Exception", "haxe.Exception"];
+		c.wildcardCatch = "cs.system.Exception";
+		c.baseThrow = "cs.system.Exception";
+		return c;
+	}
+
 	// Select the per-target config.
 	public static function get(p:Platform):PlatformConfig {
 		return switch (p) {
@@ -121,6 +138,7 @@ class PlatformConfig {
 			case Eval: eval();
 			case Neko: neko();
 			case Java: java();
+			case Cs: cs();
 			// Cross + the not-yet-targeted platforms use the base config until their backend
 			case _: defaults();
 		}

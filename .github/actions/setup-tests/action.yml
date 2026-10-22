@@ -37,6 +37,10 @@ runs:
       shell: bash
       run: haxelib install hxjava 4.2.0 --always --quiet
 
+    - name: Install hxcs
+      shell: bash
+      run: haxelib install hxcs 4.2.0 --always --quiet
+
     - uses: actions/checkout@v4
       with:
         repository: dimensionscape/haxe-conformance

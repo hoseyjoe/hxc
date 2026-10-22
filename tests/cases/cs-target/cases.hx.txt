@@ -1,0 +1,14 @@
+--- net-ver-not-a-number + -D net-ver=4x
+class P { static function main() {} }
+
+--- net-ver-below-20 + -D net-ver=10
+class P { static function main() {} }
+
+--- no-std-dir-for-net-ver + -D net-ver=99
+class P { static function main() {} }
+
+--- netcore-without-netcore-ver + -D net-target=netcore
+class P { static function main() {} }
+
+--- net-std-without-the-digraph + --net-std . -D net-ver=40
+class P { static function main() {} }

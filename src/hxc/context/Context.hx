@@ -107,6 +107,10 @@ class Context {
 	// jvm was spelled directly rather than --java plus -D jvm. it as its first argument and it decides
 	// whether the output path is a jar or a directory.
 	public var jvmFlag:Bool = false;
+	// The --net-std search paths in command-line order, and the std DLLs NetSetup found under them in
+	// directory-read order.
+	public var netStd:Array<String> = [];
+	public var netStdFiles:Array<String> = [];
 
 	public var displaySpec:Null<String>;
 
