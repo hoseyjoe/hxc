@@ -32,6 +32,21 @@ class P {
 	static function main() { var c:Ordering = EQ; trace(switch c { case LT: 1; case GT: 2; case EQ: 3; }); }
 }
 
+--- abstract-over-enum-abstract-switch-covering-every-value
+enum abstract Color(Int) { var Red; var Green; }
+abstract Shade(Color) from Color to Color {}
+class P {
+	static function main() {
+		var s:Shade = Green;
+		var x:Int;
+		switch s {
+			case Red: x = 1;
+			case Green: x = 2;
+		}
+		trace(x);
+	}
+}
+
 --- final-wildcard-matches-remaining-arguments
 enum E { C(a:Int, b:String, c:Float); D(a:Int); }
 class P {

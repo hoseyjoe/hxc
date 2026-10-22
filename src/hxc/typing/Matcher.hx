@@ -2017,12 +2017,12 @@ class TexprConverter {
 					case Bind(_, d1): hasFail(d1);
 					case Guard(_, _, d2) | GuardNull(_, _, d2): hasFail(d2);
 					case Switch(sub, subCases, dflt):
-						// A complete run-time-finite sub-switch (its cases cover every constructor of a
-						// true enum or Bool) drops its default at texpr time, exactly as
-						// droppedCompleteDefault does below, so the Fail there is dead and does not make
-						// the enclosing constructor a partial match. Otherwise `case C(Prefix): ..; case
-						// C(Postfix): ..;` would read as leaving C(_) unmatched even though {Prefix,
-						// Postfix} exhausts the argument.
+						// A complete run-time-finite sub-switch (its cases cover every constructor of an
+						// enum or Bool, or of a non-core abstract over one) drops its default at texpr
+						// time, exactly as droppedCompleteDefault does below, so the Fail there is dead and
+						// does not make the enclosing constructor a partial match. Otherwise `case
+						// C(Prefix): ..; case C(Postfix): ..;` would read as leaving C(_) unmatched even
+						// though {Prefix, Postfix} exhausts the argument.
 						var subT = effectiveSubjectType(sub, subCases);
 						var subUnmatched = unmatchedFiniteCoverage(ctx.com, subT, subCases);
 						var subComplete = subUnmatched != null && subUnmatched.length == 0;
@@ -2159,10 +2159,7 @@ class TexprConverter {
 					// drops the same way). A merely default-less switch (a String subject falling through) must
 					// not be marked: downstream analysis would treat it as always-terminating and drop the
 					// fall-through code.
-					var compileTimeFinite = complete && switch (TypeFunctions.follow(effT)) {
-						case TAbstract(a, _): a.impl != null && a.isEnum;
-						case _: false;
-					};
+					var compileTimeFinite = complete && finiteness == FCompileTimeFinite;
 					if ((droppedCompleteDefault || compileTimeFinite) && defE == null)
 						swSubject = TypeFunctions.mk(TMeta({name: ":exhaustive", params: [], pos: dt.pos}, swSubject), swSubject.type, swSubject.pos);
 					TypeFunctions.mk(TSwitch(swSubject, swCases, defE), tSwitch, dt.pos);
