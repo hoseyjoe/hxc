@@ -5,3 +5,4 @@ out/
 .vscode/
 tests/fixtures/*/bin/
 tests/fixtures/*/obj/
+tests/dotnet/tmp/

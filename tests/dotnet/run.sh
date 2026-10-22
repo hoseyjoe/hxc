@@ -4,6 +4,8 @@
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [+ extra hxc args]`, its source, `===`,
 # and the expected result. Each case compiles twice into a fresh directory, and its .dll must be
 # byte-identical between the two, pass ILVerify, run (unless @lib) and dump as expected.
+# Case directories go under $HXC_TEST_TMP, by default tests/dotnet/tmp (gitignored), so one
+# antivirus exclusion covers the assemblies they write.
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -25,6 +27,9 @@ if [ -z "$compiler" ]; then
 fi
 compiler="$(cd "$(dirname "$compiler")" && pwd)/$(basename "$compiler")"
 if [ -n "$std" ]; then export HAXE_STD_PATH="$std"; fi
+tmproot="${HXC_TEST_TMP:-$here/tmp}"
+mkdir -p "$tmproot" || exit 1
+tmproot="$(cd "$tmproot" && pwd)"
 
 checkdir="$root/tests/fixtures/hxccheck"
 if ! log="$(dotnet build "$checkdir" -c Release -o "$checkdir/bin/out" -nologo -v q 2>&1)"; then
@@ -63,7 +68,7 @@ run_case() {
 		esac
 	done
 	total=$((total + 1))
-	casedir="$(mktemp -d)"
+	casedir="$(mktemp -d "$tmproot/case.XXXXXX")"
 	local file="P.hx"
 	if [ "$module" != "P" ]; then file="$(printf '%s' "$module" | tr . /).hx"; fi
 	mkdir -p "$casedir/$(dirname "$file")"
@@ -71,10 +76,12 @@ run_case() {
 
 	local main=(--main "$module")
 	if [ $lib = 1 ]; then main=("$module"); fi
+	# --cs adds -lib hxcs, and haxelib would find the checkout's own .haxelib above the case directory;
+	# --haxelib-global, which only counts after the library, keeps the global hxcs.
 	set -f
 	local cout
-	cout="$("$compiler" --cwd "$(native "$casedir")" -cp . "${main[@]}" --cs a/P -D dotnet $extra 2>&1)"
-	"$compiler" --cwd "$(native "$casedir")" -cp . "${main[@]}" --cs b/P -D dotnet $extra > /dev/null 2>&1
+	cout="$("$compiler" --cwd "$(native "$casedir")" -cp . "${main[@]}" --cs a/P --haxelib-global -D dotnet $extra 2>&1)"
+	"$compiler" --cwd "$(native "$casedir")" -cp . "${main[@]}" --cs b/P --haxelib-global -D dotnet $extra > /dev/null 2>&1
 	set +f
 
 	local result="" problem="" dll="" f
