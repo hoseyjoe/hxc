@@ -13,3 +13,85 @@ class P {}
 ===
 [dump]
 assembly My.App 1.0.0.0
+--- hello
+class P {
+	static function main() {
+		Sys.println("Hello, world");
+	}
+}
+===
+[run]
+Hello, world
+--- println-boxes-values
+class P {
+	static function main() {
+		Sys.println(42);
+		Sys.println(true);
+	}
+}
+===
+[run]
+42
+True
+--- static-calls-and-vars
+class P {
+	static var greeting = "hi";
+	static var n:Int;
+	static function add(a:Int, b:Int):Int {
+		return a + b;
+	}
+	static function main() {
+		n = add(2, 3);
+		Sys.println(greeting);
+		Sys.println(n);
+	}
+}
+===
+[run]
+hi
+5
+--- extern-const
+class P {
+	static function main() {
+		Sys.println(cs.system.Int32.MaxValue);
+		Sys.println(cs.system.Math.Max(3, 9));
+	}
+}
+===
+[run]
+2147483647
+9
+--- entry-point-in-main-class @dump=P,entrypoint
+class P {
+	static function main() {}
+}
+===
+[dump]
+type public beforefieldinit P extends [mscorlib]System.Object
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public static hidebysig void main()
+  method public static hidebysig void Main()
+entrypoint P::Main
+--- entry-point-class-for-main @module=Main @dump=Main,EntryPoint__Main,entrypoint
+class Main {
+	static function main() {}
+}
+===
+[dump]
+type public beforefieldinit Main extends [mscorlib]System.Object
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public static hidebysig void main()
+type public beforefieldinit EntryPoint__Main extends [mscorlib]System.Object
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public static hidebysig void Main()
+entrypoint EntryPoint__Main::Main
+--- local-function-is-an-error
+class P {
+	static function main() {
+		var f = function() {};
+		f();
+	}
+}
+===
+[compile]
+P.hx:3: characters 11-24 : dotnet: local functions are not supported yet

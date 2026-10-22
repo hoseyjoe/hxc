@@ -6,6 +6,8 @@ import hxc.core.Globals;
 import hxc.core.Globals.Path;
 import hxc.context.Context;
 import hxc.codegen.dotnet.IlMeta.TypeDefSemantics;
+import hxc.codegen.dotnet.IlMeta.TableIdx;
+import hxc.codegen.dotnet.IlMeta.MetaAssembly;
 import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.IlMetaTools.IlNotFound;
 import hxc.codegen.dotnet.NetConverter;
@@ -23,6 +25,8 @@ class NetLibrary {
 	var ilctx:Null<NetLibCtx> = null;
 	// keyed by sTypePath; a type the library lacks is cached as null too
 	var cache:Map<String, Null<IlClass>> = new Map();
+	// rawClass's, keyed by IlPaths.key
+	var rawCache:Map<String, Null<IlClass>> = new Map();
 
 	public function new(com:Context, name:String, filePath:String, isStd:Bool) {
 		this.com = com;
@@ -54,6 +58,38 @@ class NetLibrary {
 	function getCtx():NetLibCtx {
 		if (ilctx == null) load();
 		return ilctx;
+	}
+
+	// The assembly's name, version, culture and public key token, as an AssemblyRef to it names it. The
+	// token is the last 8 bytes of the public key's SHA-1, reversed.
+	public function identity():ModuleBuilder.AssemblyIdentity {
+		var a:Null<MetaAssembly> = null;
+		for (m in getCtx().nil.tables[TableIdx.IAssembly]) switch (m) {
+			case Assembly(r): a = r;
+			case _:
+		}
+		if (a == null) throw "internal error: " + filePath + " has no Assembly row";
+		var token:Null<haxe.io.Bytes> = null;
+		if (a.publicKey != null && a.publicKey.length > 0) {
+			var hash = haxe.crypto.Sha1.make(a.publicKey);
+			token = haxe.io.Bytes.alloc(8);
+			for (i in 0...8) token.set(i, hash.get(hash.length - 1 - i));
+		}
+		return {name: a.name, version: [a.major, a.minor, a.build, a.rev], culture: a.locale, publicKeyToken: token};
+	}
+
+	// Whether the assembly itself holds the type's definition (not a forwarder to it).
+	public function definesType(path:IlPath):Bool {
+		return getCtx().nil.typedefs.exists(IlPaths.key(path));
+	}
+
+	// The type's members as the assembly declares them, before the converter normalizes them.
+	public function rawClass(path:IlPath):Null<IlClass> {
+		var key = IlPaths.key(path);
+		if (rawCache.exists(key)) return rawCache.get(key);
+		var r = try IlMetaTools.convertClass(getCtx().nil, path) catch (_:IlNotFound) null;
+		rawCache.set(key, r);
+		return r;
 	}
 
 	// the top-level types, in table order
