@@ -1311,7 +1311,6 @@ class Filters {
 			case other: throw new TypingError("Unknown DCE mode " + other, Position.nullPos);
 		};
 		hxc.optimization.Dce.stdPath = com.stdPath;
-		if (com.defines.rawDefined("dce_debug")) com.print = function(s) Sys.stderr().writeString(s);
 		stageMark("preDce"); memProbe("preDce");
 		hxc.optimization.Dce.run(com, dceMode);
 		stageMark("dce:done"); memProbe("dce:done");

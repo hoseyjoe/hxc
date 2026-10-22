@@ -90,6 +90,18 @@ class Dce {
 		this.curclass = TypeFunctions.nullClass;
 	}
 
+	// The debug log goes out a line at a time as Haxe's does: the entry points and removals with
+	// print_endline on stdout, a field not found with prerr_endline on stderr, each flushed.
+	static function printOut(s:String):Void {
+		Sys.stdout().writeString(s + "\n");
+		Sys.stdout().flush();
+	}
+
+	static function printErr(s:String):Void {
+		Sys.stderr().writeString(s + "\n");
+		Sys.stderr().flush();
+	}
+
 	// Swap curclass and return the thunk that restores it.
 	function pushClass(c:TClass):Void->Void {
 		var old = curclass;
@@ -467,7 +479,7 @@ class Dce {
 						case _: throw new DceNotFound();
 					}
 				} catch (_:DceNotFound) {
-					if (debug) com.print("[DCE] Field " + n + " not found on " + Context.sTypePath(c.path) + "\n");
+					if (debug) printErr("[DCE] Field " + n + " not found on " + Context.sTypePath(c.path));
 				}
 			}
 		}
@@ -989,6 +1001,8 @@ class Dce {
 				case _:
 			}
 		}
+		if (debug) for (e in addedFields) if (e.cf.expr != null)
+			printOut("[DCE] Entry point: " + Context.sTypePath(e.c.path) + "." + e.cf.name);
 	}
 
 	function keepCppInterfaceSlots():Void {
@@ -1058,7 +1072,7 @@ class Dce {
 					c.orderedStatics = filterFields(c.orderedStatics, function(cf) {
 						var b = keepField(cf, c, true);
 						if (!b) {
-							if (debug) com.print("[DCE] Removed field " + Context.sTypePath(c.path) + "." + cf.name + "\n");
+							if (debug) printOut("[DCE] Removed field " + Context.sTypePath(c.path) + "." + cf.name);
 							checkProperty(cf, true);
 							c.statics.remove(cf.name);
 						}
@@ -1067,7 +1081,7 @@ class Dce {
 					c.orderedFields = filterFields(c.orderedFields, function(cf) {
 						var b = keepField(cf, c, false);
 						if (!b) {
-							if (debug) com.print("[DCE] Removed field " + Context.sTypePath(c.path) + "." + cf.name + "\n");
+							if (debug) printOut("[DCE] Removed field " + Context.sTypePath(c.path) + "." + cf.name);
 							checkProperty(cf, false);
 							c.fields.remove(cf.name);
 						}
@@ -1089,12 +1103,12 @@ class Dce {
 						TypeFunctions.addClassFlag(c, CExtern);
 						acc.unshift(mt);
 					} else {
-						if (debug) com.print("[DCE] Removed class " + Context.sTypePath(c.path) + "\n");
+						if (debug) printOut("[DCE] Removed class " + Context.sTypePath(c.path));
 					}
 				case TEnumDecl(en) if (hasMeta(DceMeta.Used, en.meta) || en.isExtern || keepWholeEnum(en)):
 					acc.unshift(mt);
 				case TEnumDecl(e):
-					if (debug) com.print("[DCE] Removed enum " + Context.sTypePath(e.path) + "\n");
+					if (debug) printOut("[DCE] Removed enum " + Context.sTypePath(e.path));
 				case _:
 					acc.unshift(mt);
 			}
