@@ -8,5 +8,9 @@
 	"native-array-works": "P.hx:1: characters 78-79 : Warning : cs.NativeArray<Int>\nP.hx:1: characters 88-96 : Warning : Int\nP.hx:1: characters 105-109 : Warning : Int",
 	"net40-std-loads": "P.hx:1: characters 42-63 : Warning : cs.system.io.TextWriter\nP.hx:1: characters 72-108 : Warning : Int",
 	"default-net-ver-is-20": "P.hx:1: characters 66-73 : Warning : String\nP.hx:1: characters 95-100 : Warning : String",
-	"net-ver-40-defines-up-to-40": "P.hx:1: characters 66-73 : Warning : String"
+	"net-ver-40-defines-up-to-40": "P.hx:1: characters 66-73 : Warning : String",
+	"null-literal-is-a-plain-monomorph": "P.hx:4: characters 9-14 : Warning : Unknown<0>\nP.hx:5: characters 9-13 : Warning : Unknown<0>",
+	"field-written-after-read-through-null-initialized-local": "P.hx:8: characters 9-14 : Warning : Unknown<0> : { Name : String }",
+	"null-literal-to-a-basic-type": "P.hx:1: characters 48-52 : On static platforms, null can't be used as basic type Int\nP.hx:1: characters 48-52 : On static platforms, null can't be used as basic type Int",
+	"local-function-null-default-on-a-static-target": "P.hx:3: characters 47-50 : Warning : Null<Float>"
 }

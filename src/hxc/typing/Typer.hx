@@ -5207,7 +5207,8 @@ class Typer {
 				// is raw-bound to Null<?> (no constraint close) unless already nullable. The literal
 				// reusing the expected type instance keeps the equality unify a no-op, so a constrained
 				// mono is not closed by a null comparison.
-				var tnull:T = switch (withType) {
+				// On C# the literal is a plain monomorph, whatever is expected (Haxe's hack for #10787).
+				var tnull:T = if (ctx.com.platform == Cs) spawnMonomorph(ctx, p) else switch (withType) {
 					case WithType(wt, _):
 						switch (TypeFunctions.follow(wt)) {
 							case TMono(r) if (!TypeFunctions.isNullable(wt)):
