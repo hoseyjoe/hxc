@@ -95,3 +95,39 @@ class P {
 ===
 [compile]
 P.hx:3: characters 11-24 : dotnet: local functions are not supported yet
+--- ctor-calls-base-without-super
+@:keep class B {}
+@:keep class C extends B {
+	public function new() {}
+}
+class P {
+	static function main() {
+		Sys.println("ok");
+	}
+}
+===
+[run]
+ok
+--- unsafe-cast-between-references
+class P {
+	static function main() {
+		var c:cs.system.IComparable = cast "abc";
+		var s:String = cast c;
+		Sys.println(s);
+	}
+}
+===
+[run]
+abc
+--- failed-declaration-does-not-stop-the-method
+class P {
+	static function main() {
+		var f = function() {};
+		Sys.println(f);
+		Sys.println(cs.system.Math.Max(1, 2) < 2);
+	}
+}
+===
+[compile]
+P.hx:3: characters 11-24 : dotnet: local functions are not supported yet
+P.hx:5: characters 15-43 : dotnet: the < operator is not supported yet

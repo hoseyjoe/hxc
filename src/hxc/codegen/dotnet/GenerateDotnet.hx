@@ -71,11 +71,17 @@ class DotnetCtx {
 		}
 	}
 
-	// cs.Boot.init's token, when the assembly has it.
+	// cs.Boot.init's token when cs.Boot is one of the program's types, as gencs calls it. A cs.Boot
+	// that was left out throws, so the entry point reports it.
 	public function bootInit():Null<Int> {
-		for (p in plans) if (p.c != null && p.hxPath == "cs.Boot") {
-			var init = p.c.statics.get("init");
-			if (init != null) return methodTokens.get(init);
+		for (mt in ctx.types) switch (mt) {
+			case TClassDecl(c) if (DotnetTypes.haxePath(mt) == "cs.Boot"):
+				types.checkKept(mt);
+				var init = c.statics.get("init");
+				var token = init == null ? null : methodTokens.get(init);
+				if (token == null) throw "internal error: cs.Boot has no init method";
+				return token;
+			case _:
 		}
 		return null;
 	}

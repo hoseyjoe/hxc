@@ -337,6 +337,17 @@ class TclassToIl {
 		}
 	}
 
+	// Haxe requires super(...) only when some ancestor has a constructor; otherwise the constructor
+	// calls the base type's parameterless one itself, as C# does.
+	static function ancestorHasCtor(c:TClass):Bool {
+		var s = c.superClass;
+		while (s != null) {
+			if (s.c.constructor != null) return true;
+			s = s.c.superClass;
+		}
+		return false;
+	}
+
 	// The base type's parameterless constructor: a MethodDef token when this module defines it for a
 	// non-generic class, else a MemberRef.
 	static function baseCtor(g:DotnetCtx, plan:ClassPlan, code:IlCode):Void {
@@ -373,25 +384,22 @@ class TclassToIl {
 							if (a.c != null) throw new Unsupported("default argument values", true, cf.pos);
 							lower.bindArg(a.v, i + (m.hasThis ? 1 : 0), m.args[i]);
 						}
-						if (cf.name == "new" && plan.superSig == null) baseCtor(g, plan, code);
+						if (cf.name == "new" && !ancestorHasCtor(plan.c)) baseCtor(g, plan, code);
 						statement(lower, RReturn, tf.expr);
-						lower.finish();
+						if (failures.length == 0) lower.finish();
 					});
 				case MEntryPoint:
 					var boot = g.bootInit();
 					if (boot != null) code.opToken(IlOps.CALL, boot, 0, 0);
 					if (g.ctx.main != null) statement(lower, RVoid, g.ctx.main);
-					lower.finish();
+					if (failures.length == 0) lower.finish();
 				case MCctor:
 					cctor(plan, lower);
-					lower.finish();
+					if (failures.length == 0) lower.finish();
 			});
 		} catch (u:Unsupported) {
 			if (u.pos == null) u.pos = m.pos;
 			if (plan.isStd) stub = u else failures.push(u);
-		} catch (e:Dynamic) {
-			// A failed user statement can leave the rest inconsistent; its IL is thrown away anyway.
-			if (failures.length == 0) throw e;
 		}
 		if (failures.length > 0) {
 			for (u in failures) g.report(u);

@@ -101,13 +101,18 @@ class TexprToIl {
 		} else if (fromValue) {
 			if (from.match(LInt32) && to.match(LFloat64)) code.op(IlOps.CONV_R8, 1, 1);
 			else throw new Unsupported("conversions between value types", true);
-		} else if (from.match(LObject)) {
+		} else if (isReference(from) && isReference(to) && !to.match(LObject)) {
+			// An unsafe cast may narrow; on a widening one castclass costs nothing.
 			code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
 		}
 	}
 
+	static function isReference(s:IlSigNorm):Bool return s.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _));
+
 	function slot(v:TVar):Slot {
 		var s = slots.get(v.id);
+		// The statement using it is not reported again: the declaration already was.
+		if (s == null && poisoned.exists(v.id)) throw new Unsupported("a variable whose declaration failed", false);
 		if (s == null) throw "internal error: unbound variable " + v.name;
 		return s;
 	}
@@ -241,16 +246,20 @@ class TexprToIl {
 				texpr(r, s);
 			} catch (u:Unsupported) {
 				code.resetDepth(depth);
-				var usesPoisoned = TexprTools.checkExpr(function(e) return switch (e.expr) {
-					case TLocal(v): poisoned.exists(v.id);
-					case _: false;
-				}, s);
+				var usesPoisoned = usesPoisonedVar(s);
 				switch (s.expr) {
 					case TVarExpr(v, _): poisoned.set(v.id, true);
 					case _:
 				}
 				if (!usesPoisoned) onError(u);
 			}
+		}
+	}
+
+	function usesPoisonedVar(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TLocal(v): poisoned.exists(v.id);
+			case _: TexprTools.checkExpr(usesPoisonedVar, e);
 		}
 	}
 
@@ -288,7 +297,7 @@ class TexprToIl {
 						if (needVal(ret)) throw new Unsupported("the value of an assignment to a .NET field", false);
 						if (!isStatic) receiver(obj, parent);
 						texpr(RValue(s), rhs);
-						var token = g.mb.memberRef(g.typeTokenOf(parent), cf.name, g.sigs.field(open));
+						var token = g.mb.memberRef(g.typeTokenOf(parent), ExternMembers.memberName(cf), g.sigs.field(open));
 						code.opToken(isStatic ? IlOps.STSFLD : IlOps.STFLD, token, isStatic ? 1 : 2, 0);
 					case XProperty(open, _, setter) if (setter != null):
 						var s = ExternMembers.subst(open, inst);
@@ -424,7 +433,7 @@ class TexprToIl {
 						coerce(s, ret);
 					case XField(open):
 						if (!isStatic) receiver(obj, parent);
-						var token = g.mb.memberRef(g.typeTokenOf(parent), cf.name, g.sigs.field(open));
+						var token = g.mb.memberRef(g.typeTokenOf(parent), ExternMembers.memberName(cf), g.sigs.field(open));
 						code.opToken(isStatic ? IlOps.LDSFLD : IlOps.LDFLD, token, isStatic ? 0 : 1, 1);
 						coerce(ExternMembers.subst(open, inst), ret);
 					case XProperty(open, getter, _) if (getter != null):

@@ -92,7 +92,8 @@ class ExternMembers {
 		return r;
 	}
 
-	static function memberName(cf:TClassField):String {
+	// The name the referenced assembly gives the member: @:native's when the converter renamed it.
+	public static function memberName(cf:TClassField):String {
 		var n = DotnetNames.nativeName(cf.meta);
 		return n != null ? n : cf.name;
 	}
