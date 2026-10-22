@@ -32,7 +32,8 @@ output.
 | Compilation server | `--wait stdio` and `--server-connect`; listening on a TCP port is not yet supported |
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
-| `--lua`, `--python`, `--php`, `--hl`, `--cs`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
+| `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet |
+| `--lua`, `--python`, `--php`, `--hl`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
 
