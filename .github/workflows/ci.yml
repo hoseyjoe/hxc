@@ -152,6 +152,28 @@ jobs:
           cd bin && java -jar unit.jar | tee "$RUNNER_TEMP/jvm.log"
           grep -q "ALL TESTS OK" "$RUNNER_TEMP/jvm.log"
 
+  dotnet:
+    name: .NET
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: t
+        uses: ./.github/actions/setup-tests
+        with:
+          artifact: hxc-windows-x64
+          conformance-commit: ${{ env.CONFORMANCE_COMMIT }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: The .NET generator's cases
+        shell: bash
+        run: tests/dotnet/run.sh --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH"
+
   haxe-suites:
     name: Haxe's suites
     needs: build

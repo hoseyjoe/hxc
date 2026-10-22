@@ -1709,6 +1709,12 @@ class Compiler {
 						var tGen = hxc.core.Timer.timer(["generate", "java"]);
 						hxc.codegen.jvm.GenerateJvm.generate(ctx.jvmFlag, ctx);
 						tGen();
+					} else if (platform == Cs && ctx.defines.rawDefined("dotnet")) {
+						// --cs alone writes nothing; the dotnet define selects the IL generator.
+						ctx.log("Generating dotnet: " + ctx.file);
+						var tGen = hxc.core.Timer.timer(["generate", "dotnet"]);
+						hxc.codegen.dotnet.GenerateDotnet.generate(ctx);
+						tGen();
 					}
 				}
 			}

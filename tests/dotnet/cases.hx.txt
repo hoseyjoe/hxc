@@ -1,0 +1,15 @@
+--- empty-library @lib @dump=assembly
+class P {}
+===
+[dump]
+assembly P 1.0.0.0
+--- dll-name-define @lib @dump=assembly + -D dll-name=HaxeServer
+class P {}
+===
+[dump]
+assembly HaxeServer 1.0.0.0
+--- dll-name-with-dots @lib @dump=assembly + -D dll-name=My.App
+class P {}
+===
+[dump]
+assembly My.App 1.0.0.0
