@@ -1526,9 +1526,12 @@ class Calls {
 		if (cf.params.length == 0) return {expr: ce, monos: []};
 		var hostMap = hostParamMap(fa);
 		var monos:TParams = TypeUnification.spawnConstrainedMonos(hostMap, cf.params);
-		// The signature gets the same host mapping as the constraints, so a class parameter appearing in
-		// both stays one type (host params apply first, then field params).
-		return {expr: TypeFunctions.mk(ce.expr, TypeFunctions.applyParams(cf.params, monos, hostMap(ce.type)), ce.pos), monos: monos};
+		// The field's own params become the monos first and the host mapping applies after, as in Haxe's
+		// unify_field_call: the callee expression is already host-mapped, and mapping it again is wrong
+		// when the host's arguments name the host's own params (`e.map(..)` on a K<A, R->R0> inside K).
+		var t = fa == null ? TypeFunctions.applyParams(cf.params, monos, ce.type)
+			: FieldAccessTools.getMapFunction(fa)(TypeFunctions.applyParams(cf.params, monos, TypeFields.fieldCallType(cf)));
+		return {expr: TypeFunctions.mk(ce.expr, t, ce.pos), monos: monos};
 	}
 
 	static function monomorphizeParams(ctx:TyperContext, cf:TClassField, ce:TExpr, ?fa:FieldAccess):TExpr {
