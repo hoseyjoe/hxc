@@ -902,9 +902,10 @@ class PatternMaker {
 										sig2.args;
 									case _: fail();
 								};
-								// A single `_` argument matches every constructor argument; otherwise match
-								// positionally, filling omitted trailing optional args with wildcards.
-								var single = el.length == 1 && (switch (el[0].expr) { case EConst(CIdent("_")): true; case _: false; });
+								// A final `_` matches every remaining constructor argument; the others match
+								// positionally, and omitted trailing optional args are filled with wildcards.
+								var lastWild = el.length > 0 && (switch (el[el.length - 1].expr) { case EConst(CIdent("_")): true; case _: false; });
+								var wildUsed = false;
 								// Constructor arguments are patterned from the last to the first: the REST of the arguments
 								// are patterned before the current one, and the arity checks fire from the deepest
 								// recursion before any of them. Two observable effects: the arity error precedes every
@@ -914,18 +915,18 @@ class PatternMaker {
 								var pairIdx:Array<Int> = [];
 								var ei = 0;
 								for (ai in 0...args.length) {
-									if (single) pairIdx.push(-1);
+									if (lastWild && ei == el.length - 1) { pairIdx.push(-2); wildUsed = true; }
 									else if (ei < el.length) { pairIdx.push(ei); ei++; }
 									else if (args[ai].opt) pairIdx.push(-1);
 									else throw new TypingError("Not enough arguments", p);
 								}
-								if (!single && ei < el.length) throw new TypingError("Too many arguments", p);
+								if (ei < el.length && !wildUsed) throw new TypingError("Too many arguments", p);
 								var subs:Array<Pattern> = [];
 								var ai = args.length - 1;
 								while (ai >= 0) {
 									var idx = pairIdx[ai];
 									subs.push(idx < 0
-										? ({pat: PatAny, pos: single ? el[0].pos : p} : Pattern)
+										? ({pat: PatAny, pos: idx == -2 ? el[el.length - 1].pos : p} : Pattern)
 										: make(pctx, false, args[ai].t, el[idx]));
 									ai--;
 								}

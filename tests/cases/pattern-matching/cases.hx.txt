@@ -31,3 +31,33 @@ abstract Ordering(OrderingImpl) from OrderingImpl to OrderingImpl {}
 class P {
 	static function main() { var c:Ordering = EQ; trace(switch c { case LT: 1; case GT: 2; case EQ: 3; }); }
 }
+
+--- final-wildcard-matches-remaining-arguments
+enum E { C(a:Int, b:String, c:Float); D(a:Int); }
+class P {
+	static function f(e:E):Int {
+		return switch e {
+			case C(x, _): x;
+			case D(_): 0;
+		}
+	}
+	static function main() { trace(f(C(1, "", 2.0))); }
+}
+
+--- final-wildcard-after-every-argument
+enum E { C(a:Int, b:String); }
+class P {
+	static function main() { switch C(1, "") { case C(x, y, _): trace(x); } }
+}
+
+--- non-final-wildcard-still-needs-every-argument
+enum E { C(a:Int, b:String, c:Float); }
+class P {
+	static function main() { switch C(1, "", 2.0) { case C(_, x): trace(x); } }
+}
+
+--- too-many-arguments-before-a-final-wildcard
+enum E { C(a:Int); }
+class P {
+	static function main() { switch C(1) { case C(x, y, _): trace(x); } }
+}
