@@ -1264,6 +1264,14 @@ class Calls {
 	}
 
 	static function callFieldAccess(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType, forceInline = false, forcePos:Null<Position> = null, ?elTyped:Array<TExpr>):TExpr {
+		return resolveFieldCall(ctx, fa, el, p, withType, forceInline, forcePos, elTyped).call();
+	}
+
+	// Resolves a call over the field's candidates and answers the one it keeps: the call to make, the
+	// callee's type, the unified arguments and the candidate. A constructor call takes the arguments and
+	// leaves the call alone (`forCtor`); a recovered call has no arguments to hand over, so it never
+	// recovers.
+	public static function resolveFieldCall(ctx:TyperContext, fa:FieldAccess, el:Array<Expr>, p:Position, ?withType:WithType, forceInline = false, forcePos:Null<Position> = null, ?elTyped:Array<TExpr>, forCtor = false):{call:Void->TExpr, tf:Null<T>, args:Null<Array<TExpr>>, cf:Null<TClassField>} {
 		if (elTyped == null) elTyped = [];
 		// An unhinted parameter's type is inferred from the body; force the body before argument
 		// unification so the signature is complete. Only an open signature forces it, which keeps
@@ -1321,7 +1329,7 @@ class Calls {
 		// A single `overload` candidate is checked before it is tried.
 		if (!multi && TypeFunctions.hasClassFieldFlag(fa.field, CfOverload)) maybeCheckAccess(candidates[0]);
 		var successes:Array<Overloads.OverloadCandidate<{expr:Void->TExpr, hover:Null<Dynamic>}>> = [];
-		var chosen:Null<Void->TExpr> = null;
+		var chosen:Null<{call:Void->TExpr, tf:T, args:Array<TExpr>, cf:TClassField}> = null;
 		// While overload candidates are being tried, a display answer is not raised - it is STORED per
 		// candidate and only the one belonging to the candidate resolution PICKS is committed.
 		// Otherwise a candidate that goes on to fail on its argument count still gets to name the
@@ -1396,7 +1404,7 @@ class Calls {
 				if (multi) ctx.com.raiseTypingErrors = oldRaise;
 				if (!overloadProper) {
 					hxc.typing.Typer.augmentHoverArgDoc(cf, outerHover);
-					chosen = r.call;
+					chosen = {call: r.call, tf: r.tf, args: r.args, cf: cf};
 					break;
 				}
 				successes.push({cf: cf, tf: r.tf, args: r.args, payload: {expr: r.call, hover: hxc.typing.Typer.hoverFound}});
@@ -1442,7 +1450,7 @@ class Calls {
 			}
 		}
 		if (multi) hxc.typing.Typer.overloadArgsDepth--;
-		if (chosen != null) return chosen();
+		if (chosen != null) return chosen;
 		// The chosen candidate's stored answer is the one that is committed, augmented with the candidate
 		// it
 		// came from.
@@ -1457,7 +1465,7 @@ class Calls {
 		if (reduced.length == 1) {
 			maybeCheckAccess(reduced[0].cf);
 			commit(reduced[0].payload.hover, reduced[0].cf);
-			return reduced[0].payload.expr();
+			return {call: reduced[0].payload.expr, tf: reduced[0].tf, args: reduced[0].args, cf: reduced[0].cf};
 		}
 		if (reduced.length > 1) {
 			ctx.com.addDiagnostic("Ambiguous overload, candidates follow", p);
@@ -1465,7 +1473,7 @@ class Calls {
 			for (s in reduced)
 				ctx.com.addDiagnostic("... " + hxc.core.TPrinting.sType(pctx, s.tf), s.cf.namePos, 1);
 			commit(reduced[0].payload.hover, reduced[0].cf);
-			return reduced[0].payload.expr();
+			return {call: reduced[0].payload.expr, tf: reduced[0].tf, args: reduced[0].args, cf: reduced[0].cf};
 		}
 		// Nothing resolved: the answer a candidate reached is still the only one there is.
 		commit(firstFailHover, firstFailCf);
@@ -1483,7 +1491,7 @@ class Calls {
 		// call to the same field with no arguments, the field typed as (Dynamic...) -> Dynamic over the
 		// arguments written, and the call itself Dynamic at the call's own position. A display file
 		// holding one bad call still answers the request, and the block around it types Dynamic.
-		if (!multi && ctx.com.ignoreError()) return failFun(fa, p);
+		if (!multi && !forCtor && ctx.com.ignoreError()) return {call: function() return failFun(fa, p), tf: null, args: null, cf: null};
 		if (distinct.length == 1) {
 			// The one candidate's error is raised as it came, chain included: a macro's uncaught exception
 			// in

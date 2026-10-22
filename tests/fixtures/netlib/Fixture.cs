@@ -1,4 +1,5 @@
 // Rebuild: dotnet build -c Release, then copy bin/Release/netstandard2.0/Fixture.dll to tests/cases/net-lib/fixture/.
+// A rebuild changes the module hash recorded in the nested-and-top-level-redefined case, so re-record it.
 namespace Fixture {
 	public class Plain {
 		public Plain() {} public Plain(int x) {}
@@ -24,6 +25,20 @@ namespace Fixture {
 	public class WithEnum { public enum Kind { A, B } public Kind K; }
 	public class Uses2 { public Outer2<int>.Mid<string>.Leaf L; public IGen<Box<int>> G; public Fn<int, string> F; public WithEnum.Kind K; }
 	public class Keywords { public int @in; public void @cast() {} public int @var; }
+	public interface IShape { double Area(); }
+	public interface INamed { string Name(); }
+	public class Square : IShape, INamed { public double Area() => 0; string INamed.Name() => "sq"; }
+	public enum Color { Red, Green = 5 }
+	[System.Flags] public enum Perm { None = 0, Read = 1, Write = 2 }
+	public delegate int Op(int a, int b);
+	public class Events { public event Op Fired; public int Size { get; set; } public int ReadOnly { get { return 1; } } public string this[int i] { get => null; set {} } }
+	public class Overloads { public void F(int a) {} public void F(string a) {} public void F(int a, int b) {} }
+	public struct Point { public int X; public Point(int x) { X = x; } }
+	public class Ops { public static Ops operator +(Ops a, Ops b) => a; public static bool operator ==(Ops a, Ops b) => true; public static bool operator !=(Ops a, Ops b) => false; public override bool Equals(object o) => true; public override int GetHashCode() => 0; }
+	public class ByRef { public void Fill(ref int a, out string b) { b = null; } }
+	public class Nulls { public int? MaybeInt; public System.Nullable<double> MaybeDouble; }
+	public class Ambiguous { public Ambiguous(string s) {} public Ambiguous(object o) {} public void A(string s) {} public void A(object o) {} }
+	public class Guarded { public Guarded() {} protected Guarded(int a) {} }
 }
 namespace Fixture.Sub { public class Thing {} }
 namespace Fixture.MixedCase.Deep { public class InDeep {} }

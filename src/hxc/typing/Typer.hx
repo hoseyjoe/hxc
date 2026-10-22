@@ -7445,6 +7445,18 @@ class Typer {
 		// typed.
 		var ctorTypes = findConstructorTypes(ctx, c, tl);
 		if (ctorTypes.length == 0) throw new TypingError(hxc.core.Globals.sTypePath(noConstructorPath(c)) + " does not have a constructor", p);
+		// Several constructors resolve as the overloads of a field call do. Only a constructor the class
+		// declares itself does: an inherited one keeps the retry below.
+		if (ctorTypes.length > 1 && c.constructor != null) {
+			var fa = FieldAccessTools.create(TexprTools.makeTypeExpr(TClassDecl(c), p), c.constructor, FHInstance(c, tl), false, p);
+			var res = Calls.resolveFieldCall(ctx, fa, el, p, null, false, null, null, true);
+			Fields.checkConstructorAccess(ctx, c, res.cf, p);
+			var args = switch (TypeFunctions.follow(res.tf)) {
+				case TFun(sig): sig.args;
+				case _: [];
+			};
+			return {r: {el: res.args, tfunc: res.tf}, chosenArgs: args};
+		}
 		// Try each constructor signature, first success wins (overload retry).
 		var r:Dynamic = null;
 		var firstError:Null<Dynamic> = null;

@@ -213,7 +213,7 @@ class NetConverter {
 
 	static inline function debug(com:Context):Bool return com.defines.rawDefined("net_loader_debug");
 
-	public static function convertIlenum(ctx:NetLibCtx, p:Position, isFlag:Bool, ilcls:IlClass):TypeDecl {
+	public static function convertIlEnum(ctx:NetLibCtx, p:Position, ilcls:IlClass, isFlag:Bool):TypeDecl {
 		var meta = [nativeMeta(ilpathS(ilcls.cpath), p), mkMeta(":csNative", p)];
 		var data:Array<{ec:EnumConstructor, v:haxe.Int64}> = [];
 		for (f in ilcls.cfields) {
@@ -580,7 +580,7 @@ class NetConverter {
 		var ilcls = cls;
 		if (ilcls.csuper != null) switch (ilcls.csuper.snorm) {
 			case LClass(path, []) if (isSystem(path, "Enum")):
-				return convertIlenum(ctx, p, false, ilcls);
+				return convertIlEnum(ctx, p, ilcls, false);
 			case _:
 		}
 		var com = ctx.ncom;

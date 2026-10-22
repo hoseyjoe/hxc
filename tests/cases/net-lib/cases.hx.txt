@@ -87,3 +87,79 @@ class P { static function main() { $type(new fixture.WithEnum().K); $type(fixtur
 
 --- namespace-segments-are-lowercased
 class P { static function main() { $type(new fixture.mixedcase.deep.InDeep()); } }
+
+
+--- interface-and-explicit-impl
+class P { static function main() { var s = new fixture.Square(); $type(s.Area()); var i:fixture.IShape = s; var n:fixture.INamed = s; $type(n.Name()); } }
+
+--- enum-values
+class P { static function main() { $type(fixture.Color.Green); var c:fixture.Color = Red; } }
+
+--- flags-enum
+class P { static function main() { $type(fixture.Perm.Read); } }
+
+--- delegate-type
+class P { static function main() { var o:fixture.Op = null; $type(o); $type(o.Invoke); } }
+
+--- event-and-properties
+class P { static function main() { var e = new fixture.Events(); $type(e.Size); e.Size = 2; $type(e.ReadOnly); $type(e.Fired); $type(e.get_Item); } }
+
+--- assigning-a-get-only-property
+class P { static function main() { new fixture.Events().ReadOnly = 2; } }
+
+--- overloads-resolve
+class P { static function main() { var o = new fixture.Overloads(); o.F(1); o.F("a"); o.F(1, 2); $type(o.F); } }
+
+--- overload-mismatch-error
+class P { static function main() { new fixture.Overloads().F(1.5); } }
+
+--- struct-type
+class P { static function main() { var p = new fixture.Point(3); $type(p.X); } }
+
+--- operators
+class P { static function main() { var a = new fixture.Ops(); $type(a + a); $type(a == a); } }
+
+--- ref-and-out-parameters
+class P { static function main() { var a = 1; var b:String = null; new fixture.ByRef().Fill(a, b); $type(new fixture.ByRef().Fill); } }
+
+--- ref-parameter-accepts-plain-value
+class P { static function main() { new fixture.ByRef().Fill(1, null); } }
+
+--- ref-parameter-needs-cs-ref
+class P { static function main() { new fixture.ByRef().Fill("a", null); } }
+
+--- nullable-value-fields
+class P { static function main() { var n = new fixture.Nulls(); $type(n.MaybeInt); $type(n.MaybeDouble); } }
+
+--- event-accessors
+class P { static function main() { var e = new fixture.Events(); $type(e.add_Fired); $type(e.remove_Fired); } }
+
+--- property-accessors
+class P { static function main() { var e = new fixture.Events(); $type(e.get_Size); $type(e.set_Size); $type(e.get_ReadOnly); $type(e.set_Item); } }
+
+--- operators-are-static-methods
+class P { static function main() { var a = new fixture.Ops(); $type(fixture.Ops.op_Addition(a, a)); $type(fixture.Ops.op_Equality); $type(a != a); } }
+
+--- flags-enum-is-not-an-int
+class P { static function main() { var f = fixture.Perm.Read | fixture.Perm.Write; } }
+
+--- enum-switch
+class P { static function main() { var c:fixture.Color = Red; switch (c) { case Red: case Green: } } }
+
+--- struct-needs-a-constructor-argument
+class P { static function main() { new fixture.Point(); } }
+
+--- constructor-overloads-resolve
+class P { static function main() { $type(new fixture.Plain()); $type(new fixture.Plain(3)); } }
+
+--- constructor-overload-mismatch-error
+class P { static function main() { new fixture.Plain("s"); } }
+
+--- ambiguous-method-overload
+class P { static function main() { new fixture.Ambiguous("s").A(null); } }
+
+--- ambiguous-constructor-overload
+class P { static function main() { new fixture.Ambiguous(null); } }
+
+--- protected-constructor-overload
+class P { static function main() { new fixture.Guarded(); new fixture.Guarded(1); } }
