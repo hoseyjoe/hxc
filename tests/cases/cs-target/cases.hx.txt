@@ -61,3 +61,14 @@ class P {
 		f(1);
 	}
 }
+
+--- exceptions-are-wrapped-for-dce + -dce full -D dce-debug -D unsafe
+class P {
+	static function main() {
+		try {
+			throw "x";
+		} catch (e:Dynamic) {
+			trace("a" + e);
+		}
+	}
+}

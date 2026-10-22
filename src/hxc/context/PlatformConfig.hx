@@ -27,6 +27,7 @@ class PlatformConfig {
 	public var wildcardCatch:String = "StdTypes.Dynamic"; // The native wildcard catch type
 	public var baseThrow:String = "StdTypes.Dynamic";     // Wrapped throws cast to this
 	public var avoidWrapping:Bool = true;           // Pass allowed values through as-is
+	public var specialThrow:Null<String> = null;    // An identifier thrown as it is (`throw untyped __rethrow__`)
 
 	public function new(isStatic:Bool, sys:Bool, supportsOverload:Bool, capturePolicy:CapturePolicy,
 			padNulls:Bool, addFinalReturn:Bool, canSkipNonNullableArgument:Bool,
@@ -127,6 +128,7 @@ class PlatformConfig {
 		c.nativeCatches = ["cs.system.Exception", "haxe.Exception"];
 		c.wildcardCatch = "cs.system.Exception";
 		c.baseThrow = "cs.system.Exception";
+		c.specialThrow = "__rethrow__";
 		return c;
 	}
 
