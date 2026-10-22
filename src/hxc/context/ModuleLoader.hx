@@ -2443,14 +2443,19 @@ class ModuleLoader {
 
 	// Wildcard imports: `import pack.*` resolves `name` as pack.name's type or pack.name module's main
 	// type.
-	public static function resolveWildcardImportType(ctx:Context, cur:ModuleDef, name:String, p:Position):Null<ModuleType> {
+	// A sub-type path `Module.Sub` looks in the same packages for the module and then the sub-type in it,
+	// moving on to the next package when the module or the type is missing.
+	public static function resolveWildcardImportType(ctx:Context, cur:ModuleDef, name:String, p:Position, ?sub:String):Null<ModuleType> {
 		var imports = ctx.moduleImports.get(Context.pathKey(cur.path));
 		if (imports == null) return null;
 		for (i in 0...imports.wildcards.length) {
 			var wp = imports.wildcards[i];
 			// Only the declarations before it, as in resolveNamedImportType.
 			if (imports.pathDisplayAt >= 0 && i < imports.wildcardImp.length && imports.wildcardImp[i] >= imports.pathDisplayAt) continue;
-			var r = tryLoadModuleMain(ctx, {pack: wp.pack.concat([wp.name]), name: name}, p);
+			var mp:Path = {pack: wp.pack.concat([wp.name]), name: name};
+			var r:Null<ModuleType> = null;
+			if (sub == null) r = tryLoadModuleMain(ctx, mp, p);
+			else r = tryLoadModuleSub(ctx, mp, sub, p);
 			if (r != null) { imports.markWildcard(wp); return r; }
 		}
 		return null;
@@ -2555,6 +2560,12 @@ class ModuleLoader {
 			case ModuleNotFound(q): q.name == mp.name && samePack(q.pack, mp.pack);
 			case _: false;
 		};
+	}
+
+	static function tryLoadModuleSub(ctx:Context, mp:Path, sub:String, p:Position):Null<ModuleType> {
+		var m = try loadModuleOpt(ctx, mp, p) catch (e:ContextError) { if (missFor(e, mp)) return null; throw e; };
+		if (m == null) return null;
+		return findTypeInModuleOpt(m, sub);
 	}
 
 	static function tryLoadModuleMain(ctx:Context, mp:Path, p:Position):Null<ModuleType> {

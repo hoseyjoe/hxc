@@ -702,6 +702,10 @@ class Typeload {
 			var sib = hxc.context.ModuleLoader.resolveSamePackageSibling(ctx, ctx.currentModule, path.name, p);
 			if (sib != null) return sib;
 		}
+		if (sub != null && path.pack.length == 0 && ctx.currentModule != null) {
+			var imp = hxc.context.ModuleLoader.resolveWildcardImportType(ctx, ctx.currentModule, path.name, p, sub);
+			if (imp != null) return imp;
+		}
 		if (sub != null && path.pack.length == 0 && ctx.currentModule != null
 				&& ctx.currentModule.path.pack.length > 0) {
 			var pack = ctx.currentModule.path.pack;
