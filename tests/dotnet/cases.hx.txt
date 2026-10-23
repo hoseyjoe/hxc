@@ -1229,3 +1229,16 @@ class P {
 bacnull
 3
 2,
+--- generic-instantiation-cast-is-an-error
+class P {
+	static function main() {
+		var a:Array<Dynamic> = [1, 2, 3], b:Array<Int> = [];
+		b = cast a;
+		var c:Array<Dynamic> = b;
+		Sys.println(a.length + b.length + c.length);
+	}
+}
+===
+[compile]
+P.hx:4: characters 7-13 : dotnet: a cast between instantiations of Array is not supported yet
+P.hx:5: characters 26-27 : dotnet: a cast between instantiations of Array is not supported yet
