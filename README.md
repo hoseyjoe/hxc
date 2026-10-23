@@ -118,17 +118,19 @@ Classes, interfaces, structs, generics, statics, operators, strings, arrays and 
 exceptions work, including `try`/`catch`/`throw` of `cs.system.Exception` subclasses. Classes have
 the shape Haxe's own `--cs` generator gives them: they extend `haxe.lang.HxObject`, and fields and
 methods can be reached by reflection (`Reflect.field`, `Reflect.setField`, `Reflect.callMethod`,
-`Reflect.hasField` and the `Dynamic` field operations behind them). `Dynamic` works: field access,
+`Reflect.hasField` and the `Dynamic` field operations behind them). `Dynamic` works for field access,
 calls, arithmetic, comparison, equality, string concatenation and conversion to and from the basic
-types. So do anonymous objects (`{x: 1}`, printed and read through `Dynamic`) and `Null<T>`,
-including `Null<Int>`, `Null<Float>` and `Null<Bool>` and defaulted arguments. The `@gencs` cases in
-the tests check that these behave as gencs's output does.
+types; array access on a `Dynamic` is not supported yet. Anonymous objects (`{x: 1}`, printed and
+read through `Dynamic`) and `Null<T>`, including `Null<Int>`, `Null<Float>` and `Null<Bool>` and
+defaulted arguments, work too. The `@gencs` cases in the tests check that these behave as gencs's
+output does.
 
-Constructs not supported yet are compile errors in user code (`dotnet: ... not supported yet`):
-closures and local functions, Haxe enums, casts between instantiations of a generic class (such as
-`Array<Dynamic>` to `Array<Int>`), and `dynamic` methods. They are the next steps for the .NET
-generator, closures, enums, the rest of `Std`, `Type` and `Reflect`, and `haxe.Exception` first; then
-the generic-instantiation casts and the `Array` forwarding fix (Haxe issue 8314). Until then,
+Constructs not supported yet are compile errors in user code (`dotnet: ... not supported yet`). The
+list is not complete; among others it has closures and local functions, Haxe enums, array access on
+`Dynamic`, `return`, `break` and `continue` inside expressions, `dynamic` methods, and casts between
+instantiations of a generic class (such as `Array<Dynamic>` to `Array<Int>`). The next steps for the
+.NET generator are closures, enums, the rest of `Std`, `Type` and `Reflect`, and `haxe.Exception`;
+then the generic-instantiation casts and the `Array` forwarding fix (Haxe issue 8314). Until then,
 standard-library code that needs them compiles to stubs.
 
 hxc ships its own copy of the hxcs runtime classes that generated code depends on
@@ -138,10 +140,11 @@ in place of hxcs's versions, so a class path entry cannot override them.
 
 The rest of the standard library comes from hxcs's runtime sources and is partly stubbed; a stubbed
 method throws `System.NotSupportedException` when called. `-D dotnet-stub-report` prints what was
-skipped, stubbed or ignored, one sorted line each. For a program that only prints it is about seven lines: calls of function
-values in `Array`, and `Std`, `Type` and `Reflect` helpers. `haxe.Exception`-based code compiles but reaches such stubs: `throw "x"` and other throws of
-values that are not `cs.system.Exception`s, `new haxe.Exception(...)` and `catch (e:haxe.Exception)`
-throw `System.NotSupportedException` at run time. A catch-all such as `catch (e:Dynamic)` or
+skipped, stubbed or ignored, one sorted line each. For a program that only prints it is about seven
+lines: calls of function values in `Array`, and `Std`, `Type` and `Reflect` helpers.
+`haxe.Exception`-based code compiles but reaches such stubs: `throw "x"` and other throws of values
+that are not `cs.system.Exception`s, `new haxe.Exception(...)` and `catch (e:haxe.Exception)` throw
+`System.NotSupportedException` at run time. A catch-all such as `catch (e:Dynamic)` or
 `catch (e:cs.system.Exception)` catches that exception too, so it can hide a stub.
 
 The tests need the .NET 10 SDK and hxcs installed globally. They build `tests/fixtures/hxccheck`, compile each case twice to
