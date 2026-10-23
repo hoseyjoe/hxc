@@ -79,7 +79,14 @@ gencs_prepare() {
 		[ $has = 1 ] && todo+=("$i")
 	done
 	[ ${#todo[@]} = 0 ] && return 0
-	gencsroot="$(mktemp -d "$tmproot/gencs.XXXXXX")"
+	gencsroot="$(mktemp -d "$tmproot/gencs.XXXXXX")" || { echo "could not create a directory for the gencs cases" >&2; exit 1; }
+	# The oracle must be Haxe 4.3.7 (with hxcs): every @gencs case fails otherwise.
+	local hv wrong=""
+	hv="$("$haxe" --version 2>&1 | tr -d '\r')"
+	if [ "$hv" != "4.3.7" ]; then
+		wrong="--haxe $haxe is Haxe '$hv', @gencs cases need Haxe 4.3.7 with hxcs"
+		echo "$wrong" >&2
+	fi
 	for i in "${todo[@]}"; do
 		local d="$gencsroot/${c_name[$i]}" file
 		module="P"
@@ -89,12 +96,19 @@ gencs_prepare() {
 		file="$(source_file "$module")"
 		mkdir -p "$d/$(dirname "$file")"
 		printf '%s\n' "${c_source[$i]}" > "$d/$file"
+		if [ -n "$wrong" ]; then printf '%s\n' "$wrong" > "$d/problem"; continue; fi
 		while [ "$(jobs -rp | wc -l)" -ge 6 ]; do wait -n; done
 		(
 			set -f
+			# --std is hxc's std; gencs gets the std that belongs to its own Haxe.
+			unset HAXE_STD_PATH
 			if glog="$("$haxe" --cwd "$(native "$d")" --haxelib-global -cp . -main "$module" --cs g -D no-compilation ${c_extra[$i]} 2>&1)"; then
-				mainclass="$(sed -n '/^begin main/,/^end main/{/^begin main/d;/^end main/d;p;}' "$d/g/hxcs_build.txt" | tr -d '\r' | head -n 1)"
-				sed -e "s/@NAME@/${module##*.}/" -e "s/@MAIN@/$mainclass/" "$here/gencs.csproj.in" > "$d/g/${module##*.}.csproj"
+				mainclass="$(sed -n '/^begin main/,/^end main/{/^begin main/d;/^end main/d;p;}' "$d/g/hxcs_build.txt" 2>/dev/null | tr -d '\r' | head -n 1)"
+				if [ -z "$mainclass" ]; then
+					printf 'gencs wrote no main class in hxcs_build.txt\n' > "$d/problem"
+				else
+					sed -e "s/@NAME@/${module##*.}/" -e "s/@MAIN@/$mainclass/" "$here/gencs.csproj.in" > "$d/g/${module##*.}.csproj"
+				fi
 			else
 				printf 'gencs could not compile the case:\n%s\n' "$glog" > "$d/problem"
 			fi
