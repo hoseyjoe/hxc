@@ -230,7 +230,7 @@ class NetConverter {
 					value = i;
 				case IFloat32(v) | IFloat64(v):
 					value = floatToInt64(v);
-				case IInt64(i):
+				case IInt64(i, _):
 					value = i;
 				case _:
 			}

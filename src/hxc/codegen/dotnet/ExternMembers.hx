@@ -11,8 +11,9 @@ import hxc.codegen.dotnet.IlMeta;
 enum ExternField {
 	// initOnly: readonly in C#, which only a constructor may store to or take the address of.
 	XField(sig:IlSigNorm, initOnly:Bool);
-	// A literal, which has no storage: it is loaded as its value.
-	XConstant(c:IlConstant);
+	// A literal, which has no storage: it is loaded as its value. `sig` is the field's declared type,
+	// which says whether a small integer is signed.
+	XConstant(c:IlConstant, sig:IlSigNorm);
 	XProperty(sig:IlSigNorm, getter:Null<String>, setter:Null<String>);
 }
 
@@ -150,10 +151,33 @@ class ExternMembers {
 		throw new Unsupported("the .NET method " + Globals.sTypePath(c.path) + "." + cf.name + " with these argument types", false);
 	}
 
+	// The static overloads of an operator, such as op_Equality, that C# considers for an operand of
+	// `c`'s .NET class: those of the nearest class in its chain declaring any.
+	// An extern class no referenced assembly defines has no metadata to declare any; its members are
+	// refused where they are used.
+	public function operators(c:TClass, name:String):Array<{parent:IlSigNorm, sig:IlSigNorm, args:Array<IlSigNorm>}> {
+		var path = try types.externPath(c) catch (_:Unsupported) null;
+		if (path == null || !Lambda.exists(ctx.netLibs, lib -> lib.definesType(path))) return [];
+		for (link in chain(c)) {
+			var found = [];
+			for (m in link.cls.cmethods) {
+				if (m.mname != name || m.mflags.contract.indexOf(CMStatic) < 0) continue;
+				switch (link.parent) {
+					case LClass(_, l) | LValueType(_, l) if (l.length > 0):
+						throw new Unsupported("operators of generic .NET types", true);
+					case _:
+				}
+				found.push({parent: link.parent, sig: m.msig.snorm, args: [for (a in m.margs) a.sig.snorm]});
+			}
+			if (found.length > 0) return found;
+		}
+		return [];
+	}
+
 	public function field(c:TClass, cf:TClassField):ExternField {
 		var name = memberName(cf);
 		for (link in chain(c)) {
-			for (f in link.cls.cfields) if (f.fname == name) return f.fconstant != null ? XConstant(f.fconstant) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
+			for (f in link.cls.cfields) if (f.fname == name) return f.fconstant != null ? XConstant(f.fconstant, f.fsig.snorm) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
 			for (p in link.cls.cprops) if (p.pname == name) {
 				var t = switch (p.psig.snorm) {
 					case LMethod(_, ret, _): ret;

@@ -75,6 +75,7 @@ class ModuleBuilder {
 	// A TypeDef row, its base type set later with setExtends.
 	public function typeDef(flags:Int, path:IlPath):Int {
 		if (path.nested.length > 0) throw "internal error: nested type definitions are not written";
+		if (typeDefs.exists(IlPaths.key(path))) throw "internal error: two type definitions named " + NetConverter.ilpathS(path);
 		tables.typeDef.push([flags, heaps.strings.add(path.name), heaps.strings.add(path.ns.join(".")), 0, 0, 0]);
 		var token = (T.ITypeDef << 24) | tables.typeDef.length;
 		typeDefs.set(IlPaths.key(path), token);

@@ -53,6 +53,7 @@ class IlOps {
 	public static inline var CONV_I4 = 0x69;
 	public static inline var CONV_I8 = 0x6A;
 	public static inline var CONV_R8 = 0x6C;
+	public static inline var CONV_U8 = 0x6E;
 	public static inline var CALLVIRT = 0x6F;
 	public static inline var LDOBJ = 0x71;
 	public static inline var LDSTR = 0x72;
@@ -247,6 +248,8 @@ class IlCode {
 		stack(pops, 0);
 		if (code == IlOps.LEAVE) depth = 0;
 		var d = labelDepth[l];
+		// The code after a label marked while nothing reached it was dropped, so its offset is wrong.
+		if (labelPos[l] >= 0 && d < 0) fail("a branch back to an unreached label");
 		if (d >= 0 && d != depth) fail("stack depth " + depth + " meets " + d + " at a branch");
 		labelDepth[l] = depth;
 		opcode(code);

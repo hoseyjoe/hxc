@@ -555,7 +555,7 @@ class TexprToIl {
 				if (!isArith(op) && !(isIntLike(s1) && isIntLike(s2) && isIntLike(t)))
 					throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 				texpr(RValue(t), e1);
-				numericTail(op, t, e2);
+				numericTail(op, t, e2, s1);
 				coerce(t, ret);
 			case _:
 				throw new Unsupported("the " + Ast.sBinop(op) + " operator", false);
@@ -564,13 +564,34 @@ class TexprToIl {
 
 	static function isArith(op:Binop):Bool return op.match(OpAdd | OpSub | OpMult | OpDiv | OpMod);
 
-	// The left operand, of type `t`, is on the stack; this pushes the right one and applies `op`.
-	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr):Void {
+	// C# promotes a UInt and an Int operand to long: their comparisons and remainder are a long's.
+	static function mixesUIntAndInt(s1:IlSigNorm, s2:IlSigNorm):Bool {
+		return isIntLike(s1) && isIntLike(s2) && !IlPaths.sigEq(s1, s2);
+	}
+
+	// The int32 on the stack, of type `s`, as a long.
+	function widen(s:IlSigNorm):Void {
+		code.op(s.match(LUInt32) ? IlOps.CONV_U8 : IlOps.CONV_I8, 1, 1);
+	}
+
+	// The left operand, of type `t` on the stack and `left` as typed, is there; this pushes the right
+	// one and applies `op`.
+	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr, left:IlSigNorm):Void {
 		var bad = new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		if (!isNumeric(t)) throw bad;
 		if (!isArith(op) && !isIntLike(t)) throw bad;
 		var unsigned = t.match(LUInt32);
 		if (op.match(OpDiv) && !t.match(LFloat64)) throw bad;
+		var right = op.match(OpMod) && isIntLike(t) ? sig(e2.type) : null;
+		if (right != null && mixesUIntAndInt(left, right)) {
+			// gencs casts the long remainder back to the result type.
+			widen(left);
+			texpr(RValue(right), e2);
+			widen(right);
+			code.op(IlOps.REM, 2, 1);
+			code.op(IlOps.CONV_I4, 1, 1);
+			return;
+		}
 		switch (op) {
 			case OpShl | OpShr | OpUShr:
 				// The count is masked as C# does.
@@ -607,20 +628,27 @@ class TexprToIl {
 	function compare(ret:Ret, op:Binop, e1:TExpr, e2:TExpr):Void {
 		var equality = op.match(OpEq | OpNotEq);
 		var isFloat = false;
-		// A UInt operand makes an Int comparison unsigned, as UInt's operators take two UInts.
+		// Two UInt operands compare unsigned; a UInt and an Int compare as longs, as in C#.
 		var unsigned = false;
 		var string = false;
+		var netOperator = null;
 		if (isNullConst(e1) || isNullConst(e2)) {
 			if (!equality) throw new Unsupported("comparing null with the " + Ast.sBinop(op) + " operator", false);
 			var other = isNullConst(e1) ? e2 : e1;
 			if (isNullConst(other)) throw new Unsupported("comparing null with null", false);
 			var s = sig(other.type);
 			if (DotnetTypes.isValueType(s) || isTypeParam(s)) throw new Unsupported("comparing a value type with null", false);
-			texpr(RValue(null), e1);
-			texpr(RValue(null), e2);
+			netOperator = equalityOperator(op, e1, e2);
+			texpr(RValue(netOperator == null ? null : netOperator.args[0]), e1);
+			texpr(RValue(netOperator == null ? null : netOperator.args[1]), e2);
 		} else {
 			var s1 = sig(e1.type), s2 = sig(e2.type);
-			if (isNumeric(s1) && isNumeric(s2)) {
+			if (mixesUIntAndInt(s1, s2)) {
+				texpr(RValue(s1), e1);
+				widen(s1);
+				texpr(RValue(s2), e2);
+				widen(s2);
+			} else if (isNumeric(s1) && isNumeric(s2)) {
 				var t = s1.match(LFloat64) || s2.match(LFloat64) ? LFloat64 : s1.match(LUInt32) || s2.match(LUInt32) ? LUInt32 : LInt32;
 				isFloat = t.match(LFloat64);
 				unsigned = t.match(LUInt32);
@@ -634,13 +662,16 @@ class TexprToIl {
 				texpr(RValue(LString), e1);
 				texpr(RValue(LString), e2);
 			} else if (equality && isReference(s1) && isReference(s2) && !s1.match(LObject) && !s2.match(LObject)) {
-				texpr(RValue(null), e1);
-				texpr(RValue(null), e2);
+				netOperator = equalityOperator(op, e1, e2);
+				texpr(RValue(netOperator == null ? null : netOperator.args[0]), e1);
+				texpr(RValue(netOperator == null ? null : netOperator.args[1]), e2);
 			} else {
 				throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 			}
 		}
-		if (string) {
+		if (netOperator != null) {
+			code.opToken(IlOps.CALL, netOperator.token, 2, 1);
+		} else if (string) {
 			var eq = g.mb.memberRef(g.typeTokenOf(LString), "op_Equality", g.sigs.method(false, LBool, [LString, LString], 0));
 			code.opToken(IlOps.CALL, eq, 2, 1);
 			if (op.match(OpNotEq)) not();
@@ -665,6 +696,50 @@ class TexprToIl {
 			}
 		}
 		coerce(LBool, ret);
+	}
+
+	// The .NET class whose operators C# looks up for a value of type `t`: its own, or for a Haxe class
+	// its nearest .NET superclass's.
+	function netClassOf(t:T):Null<TClass> {
+		var c = switch (TypeFunctions.follow(t)) {
+			case TInst(c, _): c;
+			case _: null;
+		}
+		while (c != null && !isExtern(c)) c = c.superClass == null ? null : c.superClass.c;
+		return c;
+	}
+
+	// The op_Equality or op_Inequality C# binds `==` or `!=` on two references to, or null when neither
+	// operand's .NET class declares one and the comparison is of references.
+	function equalityOperator(op:Binop, e1:TExpr, e2:TExpr):Null<{token:Int, args:Array<IlSigNorm>}> {
+		var name = op.match(OpEq) ? "op_Equality" : "op_Inequality";
+		var candidates = [];
+		for (e in [e1, e2]) {
+			if (isNullConst(e)) continue;
+			var c = netClassOf(e.type);
+			if (c == null || isStringClass(c)) continue;
+			for (o in g.externs.operators(c, name)) {
+				var seen = false;
+				for (k in candidates) if (IlPaths.sigEq(k.parent, o.parent) && IlPaths.sigsEq(k.args, o.args)) seen = true;
+				if (!seen) candidates.push(o);
+			}
+		}
+		if (candidates.length == 0) return null;
+		function accepts(param:IlSigNorm, e:TExpr):Bool {
+			if (isNullConst(e)) return isReference(param);
+			var s = sig(e.type);
+			return IlPaths.sigEq(s, param) || g.isUpcast(s, param);
+		}
+		var applicable = [for (o in candidates) if (o.args.length == 2 && accepts(o.args[0], e1) && accepts(o.args[1], e2)) o];
+		// C# would pick the best of several by its overload rules, which are not ported.
+		if (applicable.length != 1) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these .NET types", false);
+		var o = applicable[0];
+		var ret = switch (o.sig) {
+			case LMethod(_, r, _): r;
+			case _: throw "internal error: not a method signature";
+		}
+		if (!ret.match(LBool)) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these .NET types", false);
+		return {token: g.mb.memberRef(g.typeTokenOf(o.parent), name, g.sigs.methodSig(o.sig, 0)), args: o.args};
 	}
 
 	// Jumps to `l` when the condition equals `sense`, else falls through.
@@ -867,7 +942,7 @@ class TexprToIl {
 			pushString(rhs);
 			concat();
 		} else {
-			numericTail(op, p.sig, rhs);
+			numericTail(op, p.sig, rhs, p.sig);
 		}
 		var tmp = needVal(ret) ? keep(p) : -1;
 		p.store();
@@ -1386,7 +1461,9 @@ class TexprToIl {
 		}
 	}
 
-	function constant(c:IlConstant):Null<IlSigNorm> {
+	// A .NET literal, typed as its field declares it: the metadata stores SByte and Byte, Int16 and
+	// UInt16, Int32 and UInt32 alike, and the reader keeps the small ones unsigned.
+	function constant(c:IlConstant, declared:IlSigNorm):Null<IlSigNorm> {
 		switch (c) {
 			case IBool(b):
 				code.ldcI4(b ? 1 : 0);
@@ -1395,17 +1472,19 @@ class TexprToIl {
 				code.ldcI4(i);
 				return LChar;
 			case IByte(i):
-				code.ldcI4(i);
-				return LUInt8;
+				var signed = declared.match(LInt8);
+				code.ldcI4(signed ? (i << 24) >> 24 : i);
+				return signed ? LInt8 : LUInt8;
 			case IShort(i):
-				code.ldcI4(i);
-				return LInt16;
+				var unsigned = declared.match(LUInt16 | LChar);
+				code.ldcI4(unsigned ? i : (i << 16) >> 16);
+				return unsigned ? declared : LInt16;
 			case IInt(i):
 				code.ldcI4(i);
-				return LInt32;
-			case IInt64(i):
+				return declared.match(LUInt32) ? LUInt32 : LInt32;
+			case IInt64(_, i):
 				code.opI64(IlOps.LDC_I8, i, 0, 1);
-				return LInt64;
+				return declared.match(LUInt64) ? LUInt64 : LInt64;
 			case IFloat32(f):
 				code.opR4(IlOps.LDC_R4, f, 0, 1);
 				return LFloat32;
@@ -1454,9 +1533,9 @@ class TexprToIl {
 				var inst = instantiation(c, fa);
 				var parent = parentOf(c, inst);
 				switch (g.externs.field(c, cf)) {
-					case XConstant(k):
+					case XConstant(k, declared):
 						if (!isStatic) throw new Unsupported("instance .NET constants", true);
-						var s = constant(k);
+						var s = constant(k, declared);
 						coerce(s, ret);
 					case XField(open, _):
 						if (!isStatic) receiver(obj, parent);
@@ -1501,12 +1580,15 @@ class TexprToIl {
 	static function isStd(c:TClass):Bool return c.path.pack.length == 0 && c.path.name == "Std";
 
 	// The expression whose static type Std.string can print directly, else null.
+	// Only an unchecked cast to Dynamic is looked through: one to another type converts or checks the
+	// value, as gencs's C# cast does.
 	function stringArg(e:TExpr):Null<TExpr> {
-		var inner = switch (strip(e).expr) {
-			case TCast(x, null): strip(x);
-			case _: strip(e);
-		}
+		var inner = strip(e);
 		try {
+			switch (inner.expr) {
+				case TCast(x, null) if (sig(inner.type).match(LObject)): inner = strip(x);
+				case _:
+			}
 			stringKind(sig(inner.type));
 		} catch (_:Unsupported) {
 			return null;

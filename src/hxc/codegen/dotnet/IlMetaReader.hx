@@ -181,7 +181,15 @@ class IlMetaReader {
 				IByte(v);
 			case CInt16 | CUInt16: IShort(sreadUi16(c));
 			case CInt32 | CUInt32: IInt(sreadRealI32(c));
-			case CInt64 | CUInt64: IInt64(sreadI64(c));
+			case CInt64 | CUInt64:
+				// The emitter writes the eight bytes as they are into code; the reference's reading stays
+				// for the converter.
+				var at = c.pos;
+				var lo = sreadRealI32(c);
+				var hi = sreadRealI32(c);
+				c.pos = at;
+				var ref = sreadI64(c);
+				IInt64(ref, haxe.Int64.make(hi, lo));
 			case CFloat32: IFloat32(haxe.io.FPHelper.i32ToFloat(sreadRealI32(c)));
 			case CFloat64:
 				// Unlike the 64-bit integer reader, which keeps the reference's offset, this reads the eight

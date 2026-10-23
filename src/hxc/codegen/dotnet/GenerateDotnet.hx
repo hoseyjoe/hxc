@@ -237,6 +237,17 @@ class GenerateDotnet {
 			}
 		}
 
+		// Two classes with one CLR name, through @:native, would be two TypeDefs of that name: the second
+		// is left out.
+		var named = new Map<String, Bool>();
+		for (c in candidates) {
+			var mt = TClassDecl(c);
+			var path = DotnetNames.typePath(mt);
+			if (named.exists(IlPaths.key(path)))
+				leaveOut(g, mt, c.pos, new Unsupported("a second class with the CLR name " + NetConverter.ilpathS(path), false));
+			named.set(IlPaths.key(path), true);
+		}
+
 		// A class that cannot be declared is left out, and so is every class that refers to it; this
 		// runs until nothing more is left out.
 		var changed = true;

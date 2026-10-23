@@ -61,6 +61,43 @@ class P {
 [run]
 2147483647
 9
+--- extern-integer-constants
+class P {
+	static function main() {
+		cs.system.Console.WriteLine(cs.system.Int64.MaxValue);
+		cs.system.Console.WriteLine(cs.system.Int64.MinValue);
+		cs.system.Console.WriteLine(cs.system.UInt64.MaxValue);
+		var d:Dynamic = cs.system.SByte.MinValue;
+		cs.system.Console.WriteLine(d);
+		d = cs.system.SByte.MaxValue;
+		cs.system.Console.WriteLine(d);
+		d = cs.system.Byte.MaxValue;
+		cs.system.Console.WriteLine(d);
+		d = cs.system.Int16.MinValue;
+		cs.system.Console.WriteLine(d);
+		d = cs.system.UInt16.MaxValue;
+		cs.system.Console.WriteLine(d);
+		d = cs.system.UInt32.MaxValue;
+		cs.system.Console.WriteLine(d);
+		d = cs.system.Int64.MinValue;
+		cs.system.Console.WriteLine(d);
+		d = cs.system.Char.MaxValue;
+		cs.system.Console.WriteLine(cs.system.Convert.ToInt32(d));
+	}
+}
+===
+[run]
+9223372036854775807
+-9223372036854775808
+18446744073709551615
+-128
+127
+255
+-32768
+65535
+4294967295
+-9223372036854775808
+65535
 --- entry-point-in-main-class @dump=P,entrypoint
 class P {
 	static function main() {}
@@ -174,6 +211,7 @@ class P {
 		Sys.println(nan == nan);
 		Sys.println(nan != nan);
 		Sys.println(one <= 1);
+		Sys.println(nan <= one);
 	}
 }
 ===
@@ -184,6 +222,7 @@ True
 False
 True
 True
+False
 --- control-flow
 class P {
 	static var n = 5;
@@ -1720,3 +1759,121 @@ apple is out of stock
 pear is out of stock
 error: no plum
 1
+--- std-string-keeps-casts
+class Base {
+	public function new() {}
+	public function toString() return "Base";
+}
+class Sub extends Base {
+	public function new() super();
+}
+class P {
+	static function main() {
+		Sys.println(Std.string((cast 3.5 : Int)));
+		var b:Base = new Base();
+		Sys.println(Std.string((cast b : Base)));
+		try {
+			Sys.println(Std.string((cast b : Sub)));
+		} catch (e:cs.system.InvalidCastException) {
+			Sys.println("InvalidCastException");
+		}
+	}
+}
+===
+[run]
+3
+Base
+InvalidCastException
+--- uint-mixed-with-int
+class P {
+	static var u:UInt = 3;
+	static var big:UInt = cast -2;
+	static var zero:UInt = 0;
+	static var i = -1;
+	static var three = 3;
+	static function main() {
+		Sys.println(u > -1);
+		Sys.println(i < u);
+		Sys.println(u > i);
+		Sys.println(i <= u);
+		Sys.println(u >= i);
+		Sys.println(big == i);
+		Sys.println(big != i);
+		Sys.println(u == three);
+		Sys.println(big > u);
+		Sys.println(zero < 1);
+		var r:UInt = big % i;
+		Sys.println(r);
+		var r2:UInt = big % three;
+		Sys.println(r2);
+		var r3:UInt = big % u;
+		Sys.println(r3);
+		var c:UInt = big;
+		c %= i;
+		Sys.println(c);
+	}
+}
+===
+[run]
+True
+True
+True
+True
+True
+False
+True
+True
+True
+True
+0
+2
+2
+0
+--- net-equality-operators
+class P {
+	static function main() {
+		var a = new cs.system.Version(1, 2);
+		var b = new cs.system.Version(1, 2);
+		var c = new cs.system.Version(1, 3);
+		Sys.println(a == b);
+		Sys.println(a != b);
+		Sys.println(a == c);
+		Sys.println(a != c);
+		var n:cs.system.Version = null;
+		Sys.println(n == null);
+		Sys.println(a == null);
+		Sys.println(null != a);
+		var e1 = new cs.system.Exception("x");
+		var e2 = new cs.system.Exception("x");
+		Sys.println(e1 == e2);
+		Sys.println(e1 == e1);
+	}
+}
+===
+[run]
+True
+False
+False
+True
+True
+False
+True
+False
+True
+--- duplicate-clr-names-are-errors
+@:native("Same") class A {
+	public function new() {}
+}
+@:native("Same") class B {
+	public function new() {}
+}
+class P {
+	static function main() {
+		new A();
+		new B();
+	}
+}
+===
+[compile]
+P.hx:4: lines 4-6 : dotnet: a second class with the CLR name Same is not supported yet
+P.hx:10: characters 3-10 : dotnet: B (left out: a second class with the CLR name Same) is not supported yet

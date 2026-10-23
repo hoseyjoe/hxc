@@ -542,7 +542,8 @@ enum IlConstant {
 	IByte(i:Int);
 	IShort(i:Int);
 	IInt(i:Int);
-	IInt64(i:haxe.Int64);
+	// `i` as the reference reads it (one byte late, for the converter's enum order); `exact` as stored.
+	IInt64(i:haxe.Int64, exact:haxe.Int64);
 	IFloat32(f:Float);
 	IFloat64(f:Float);
 	IString(s:haxe.io.Bytes);
