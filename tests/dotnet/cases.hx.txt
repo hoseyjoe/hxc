@@ -1203,8 +1203,8 @@ class P {
 		a.insert(2, 9);
 		a.reverse();
 		Sys.println(show(a));
-		Sys.println(a.pop());
-		Sys.println(a.shift());
+		a.splice(4, 1);
+		a.splice(0, 1);
 		var b = a.concat([7, 8]);
 		var c = b.copy();
 		c[0] = 100;
@@ -1222,8 +1222,6 @@ class P {
 ===
 [run]
 3,2,9,1,0,
-0
-3
 2,9,1,7,8, 100,9,1,7,8,
 9,1, 100,7,8,
 bacnull
@@ -1242,3 +1240,86 @@ class P {
 [compile]
 P.hx:4: characters 7-13 : dotnet: a cast between instantiations of Array is not supported yet
 P.hx:5: characters 26-27 : dotnet: a cast between instantiations of Array is not supported yet
+--- null-of-type-parameters @lib @module=pack.IFind @dump=pack.IFind`1
+package pack;
+interface IFind<T> {
+	function first():Null<T>;
+	function pick<S>(s:S, fallback:Null<S>):Null<S>;
+	function count(limit:Null<Int>, name:Null<String>):Int;
+}
+===
+[dump]
+type public interface abstract pack.IFind`1<T>
+  method public virtual hidebysig newslot abstract haxe.lang.Null`1<!0> first()
+  method public virtual hidebysig newslot abstract haxe.lang.Null`1<!!0> pick<S>(!!0, haxe.lang.Null`1<!!0>)
+  method public virtual hidebysig newslot abstract int32 count(haxe.lang.Null`1<int32>, string)
+--- null-of-type-parameters-is-refused
+class B<T> {
+	public function new() {}
+	public function find():Null<T> {
+		return null;
+	}
+}
+class P {
+	static function main() {
+		var e:Array<Int> = [];
+		e.push(1);
+		Sys.println(e.pop());
+		Sys.println(new B<Int>().find());
+		Sys.println(e.length);
+	}
+}
+===
+[compile]
+P.hx:4: characters 10-14 : dotnet: Null<T> of a value type is not supported yet
+P.hx:11: characters 15-22 : dotnet: Null<T> of a value type is not supported yet
+P.hx:12: characters 15-34 : dotnet: Null<T> of a value type is not supported yet
+--- struct-to-unimplemented-interface-is-an-error
+interface IGet<T> {
+	function get():T;
+}
+@:struct class Cell<T> implements IGet<T> {
+	public var v:T;
+	public function new(v:T) {
+		this.v = v;
+	}
+	public function get():T {
+		return v;
+	}
+}
+class P {
+	static function main() {
+		var g:IGet<Dynamic> = new Cell(1);
+		var h:IGet<String> = cast new Cell(2);
+		Sys.println(g);
+	}
+}
+===
+[compile]
+P.hx:15: characters 25-36 : dotnet: a cast between instantiations of IGet is not supported yet
+P.hx:16: characters 24-40 : dotnet: a cast between instantiations of IGet is not supported yet
+--- struct-boxes-to-its-interface
+interface IGet<T> {
+	function get():T;
+}
+@:struct class Cell<T> implements IGet<T> {
+	public var v:T;
+	public function new(v:T) {
+		this.v = v;
+	}
+	public function get():T {
+		return v;
+	}
+}
+class P {
+	static function main() {
+		var g:IGet<Int> = new Cell(2);
+		var s:IGet<String> = new Cell("s");
+		Sys.println(g.get() + 1);
+		Sys.println(s.get());
+	}
+}
+===
+[run]
+3
+s

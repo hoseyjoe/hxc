@@ -135,7 +135,7 @@ class DotnetCtx {
 	public function isUpcast(from:IlSigNorm, to:IlSigNorm):Bool {
 		var c = null, args = [];
 		switch (from) {
-			case LClass(p, l):
+			case LClass(p, l) | LValueType(p, l):
 				c = classAt(p);
 				args = l;
 			case _:

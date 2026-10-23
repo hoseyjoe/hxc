@@ -118,6 +118,8 @@ class TexprToIl {
 		var fromValue = DotnetTypes.isValueType(from) || isTypeParam(from);
 		var toValue = DotnetTypes.isValueType(to) || isTypeParam(to);
 		if (fromValue && !toValue) {
+			// A struct boxes into an instantiation of a generic Haxe interface only when it implements it.
+			if (!isTypeParam(from) && g.isGenericHaxeClass(to) && !g.isUpcast(from, to)) throw instantiationCast(to);
 			code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 			// A boxed type parameter is an object, which may not be the reference type wanted.
 			if (isTypeParam(from) && !to.match(LObject)) castTo(to);
@@ -178,7 +180,7 @@ class TexprToIl {
 	// type or an upcast.
 	function checkInstantiationCast(from:IlSigNorm, to:IlSigNorm):Void {
 		if (IlPaths.sigEq(from, to) || !g.isGenericHaxeClass(to)) return;
-		if (isReference(from) && g.isUpcast(from, to)) return;
+		if (g.isUpcast(from, to)) return;
 		throw instantiationCast(to);
 	}
 

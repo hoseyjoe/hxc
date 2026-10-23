@@ -316,9 +316,11 @@ class DotnetTypes {
 					case "UInt": return LUInt32;
 					case "Dynamic": return LObject;
 					case "Null":
-						// gencs's haxe.lang.Null<T>, the standard library's cs.internal.Null struct.
+						// gencs's haxe.lang.Null<T>, the standard library's cs.internal.Null struct, for a value
+						// type and, as gencs has it, for a type parameter, which may stand for one.
 						var s = toSig(params[0]);
-						if (isValueType(s)) return LValueType(stdClassPath("cs.internal._Null.Nullable", "Null<T> of a value type", false), [s]);
+						if (isValueType(s) || s.match(LTypeParam(_) | LMethodTypeParam(_)))
+							return LValueType(stdClassPath("cs.internal._Null.Nullable", "Null<T> of a value type", false), [s]);
 						return s;
 					case "Class" | "Enum":
 						return LClass(defined(systemType), []);
