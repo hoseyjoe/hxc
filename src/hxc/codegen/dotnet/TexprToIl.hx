@@ -183,7 +183,12 @@ class TexprToIl {
 		if (from.match(LChar | LInt8 | LUInt8 | LInt16 | LUInt16) && to.match(LInt32)) return;
 		var fromValue = DotnetTypes.isValueType(from) || isTypeParam(from);
 		var toValue = DotnetTypes.isValueType(to) || isTypeParam(to);
-		if (fromValue && !toValue) {
+		if (to.match(LString) && !inRuntimeClass()) {
+			// Runtime.toString, as gencs converts anything that is not a String to one (outside
+			// haxe.lang.Runtime, whose code casts).
+			if (fromValue) code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
+			dyn.toSig(to);
+		} else if (fromValue && !toValue) {
 			// A struct boxes into an instantiation of a generic Haxe interface only when it implements it.
 			if (!isTypeParam(from) && g.isGenericHaxeClass(to) && !g.isUpcast(from, to)) throw instantiationCast(to);
 			code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
@@ -222,9 +227,6 @@ class TexprToIl {
 				code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 				code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
 			} else throw new Unsupported("conversions between value types", true);
-		} else if (from.match(LObject) && to.match(LString)) {
-			// Runtime.toString, as gencs converts a Dynamic to a String.
-			dyn.toSig(to);
 		} else if (isReference(from) && isReference(to) && !to.match(LObject)) {
 			// An upcast needs nothing; anything else may narrow.
 			if (g.isUpcast(from, to) || from.match(LVector(_)) && isSystemArray(to)) return;
@@ -466,8 +468,9 @@ class TexprToIl {
 
 	// A cast; `checked` for cast(e, T). gencs writes both as C#'s cast to the expression's type, so a cast
 	// that changes the type converts or checks through that type even when the value goes on somewhere
-	// else, as C#'s `(object)(int)d` does: between value types, from Dynamic to a value type, a type
-	// parameter, a String or a class, and every checked cast.
+	// else, as C#'s `(object)(int)d` does: to a String (Runtime.toString), between value types (not a
+	// .NET enum and its integer), from Dynamic to a value type, a type parameter or a class, and every
+	// checked cast.
 	function castExpr(ret:Ret, e:TExpr, e1:TExpr, checked:Bool):Void {
 		var from = null, to = null;
 		if (!isNullConst(e1)) {
@@ -481,7 +484,9 @@ class TexprToIl {
 			case _: null;
 		}
 		var viaOwn = from != null && to != null && !IlPaths.sigEq(from, to) && !to.match(LObject) && (checked
-			|| want != null && !IlPaths.sigEq(want, to) && (DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)
+			|| want != null && !IlPaths.sigEq(want, to) && (to.match(LString) && !inRuntimeClass()
+				// A .NET enum and its underlying integer are one value: gencs boxes the enum.
+				|| DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to) && !sameAsEnum(from, to) && !sameAsEnum(to, from)
 				|| from.match(LObject) && (DotnetTypes.isValueType(to) || isTypeParam(to) || isReference(to) && !g.isGenericHaxeClass(to))));
 		if (viaOwn) {
 			texpr(RValue(to), e1);

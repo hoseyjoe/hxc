@@ -464,16 +464,18 @@ class TexprDynamic {
 		}
 	}
 
-	// `++` and `--` on a Dynamic, as Floats: a field through getField_f and setField_f, a variable or
-	// other place by Runtime.toDouble and a boxed result, as gencs's DynamicOperators writes it.
+	// `++` and `--` on a Dynamic, as gencs's DynamicOperators writes them: in Int when the expression is
+	// typed like an Int, else in Float; a field through getField_f and setField_f, a variable or other
+	// place converted (Runtime.toInt or toDouble) and the result stored boxed.
 	function incDec(ret:Ret, e:TExpr, increment:Bool, postfix:Bool, e1:TExpr):Bool {
 		var df = dynamicField(e1);
 		if (df == null && !isDynamic(e1.type) && !isNullType(e1.type)) return false;
+		var t = likeInt(e.type) ? LInt32 : LFloat64;
 		function step() {
-			code.opR8(IlOps.LDC_R8, 1.0, 0, 1);
+			if (t.match(LInt32)) code.ldcI4(1) else code.opR8(IlOps.LDC_R8, 1.0, 0, 1);
 			code.op(increment ? IlOps.ADD : IlOps.SUB, 2, 1);
 		}
-		var kept = needVal(ret) ? code.addLocal(LFloat64) : -1;
+		var kept = needVal(ret) ? code.addLocal(t) : -1;
 		if (df != null) {
 			tl.texpr(RValue(LObject), df.obj);
 			var recv = code.addLocal(LObject);
@@ -484,26 +486,33 @@ class TexprDynamic {
 			code.ldcI4(hash);
 			code.ldcI4(1);
 			runtimeCall("getField_f", LObject);
+			tl.convert(LFloat64, t);
 			if (postfix && kept >= 0) {
 				code.op(IlOps.DUP, 1, 2);
 				code.stloc(kept);
 			}
 			step();
-			var next = code.addLocal(LFloat64);
+			var next = code.addLocal(t);
 			code.stloc(next);
 			code.ldloc(recv);
 			code.opToken(IlOps.LDSTR, g.mb.userString(df.name), 0, 1);
 			code.ldcI4(hash);
 			code.ldloc(next);
+			tl.convert(t, LFloat64);
 			runtimeCall("setField_f", LObject);
 			// setField_f returns the value it stored.
-			if (!postfix && kept >= 0) code.stloc(kept) else code.op(IlOps.POP, 1, 0);
+			if (!postfix && kept >= 0) {
+				tl.convert(LFloat64, t);
+				code.stloc(kept);
+			} else {
+				code.op(IlOps.POP, 1, 0);
+			}
 		} else {
 			var p = tl.place(e1);
 			if (p == null) throw new Unsupported("this kind of assignment", false);
 			p.prepare();
 			p.load();
-			tl.convert(p.sig, LFloat64);
+			tl.convert(p.sig, t);
 			if (postfix && kept >= 0) {
 				code.op(IlOps.DUP, 1, 2);
 				code.stloc(kept);
@@ -513,12 +522,12 @@ class TexprDynamic {
 				code.op(IlOps.DUP, 1, 2);
 				code.stloc(kept);
 			}
-			tl.convert(LFloat64, p.sig);
+			tl.convert(t, p.sig);
 			p.store();
 		}
 		if (kept >= 0) {
 			code.ldloc(kept);
-			finish(LFloat64, own(e), ret);
+			finish(t, own(e), ret);
 		}
 		return true;
 	}

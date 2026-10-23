@@ -2776,6 +2776,7 @@ class P {
 	static function main() {
 		var bf:BindingFlags = cast((cast BindingFlags.Public : Int) | (cast BindingFlags.Static : Int));
 		Sys.println(bf);
+		Sys.println((cast bf : Int));
 		Sys.println(bf == BindingFlags.Public);
 		Sys.println(code(1.5) + " " + code(7) + " " + code("s") + " " + code(true));
 		var t1 = cs.system.TypeCode.Int32, t2 = cs.system.TypeCode.Int64;
@@ -2789,6 +2790,7 @@ class P {
 }
 ===
 [run]
+Static, Public
 Static, Public
 False
 1 2 100 3
@@ -2812,6 +2814,42 @@ class P {
 		try Sys.println(o < i) catch (e:cs.system.ArgumentException) Sys.println(e.Message);
 		var u:Dynamic = (cast 7 : UInt);
 		Sys.println((u == 7) + " " + Std.isOfType(u, UInt) + " " + Std.isOfType(u, Int) + " " + Std.isOfType(7.0, UInt) + " " + Std.isOfType(7.5, Int));
+	}
+}
+===
+--- dynamic-increment-in-int @gencs
+class Foo {
+	public var x:Int = 2147483647;
+	public var y:Int = 2147483647;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var a:{x:Int, y:Int} = new Foo();
+		a.x++;
+		Sys.println(a.x);
+		var pre = ++a.y;
+		Sys.println(pre + " " + a.y);
+		var old = a.x--;
+		Sys.println(old + " " + a.x);
+	}
+}
+===
+--- casts-to-string @gencs
+class Foo {
+	public function new() {}
+	public function toString() return "Foo!";
+}
+class P {
+	static function main() {
+		var s1:String = cast(5, String);
+		Sys.println(s1);
+		Sys.println(cast(new Foo(), String));
+		var s2:String = cast 7;
+		Sys.println(s2);
+		Sys.println((cast 7.5 : String));
+		var d:Dynamic = (cast true : String);
+		Sys.println(d);
 	}
 }
 ===
