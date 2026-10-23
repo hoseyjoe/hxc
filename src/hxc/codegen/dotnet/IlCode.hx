@@ -304,6 +304,17 @@ class IlCode {
 		t.handler = -1;
 	}
 
+	// How many try blocks are open, for `abandonTries`.
+	public var openTries(get, never):Int;
+
+	inline function get_openTries():Int return tries.length;
+
+	// Recovery after a user-code statement failed to lower inside try blocks it opened: they are closed
+	// without clauses, as the method's IL is not written.
+	public function abandonTries(open:Int):Void {
+		while (tries.length > open) tries.pop();
+	}
+
 	// Inner clauses come first in the table, so a try's clauses are added when it ends.
 	public function endTry():Void {
 		var t = tries.pop();

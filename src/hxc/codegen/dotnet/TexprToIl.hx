@@ -30,6 +30,14 @@ private typedef Slot = {arg:Bool, index:Int, sig:IlSigNorm};
 // it under the value and `store` takes both.
 private typedef Place = {sig:IlSigNorm, receiver:Bool, prepare:Void->Void, load:Void->Void, store:Void->Void};
 
+// How an operand is treated when operands are spilled before a try: evaluated into a temporary, left
+// where it is, or refused.
+private enum SpillMode {
+	Spill;
+	Keep;
+	Refuse;
+}
+
 // One method body's expressions as IL. Anything outside the subset this milestone compiles throws
 // Unsupported naming it.
 
@@ -41,8 +49,16 @@ class TexprToIl {
 	// Variables whose declaration failed to lower; a failing statement that uses one is not reported
 	// again.
 	final poisoned = new Map<Int, Bool>();
-	// Where break and continue go, innermost loop last.
-	final loops:Array<{brk:Label, cont:Label}> = [];
+	// Where break and continue go, innermost loop last, with the try depth each loop was entered at.
+	final loops:Array<{brk:Label, cont:Label, tries:Int}> = [];
+	// How many try blocks and handlers enclose the code being lowered. A jump out of one is a `leave`.
+	var tryDepth = 0;
+	// Where a `return` inside a try goes: a label after the outermost try, which returns the value
+	// stored in `retLocal` (-1 until needed).
+	var retLabel:Label = -1;
+	var retLocal = -1;
+	// Temporaries that operands were spilled to; they are never spilled again.
+	final temps = new Map<Int, Bool>();
 
 	// Set for user code: a statement that fails to lower is reported here and lowering goes on with
 	// the next one. Unset, the Unsupported propagates.
@@ -213,6 +229,11 @@ class TexprToIl {
 	}
 
 	function expr(ret:Ret, e:TExpr):Void {
+		var spilled = spillForTry(e);
+		if (spilled != null) {
+			expr(ret, spilled);
+			return;
+		}
 		switch (e.expr) {
 			case TConst(TInt(_) | TFloat(_) | TString(_) | TBool(_) | TNull) | TLocal(_) if (!needVal(ret)):
 			case TConst(TInt(v)):
@@ -260,16 +281,16 @@ class TexprToIl {
 			case TReturn(null):
 				// A branch out of an expression would leave its operands on the stack.
 				if (code.depth != 0) throw new Unsupported("`return` inside expressions", false);
-				code.op(IlOps.RET, 0, 0);
+				exitMethod(false);
 			case TReturn(e1):
 				if (code.depth != 0) throw new Unsupported("`return` inside expressions", false);
 				if (this.ret.match(LVoid)) {
 					// `return f()` with a Void f.
 					texpr(RVoid, e1);
-					if (code.reachable()) code.op(IlOps.RET, 0, 0);
+					if (code.reachable()) exitMethod(false);
 				} else {
 					texpr(RValue(this.ret), e1);
-					code.op(IlOps.RET, 1, 0);
+					if (code.reachable()) exitMethod(true);
 				}
 			case TParenthesis(e1) | TMeta(_, e1):
 				texpr(ret, e1);
@@ -301,11 +322,13 @@ class TexprToIl {
 				if (loops.length == 0) throw new Unsupported("`break` outside a loop", false);
 				// The loop's labels are reached with an empty stack.
 				if (code.depth != 0) throw new Unsupported("`break` inside expressions", false);
-				code.branch(IlOps.BR, loops[loops.length - 1].brk);
+				var loop = loops[loops.length - 1];
+				code.branch(tryDepth > loop.tries ? IlOps.LEAVE : IlOps.BR, loop.brk);
 			case TContinue:
 				if (loops.length == 0) throw new Unsupported("`continue` outside a loop", false);
 				if (code.depth != 0) throw new Unsupported("`continue` inside expressions", false);
-				code.branch(IlOps.BR, loops[loops.length - 1].cont);
+				var loop = loops[loops.length - 1];
+				code.branch(tryDepth > loop.tries ? IlOps.LEAVE : IlOps.BR, loop.cont);
 			case TField(obj, fa):
 				fieldRead(ret, e, obj, fa);
 			case TCall(callee, args):
@@ -324,10 +347,10 @@ class TexprToIl {
 				arrayLiteral(ret, e, el);
 			case TFor(_, _, _):
 				throw new Unsupported("for loops", true);
-			case TTry(_, _):
-				throw new Unsupported("try/catch", false);
-			case TThrow(_):
-				throw new Unsupported("`throw`", false);
+			case TTry(body, catches):
+				tryExpr(ret, e, body, catches);
+			case TThrow(e1):
+				throwExpr(e1);
 			case TCast(e1, TClassDecl(_)):
 				checkedCast(ret, e, e1);
 			case TCast(_, _):
@@ -349,7 +372,9 @@ class TexprToIl {
 		for (i in 0...el.length) {
 			var s = el[i];
 			var r = i == el.length - 1 ? (ret.match(RReturn) ? RVoid : ret) : RVoid;
-			if (onError == null) {
+			// The statement giving the block's value fails with the statement around the block: the code
+			// after it expects the value on the stack.
+			if (onError == null || needVal(r)) {
 				texpr(r, s);
 				continue;
 			}
@@ -969,7 +994,7 @@ class TexprToIl {
 		var top = code.newLabel(), cont = code.newLabel(), brk = code.newLabel();
 		code.mark(top);
 		var isDo = flag.match(DoWhile);
-		loops.push({brk: brk, cont: isDo ? cont : top});
+		loops.push({brk: brk, cont: isDo ? cont : top, tries: tryDepth});
 		try {
 			if (isDo) {
 				texpr(RVoid, body);
@@ -1032,6 +1057,263 @@ class TexprToIl {
 			texpr(r, def);
 		}
 		code.markIfUsed(end);
+	}
+
+	// `return`: a `ret`, or inside a try a store to the return local and a `leave` to the label after
+	// the outermost try, which returns it.
+	function exitMethod(withValue:Bool):Void {
+		if (tryDepth == 0) {
+			code.op(IlOps.RET, withValue ? 1 : 0, 0);
+			return;
+		}
+		if (withValue) {
+			if (retLocal < 0) retLocal = code.addLocal(this.ret);
+			code.stloc(retLocal);
+		}
+		if (retLabel < 0) retLabel = code.newLabel();
+		code.branch(IlOps.LEAVE, retLabel);
+	}
+
+	static final systemException:IlSigNorm = LClass({ns: ["System"], nested: [], name: "Exception"}, []);
+
+	// The exceptions filter has already wrapped values that are not .NET exceptions.
+	function throwExpr(e1:TExpr):Void {
+		var s = sig(e1.type);
+		if (!s.match(LObject | LClass(_, _))) throw new Unsupported("throw of " + hxc.core.TPrinting.sTypeStr(e1.type), false);
+		texpr(RValue(s), e1);
+		if (!code.reachable()) return;
+		// Dynamic, such as haxe.Exception.thrown's result, is cast as C# casts a thrown value.
+		if (s.match(LObject)) castTo(systemException);
+		code.op(IlOps.THROW, 1, 0);
+	}
+
+	// The type a catch clause catches: a class, as the exceptions filter leaves only native types here.
+	function catchClass(v:TVar):IlSigNorm {
+		var s = sig(v.type);
+		if (!s.match(LClass(_, _))) throw new Unsupported("catch of " + hxc.core.TPrinting.sTypeStr(v.type), false);
+		return s;
+	}
+
+	// A protected region with a typed clause per catch, in order. Each part leaves to the end with its
+	// value, if the try has one, in a temporary.
+	function tryExpr(ret:Ret, e:TExpr, body:TExpr, catches:Array<TCatch>):Void {
+		// Operands before a try are spilled (spillForTry); this is a position that does not spill.
+		if (code.depth != 0) throw new Unsupported("`try` inside this expression", false);
+		var r = valueRet(ret, e);
+		var t = switch (r) {
+			case RValue(s): s;
+			case _: null;
+		}
+		var inner = t == null ? RVoid : r;
+		var classes = [for (c in catches) catchClass(c.v)];
+		var result = t == null ? -1 : code.addLocal(t);
+		var end = code.newLabel();
+		function leave() {
+			if (!code.reachable()) return;
+			if (result >= 0) code.stloc(result);
+			code.branch(IlOps.LEAVE, end);
+		}
+		var outermost = tryDepth == 0;
+		var open = code.openTries;
+		tryDepth++;
+		try {
+			code.beginTry();
+			texpr(inner, body);
+			leave();
+			for (i in 0...catches.length) {
+				// The handler starts with the exception on the stack.
+				code.beginCatch(g.typeTokenOf(classes[i]));
+				var local = {arg: false, index: code.addLocal(classes[i]), sig: classes[i]};
+				store(local);
+				slots.set(catches[i].v.id, local);
+				texpr(inner, catches[i].expr);
+				leave();
+			}
+			code.endTry();
+		} catch (x:Dynamic) {
+			tryDepth--;
+			code.abandonTries(open);
+			if (outermost) retLabel = -1;
+			throw x;
+		}
+		tryDepth--;
+		if (outermost && retLabel >= 0) {
+			code.markIfUsed(retLabel);
+			if (code.reachable()) {
+				if (this.ret.match(LVoid)) {
+					code.op(IlOps.RET, 0, 0);
+				} else {
+					code.ldloc(retLocal);
+					code.op(IlOps.RET, 1, 0);
+				}
+			}
+			retLabel = -1;
+		}
+		code.markIfUsed(end);
+		if (t == null) coerce(LVoid, ret) else if (code.reachable()) {
+			code.ldloc(result);
+			coerce(t, ret);
+		}
+	}
+
+	static function containsTry(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TTry(_, _): true;
+			case TFunction(_): false;
+			case _: TexprTools.checkExpr(containsTry, e);
+		}
+	}
+
+	// A try block starts on an empty stack. When one is in an operand pushed after another value, that
+	// operand and the ones before it are evaluated into temporaries first, left to right, and the
+	// expression is lowered over reads of them. Null when nothing needs that.
+	function spillForTry(e:TExpr):Null<TExpr> {
+		function with(x:TExprExpr):TExpr return new TExpr(x, e.type, e.pos);
+		switch (e.expr) {
+			case TBinop(OpAssign, lhs, rhs):
+				var parts = placeParts(lhs);
+				if (parts == null) return null;
+				var ops = spillOperands(parts.ops.concat([rhs]), parts.modes.concat([Spill]), false);
+				if (ops == null) return null;
+				return with(TBinop(OpAssign, parts.rebuild(ops), ops[ops.length - 1]));
+			case TBinop(OpAssignOp(op), lhs, rhs) if (containsTry(rhs)):
+				// The place's parts, then its value combined with the right side, then the store.
+				var parts = placeParts(lhs);
+				var target = lhs;
+				if (parts != null) {
+					var ops = spillOperands(parts.ops, parts.modes, true);
+					if (ops != null) target = parts.rebuild(ops);
+				}
+				var value = spill(new TExpr(TBinop(op, target, rhs), lhs.type, e.pos));
+				return with(TBinop(OpAssign, target, value));
+			case TBinop(OpBoolAnd | OpBoolOr | OpAssignOp(_), _, _):
+				// The right side of && and || is reached by a branch, with nothing on the stack.
+				return null;
+			case TBinop(op, e1, e2):
+				var ops = spillOperands([e1, e2], [Spill, Spill], false);
+				return ops == null ? null : with(TBinop(op, ops[0], ops[1]));
+			case TArray(e1, e2):
+				var ops = spillOperands([e1, e2], [Spill, Spill], false);
+				return ops == null ? null : with(TArray(ops[0], ops[1]));
+			case TArrayDecl(el):
+				// The new array, a copy and an index are under each element.
+				var ops = spillOperands(el, [for (_ in el) Spill], true);
+				return ops == null ? null : with(TArrayDecl(ops));
+			case TNew(c, params, args):
+				if (!Lambda.exists(args, containsTry)) return null;
+				var ctorType = c.constructor == null ? null : c.constructor.type;
+				var ops = spillOperands(args, argModes(ctorType, args), false);
+				return ops == null ? null : with(TNew(c, params, ops));
+			case TCall(callee, args):
+				// A try in the receiver alone is evaluated first.
+				if (!Lambda.exists(args, containsTry)) return null;
+				var modes = argModes(callee.type, args);
+				switch (callee.expr) {
+					case TConst(TSuper):
+						// `this` is under the arguments.
+						var ops = spillOperands(args, modes, true);
+						return ops == null ? null : with(TCall(callee, ops));
+					case TField(obj, fa = FInstance(_, _, _)):
+						if (strip(obj).expr.match(TConst(TSuper))) {
+							var ops = spillOperands(args, modes, true);
+							return ops == null ? null : with(TCall(callee, ops));
+						}
+						var ops = spillOperands([obj].concat(args), [receiverMode(obj)].concat(modes), false);
+						if (ops == null) return null;
+						return with(TCall(new TExpr(TField(ops[0], fa), callee.type, callee.pos), ops.slice(1)));
+					case _:
+						var ops = spillOperands(args, modes, false);
+						return ops == null ? null : with(TCall(callee, ops));
+				}
+			case _:
+				return null;
+		}
+	}
+
+	// The operands an assignment's target pushes before the value, and the target over new ones; null
+	// for a target that pushes nothing.
+	function placeParts(lhs:TExpr):Null<{ops:Array<TExpr>, modes:Array<SpillMode>, rebuild:Array<TExpr>->TExpr}> {
+		var e = strip(lhs);
+		return switch (e.expr) {
+			case TArray(e1, e2):
+				{ops: [e1, e2], modes: [Spill, Spill], rebuild: ops -> new TExpr(TArray(ops[0], ops[1]), e.type, e.pos)};
+			case TField(obj, fa = FInstance(_, _, _)):
+				{ops: [obj], modes: [receiverMode(obj)], rebuild: ops -> new TExpr(TField(ops[0], fa), e.type, e.pos)};
+			case _:
+				null;
+		}
+	}
+
+	// A struct receiver is used through its address, which is not kept in a temporary: a local's, or a
+	// field's of a struct local, stays where it is, as the operands cannot change it; one reached
+	// through an object is refused; a value with no home is copied, as it would be anyway.
+	function receiverMode(obj:TExpr):SpillMode {
+		if (!isStruct(obj)) return Spill;
+		if (fixedAddress(obj)) return Keep;
+		return strip(obj).expr.match(TField(_, _)) ? Refuse : Spill;
+	}
+
+	function isStruct(e:TExpr):Bool {
+		var s = try sig(e.type) catch (_:Unsupported) null;
+		return s != null && DotnetTypes.isValueType(s);
+	}
+
+	function fixedAddress(e:TExpr):Bool {
+		return switch (strip(e).expr) {
+			case TLocal(_) | TConst(_): true;
+			case TField(obj, FInstance(_, _, _)) if (isStruct(obj)): fixedAddress(obj);
+			case _: false;
+		}
+	}
+
+	// A cs.Ref or cs.Out argument is a variable's address, which stays where it is.
+	static function argModes(fnType:Null<T>, args:Array<TExpr>):Array<SpillMode> {
+		var fargs = fnType == null ? [] : switch (TypeFunctions.follow(fnType)) {
+			case TFun(fsig): fsig.args;
+			case _: [];
+		}
+		return [
+			for (i in 0...args.length) {
+				var byRef = i < fargs.length && switch (fargs[i].t) {
+					case TType(d, _): d.path.pack.length == 1 && d.path.pack[0] == "cs" && (d.path.name == "Ref" || d.path.name == "Out");
+					case _: false;
+				}
+				byRef ? Keep : Spill;
+			}
+		];
+	}
+
+	// The operands up to the last one with a try, spilled; null when that is the first value pushed.
+	function spillOperands(ops:Array<TExpr>, modes:Array<SpillMode>, pushedBefore:Bool):Null<Array<TExpr>> {
+		// From the end, so the first operand of an expression that pushes nothing before it is not
+		// searched: a chain of binary operators is searched once.
+		var last = ops.length - 1;
+		var first = pushedBefore ? 0 : 1;
+		while (last >= first && !containsTry(ops[last])) last--;
+		if (last < first) return null;
+		for (i in 0...last + 1) if (modes[i] == Refuse) throw new Unsupported("`try` in an operand after a member of a struct field", false);
+		return [for (i in 0...ops.length) i <= last && modes[i] == Spill ? spill(ops[i]) : ops[i]];
+	}
+
+	// Evaluates `e` into a new temporary and returns a read of it. Constants and temporaries stay.
+	function spill(e:TExpr):TExpr {
+		switch (strip(e).expr) {
+			case TConst(TInt(_) | TFloat(_) | TString(_) | TBool(_) | TNull | TSuper):
+				return e;
+			case TConst(TThis) if (thisSig != null && !DotnetTypes.isValueType(thisSig)):
+				return e;
+			case TLocal(v) if (temps.exists(v.id)):
+				return e;
+			case _:
+		}
+		var s = sig(e.type);
+		texpr(RValue(s), e);
+		var v = TypeFunctions.allocVar(VGenerated, "tmp", e.type, e.pos);
+		var local = {arg: false, index: code.addLocal(s), sig: s};
+		if (code.reachable()) store(local);
+		slots.set(v.id, local);
+		temps.set(v.id, true);
+		return new TExpr(TLocal(v), e.type, e.pos);
 	}
 
 	// The class type arguments a field access sees: a static one gets Dynamic for each.

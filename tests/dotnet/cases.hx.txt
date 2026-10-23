@@ -1323,3 +1323,257 @@ class P {
 [run]
 3
 s
+--- exceptions
+class MyError extends cs.system.Exception {
+	public var code:Int;
+	public function new(code:Int) {
+		super("my error");
+		this.code = code;
+	}
+}
+class P {
+	static function fail(n:Int):Int {
+		if (n > 2) throw new MyError(n);
+		return n;
+	}
+	static function attempt(n:Int):String {
+		try {
+			return "ok " + fail(n);
+		} catch (e:MyError) {
+			return "caught " + e.code + " " + e.Message;
+		} catch (e:cs.system.Exception) {
+			return "other";
+		}
+	}
+	static function main() {
+		Sys.println(attempt(1));
+		Sys.println(attempt(5));
+		var count = 0;
+		for (i in 0...5) {
+			try {
+				if (i == 1) continue;
+				if (i == 3) break;
+				count += 10;
+			} catch (e:cs.system.Exception) {}
+		}
+		Sys.println(count);
+		var v = try fail(9) catch (e:MyError) -e.code;
+		Sys.println(v);
+		Sys.println(1 + (try fail(1) catch (e:MyError) 0));
+		try {
+			try throw new cs.system.ArgumentException("inner") catch (e:MyError) Sys.println("wrong");
+		} catch (e:cs.system.ArgumentException) {
+			Sys.println("outer " + e.Message);
+		}
+	}
+}
+===
+[run]
+ok 1
+caught 5 my error
+20
+-9
+2
+outer inner
+--- jumps-out-of-nested-regions
+class P {
+	static var hits = 0;
+	static function nested(n:Int):String {
+		try {
+			try {
+				if (n == 0) return "inner";
+				throw new cs.system.ArgumentException("x");
+			} catch (e:cs.system.ArgumentException) {
+				if (n == 1) return "from catch";
+				try {
+					throw new cs.system.InvalidOperationException("y");
+				} catch (e2:cs.system.InvalidOperationException) {
+					return "try in catch " + e2.Message;
+				}
+			}
+		} catch (e:cs.system.Exception) {
+			return "outer";
+		}
+	}
+	static function loops():Int {
+		var total = 0;
+		var i = 0;
+		while (i < 10) {
+			i++;
+			try {
+				var j = 0;
+				while (j < 10) {
+					j++;
+					try {
+						if (j == 2) continue;
+						if (j > 3) break;
+						total += j;
+					} catch (e:cs.system.Exception) {}
+				}
+				if (i == 2) continue;
+				if (i == 4) break;
+				total += 100;
+			} catch (e:cs.system.Exception) {
+				break;
+			}
+		}
+		return total;
+	}
+	static function voidReturn(n:Int):Void {
+		try {
+			if (n > 0) return;
+			hits += 1;
+		} catch (e:cs.system.Exception) {
+			return;
+		}
+		hits += 10;
+	}
+	static function rethrow():String {
+		try {
+			try {
+				throw new cs.system.ArgumentException("again");
+			} catch (e:cs.system.ArgumentException) {
+				throw e;
+			}
+		} catch (e:cs.system.Exception) {
+			return e.Message;
+		}
+	}
+	static function main() {
+		Sys.println(nested(0));
+		Sys.println(nested(1));
+		Sys.println(nested(2));
+		Sys.println(loops());
+		voidReturn(1);
+		voidReturn(0);
+		Sys.println(hits);
+		Sys.println(rethrow());
+	}
+}
+===
+[run]
+inner
+from catch
+try in catch y
+216
+11
+again
+--- try-as-an-operand
+class Box {
+	public var v:Int;
+	public function new() {
+		v = 0;
+	}
+	public function add(a:Int, b:Int):Int {
+		return v + a * 10 + b;
+	}
+}
+@:struct class Vec {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function add(a:Int, b:Int):Int return x + a + b;
+}
+@:analyzer(ignore)
+class P {
+	static var count = 0;
+	static function fail(n:Int):Int {
+		if (n > 2) throw new cs.system.ArgumentException("big " + n);
+		return n;
+	}
+	static function add3(a:Int, b:Int, c:Int):Int {
+		return a * 100 + b * 10 + c;
+	}
+	static function next():Int {
+		return ++count;
+	}
+	static function sum3(a:Array<Int>):Int {
+		return a[0] + a[1] + a[2];
+	}
+	static function main() {
+		var v = try fail(9) catch (e:cs.system.ArgumentException) -1;
+		Sys.println(v);
+		Sys.println(1 + (try fail(2) catch (e:cs.system.ArgumentException) 0));
+		Sys.println(add3(next(), try fail(5) catch (e:cs.system.ArgumentException) next() * 2, next()));
+		Sys.println("a" + (try "b" + fail(1) catch (e:cs.system.Exception) "c") + "d");
+		Sys.println(sum3([next(), try fail(7) catch (e:cs.system.Exception) 20, 300]));
+		var a = 1;
+		Sys.println(a + (try {
+			a = 10;
+			a;
+		} catch (e:cs.system.Exception) 0));
+		var x = 5;
+		x += try fail(3) catch (e:cs.system.Exception) 10;
+		Sys.println(x);
+		var b = new Box();
+		b.v = try fail(8) catch (e:cs.system.Exception) 42;
+		b.v += try fail(1) catch (e:cs.system.Exception) 0;
+		Sys.println(b.v);
+		Sys.println(b.add(next(), try fail(9) catch (e:cs.system.Exception) 7));
+		var vec = new Vec(1000);
+		Sys.println(vec.add(next(), try fail(9) catch (e:cs.system.Exception) 7));
+		var sb = new cs.system.text.StringBuilder();
+		sb.Append("p");
+		sb.Append((try "q" + fail(9) catch (e:cs.system.Exception) "9" : String));
+		Sys.println(sb.ToString());
+		var msg = try {
+			fail(4);
+			"no";
+		} catch (e:cs.system.ArgumentException) e.Message;
+		Sys.println(msg);
+		Sys.println(if (count > 0) try fail(2) catch (e:cs.system.Exception) 0 else 1);
+	}
+}
+===
+[run]
+-1
+3
+143
+ab1d
+324
+11
+15
+43
+100
+1013
+p9
+big 4
+2
+--- try-errors
+@:struct class Vec {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function add(a:Int, b:Int):Int return x + a + b;
+}
+class Holder {
+	public var vec:Vec;
+	public function new() {
+		vec = new Vec(1);
+	}
+}
+@:analyzer(ignore)
+class P {
+	static function main() {
+		var h = new Holder();
+		Sys.println(h.vec.add(1, try 2 catch (e:cs.system.Exception) 3));
+		var d:Dynamic = null;
+		var y:Int = try {
+			Sys.println("b");
+			d.foo;
+		} catch (e:cs.system.Exception) 0;
+		var c = Math.random() > 2;
+		var z:Int = if (c) {
+			Sys.println("a");
+			d.foo;
+		} else 1;
+		try {
+			var f = function() {};
+			Sys.println("in");
+		} catch (e:cs.system.Exception) {}
+	}
+}
+===
+[compile]
+P.hx:16: characters 15-66 : dotnet: `try` in an operand after a member of a struct field is not supported yet
+P.hx:20: characters 4-9 : dotnet: dynamic field access is not supported yet
+P.hx:25: characters 4-9 : dotnet: dynamic field access is not supported yet
+P.hx:28: characters 12-25 : dotnet: local functions are not supported yet
