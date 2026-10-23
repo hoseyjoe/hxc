@@ -118,12 +118,16 @@ This is milestone 2 of the .NET generator. Classes, interfaces, structs, generic
 operators, strings, arrays and native .NET exceptions work, including `try`/`catch`/`throw` of
 `cs.system.Exception` subclasses. Constructs not supported yet are compile errors in user code
 (`dotnet: ... not supported yet`): `Dynamic` operations, closures and local functions, enums,
-anonymous objects, reflection, `haxe.Exception`-based throws and catches, casts between
-instantiations of a generic class, and `Null<T>` of value types.
+anonymous objects, reflection, casts between instantiations of a generic class, and `Null<T>` of
+value types.
 
 The standard library's hxcs runtime is partly stubbed until milestone 3; a stubbed method throws
 `System.NotSupportedException` when called. `-D dotnet-stub-report` prints what was skipped,
-stubbed or ignored, one sorted line each.
+stubbed or ignored, one sorted line each. `haxe.Exception`-based code compiles but reaches such
+stubs: `throw "x"` and other throws of values that are not `cs.system.Exception`s,
+`new haxe.Exception(...)` and `catch (e:haxe.Exception)` throw `System.NotSupportedException` at
+run time. A catch-all such as `catch (e:Dynamic)` or `catch (e:cs.system.Exception)` catches that
+exception too, so it can hide a stub.
 
 The tests need the .NET 10 SDK and hxcs installed globally. They build `tests/fixtures/hxccheck`, compile each case twice to
 check the output is deterministic, verify it with ILVerify, and run it:
