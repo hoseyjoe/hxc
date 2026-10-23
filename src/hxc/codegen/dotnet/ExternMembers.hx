@@ -174,6 +174,27 @@ class ExternMembers {
 		return [];
 	}
 
+	// The type a .NET enum stores its values as (its value__ field's), or null when `path` is not an
+	// enum of the referenced assemblies.
+	public function enumUnderlying(path:IlPath):Null<IlSigNorm> {
+		if (!Lambda.exists(ctx.netLibs, lib -> lib.definesType(path))) return null;
+		var cls = rawClass(path);
+		if (!isSystem(cls.csuper, "Enum")) return null;
+		for (f in cls.cfields) if (f.fname == "value__") return f.fsig.snorm;
+		return null;
+	}
+
+	// The literal a constructor of an extern .NET enum stands for, and the type the enum stores it as.
+	public function enumLiteral(en:TEnum, ef:TEnumField):{c:IlConstant, underlying:IlSigNorm} {
+		var path = types.externPathOf(TEnumDecl(en));
+		var underlying = enumUnderlying(path);
+		if (underlying == null) throw new Unsupported("the .NET enum " + NetConverter.ilpathS(path) + " outside the referenced assemblies", false);
+		var name = DotnetNames.nativeName(ef.meta);
+		if (name == null) name = ef.name;
+		for (f in rawClass(path).cfields) if (f.fname == name && f.fconstant != null) return {c: f.fconstant, underlying: underlying};
+		throw new Unsupported("the unknown .NET enum constant " + Globals.sTypePath(en.path) + "." + ef.name, false);
+	}
+
 	public function field(c:TClass, cf:TClassField):ExternField {
 		var name = memberName(cf);
 		for (link in chain(c)) {

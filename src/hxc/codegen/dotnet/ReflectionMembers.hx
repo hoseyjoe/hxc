@@ -363,39 +363,15 @@ private class ReflectionEmitter {
 
 	// ---- conversions
 
-	// The object on the stack as a `to`, as gencs converts a Dynamic: Runtime.toInt, toDouble, toBool,
-	// toString, genericCast for a type parameter, Null<T>.ofDynamic, else C#'s cast.
+	// The object on the stack as a `to`, as gencs converts a Dynamic (TexprDynamic.toSig: Runtime.toInt,
+	// toDouble, toBool, toString, genericCast for a type parameter, C#'s cast), Null<T>.ofDynamic.
 	function fromDynamic(to:IlSigNorm, t:T):Void {
 		switch (to) {
-			case LObject:
-			case LInt32 | LUInt32:
-				runtimeCall("toInt", [], 1, 1);
-			case LInt8 | LUInt8 | LInt16 | LUInt16 | LChar:
-				runtimeCall("toInt", [], 1, 1);
-				code.op(switch (to) {
-					case LInt8: IlOps.CONV_I1;
-					case LUInt8: IlOps.CONV_U1;
-					case LInt16: IlOps.CONV_I2;
-					case _: IlOps.CONV_U2;
-				}, 1, 1);
-			case LFloat64:
-				runtimeCall("toDouble", [], 1, 1);
-			case LFloat32:
-				runtimeCall("toDouble", [], 1, 1);
-				code.op(IlOps.CONV_R4, 1, 1);
-			case LBool:
-				runtimeCall("toBool", [], 1, 1);
-			case LString:
-				runtimeCall("toString", [], 1, 1);
-			case LTypeParam(_) | LMethodTypeParam(_):
-				runtimeCall("genericCast", [to], 1, 1);
 			case LValueType(p, [arg]) if (lower.isHaxeNull(to)):
 				// Null<object>.ofDynamic<T>(value), as gencs writes it.
 				var token = g.mb.memberRef(g.typeTokenOf(LValueType(p, [LObject])), "ofDynamic",
 					g.sigs.method(false, LValueType(p, [LMethodTypeParam(0)]), [LObject], 1));
 				code.opToken(IlOps.CALL, g.mb.methodSpec(token, g.sigs.methodSpec([arg])), 1, 1);
-			case _ if (DotnetTypes.isValueType(to)):
-				code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
 			case LClass(_, _) if (g.isGenericHaxeClass(to)):
 				// gencs converts between instantiations of a generic Haxe class (an Array<Dynamic> into an
 				// Array<Int> field) with __hx_cast, plan 3c; until then a value of another instantiation is
@@ -419,8 +395,8 @@ private class ReflectionEmitter {
 				code.mark(isNull);
 				code.op(IlOps.LDNULL, 0, 1);
 				code.mark(done);
-			case LClass(_, _) | LVector(_) | LArray(_, _):
-				code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
+			case _ if (DotnetTypes.isValueType(to) || to.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _) | LTypeParam(_) | LMethodTypeParam(_))):
+				lower.dyn.toSig(to);
 			case _:
 				throw new Unsupported("reflection of fields of type " + to, false, pos);
 		}

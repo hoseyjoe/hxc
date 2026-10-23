@@ -44,7 +44,7 @@ enum SpillMode {
 // One method body's expressions as IL. Anything outside the subset this milestone compiles throws
 // Unsupported naming it.
 
-@:allow(hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprCalls)
+@:allow(hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.TexprDynamic)
 class TexprToIl {
 	final g:DotnetCtx;
 	final code:IlCode;
@@ -68,6 +68,7 @@ class TexprToIl {
 	final ops:TexprOps;
 	final flow:TexprFlow;
 	final calls:TexprCalls;
+	final dyn:TexprDynamic;
 
 	// Set for user code: a statement that fails to lower is reported here and lowering goes on with
 	// the next one. Unset, the Unsupported propagates.
@@ -89,6 +90,7 @@ class TexprToIl {
 		ops = new TexprOps(this);
 		flow = new TexprFlow(this);
 		calls = new TexprCalls(this);
+		dyn = new TexprDynamic(this);
 	}
 
 	public function bindArg(v:TVar, index:Int, sig:IlSigNorm):Void {
@@ -104,16 +106,6 @@ class TexprToIl {
 	// String with a C# cast (unbox.any, castclass), not through Runtime's own toInt, toDouble, toString.
 	function inRuntimeClass():Bool {
 		return cls != null && DotnetTypes.haxePath(TClassDecl(cls)) == "cs.internal.Runtime";
-	}
-
-	// Runtime.toBool, which gencs converts a Dynamic to Bool with, the object on the stack.
-	function toBool():Void {
-		var rt = g.runtimeClass("cs.internal.Runtime");
-		var cf = rt == null ? null : rt.statics.get("toBool");
-		var token = cf == null ? null : g.methodTokens.get(cf);
-		if (token == null) throw new Unsupported("Dynamic to Bool conversions", true);
-		g.types.checkKept(TClassDecl(rt));
-		code.opToken(IlOps.CALL, token, 1, 1);
 	}
 
 	public function texpr(ret:Ret, e:TExpr):Void {
@@ -184,6 +176,9 @@ class TexprToIl {
 		if (isHaxeNull(from) || isHaxeNull(to)) throw new Unsupported("Null<T> of a value type", false);
 		// Int and UInt are both an int32 on the stack.
 		if (isIntLike(from) && isIntLike(to)) return;
+		// A .NET enum and its underlying integer are the same value on the stack, as C#'s casts between
+		// them.
+		if (sameAsEnum(from, to) || sameAsEnum(to, from)) return;
 		// So is a smaller integer, widened as C# does implicitly.
 		if (from.match(LChar | LInt8 | LUInt8 | LInt16 | LUInt16) && to.match(LInt32)) return;
 		var fromValue = DotnetTypes.isValueType(from) || isTypeParam(from);
@@ -195,15 +190,11 @@ class TexprToIl {
 			// A boxed type parameter is an object, which may not be the reference type wanted.
 			if (isTypeParam(from) && !to.match(LObject)) castTo(to);
 		} else if (!fromValue && toValue) {
-			// gencs converts Dynamic to a primitive through Runtime.toBool, toInt and toDouble, which accept
-			// null and boxed numbers of another type; an unbox.any would throw on them. Inside
-			// haxe.lang.Runtime it writes C#'s cast for all but Bool.
-			if (from.match(LObject) && isPrimitive(to)) {
-				if (!inRuntimeClass()) throw new Unsupported("Dynamic to Bool/Int/Float conversions", true);
-				if (to.match(LBool)) {
-					toBool();
-					return;
-				}
+			// gencs converts Dynamic through Runtime.toInt, toDouble, toBool and genericCast, which accept
+			// null and boxed numbers of another type; an unbox.any would throw on them.
+			if (from.match(LObject)) {
+				dyn.toSig(to);
+				return;
 			}
 			code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
 		} else if (fromValue) {
@@ -225,11 +216,15 @@ class TexprToIl {
 				code.op(IlOps.CONV_R8, 1, 1);
 			}
 			else if (from.match(LUInt32) && to.match(LInt64)) code.op(IlOps.CONV_U8, 1, 1);
+			else if (from.match(LFloat64) && to.match(LUInt32)) code.op(IlOps.CONV_U4, 1, 1);
 			else if (isTypeParam(from) || isTypeParam(to)) {
 				// Between a type parameter and another type that is one at run time, as C# casts through object.
 				code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 				code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
 			} else throw new Unsupported("conversions between value types", true);
+		} else if (from.match(LObject) && to.match(LString)) {
+			// Runtime.toString, as gencs converts a Dynamic to a String.
+			dyn.toSig(to);
 		} else if (isReference(from) && isReference(to) && !to.match(LObject)) {
 			// An upcast needs nothing; anything else may narrow.
 			if (g.isUpcast(from, to) || from.match(LVector(_)) && isSystemArray(to)) return;
@@ -237,8 +232,14 @@ class TexprToIl {
 		}
 	}
 
-	function isBoolCastOfDynamic(e:TExpr, e1:TExpr):Bool {
-		return try sig(e.type).match(LBool) && sig(e1.type).match(LObject) catch (_:Unsupported) false;
+	// True when `a` is a .NET enum whose values are stored as `b`.
+	function sameAsEnum(a:IlSigNorm, b:IlSigNorm):Bool {
+		return switch (a) {
+			case LValueType(p, []):
+				var u = g.externs.enumUnderlying(p);
+				u != null && (IlPaths.sigEq(u, b) || isIntLike(u) && isIntLike(b));
+			case _: false;
+		}
 	}
 
 	static function isSystemArray(s:IlSigNorm):Bool {
@@ -282,10 +283,6 @@ class TexprToIl {
 	function castTo(to:IlSigNorm):Void {
 		if (g.isGenericHaxeClass(to)) throw instantiationCast(to);
 		code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
-	}
-
-	static function isPrimitive(s:IlSigNorm):Bool {
-		return s.match(LBool | LChar | LInt8 | LUInt8 | LInt16 | LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64);
 	}
 
 	static function isReference(s:IlSigNorm):Bool return s.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _));
@@ -403,31 +400,12 @@ class TexprToIl {
 				}
 			case TParenthesis(e1) | TMeta(_, e1):
 				texpr(ret, e1);
-			case TCast(e1, null):
-				var from = null, to = null;
-				if (!isNullConst(e1)) {
-					from = try sig(e1.type) catch (_:Unsupported) null;
-					to = try sig(e.type) catch (_:Unsupported) null;
-					// A cast between instantiations is reported at the cast.
-					if (from != null && to != null) checkInstantiationCast(from, to);
-				}
-				switch (ret) {
-					case RValue(want) if (want != null && from != null && to != null && DotnetTypes.isValueType(from)
-						&& DotnetTypes.isValueType(to) && !IlPaths.sigEq(from, to) && !IlPaths.sigEq(want, to)):
-						// A cast between value types converts to its own type first, as C#'s `(object)(float)d`
-						// does; the result then goes where the caller wants it.
-						texpr(RValue(to), e1);
-						coerce(to, ret);
-					case _:
-						texpr(switch (ret) {
-							case RValue(null): RValue(sig(e.type));
-							case r: r;
-						}, e1);
-				}
+			case TCast(e1, md):
+				castExpr(ret, e, e1, md != null);
 			case TBinop(OpAssign, lhs, rhs):
 				assign(ret, lhs, rhs);
 			case TBinop(OpAssignOp(op), lhs, rhs):
-				ops.compound(ret, op, lhs, rhs);
+				ops.compound(ret, e, op, lhs, rhs);
 			case TBinop(op, e1, e2):
 				ops.binary(ret, e, op, e1, e2);
 			case TUnop(op, flag, e1):
@@ -458,7 +436,11 @@ class TexprToIl {
 			case TFunction(_):
 				throw new Unsupported("local functions", true);
 			case TTypeExpr(_):
-				throw new Unsupported("type expressions", true);
+				// A type as a value is its System.Type, C#'s typeof(T) as gencs writes it.
+				var t = calls.typeArg(e);
+				if (!needVal(ret)) return;
+				calls.pushTypeOf(t);
+				coerce(TexprCalls.systemType, ret);
 			case TArray(e1, e2):
 				calls.arrayRead(ret, e1, e2);
 			case TObjectDecl(_):
@@ -471,15 +453,6 @@ class TexprToIl {
 				flow.tryExpr(ret, e, body, catches);
 			case TThrow(e1):
 				flow.throwExpr(e1);
-			case TCast(e1, TClassDecl(_)):
-				calls.checkedCast(ret, e, e1);
-			case TCast(e1, TAbstractDecl(_)) if (isBoolCastOfDynamic(e, e1)):
-				// cast(d, Bool) is Runtime.toBool in gencs.
-				texpr(RValue(LObject), e1);
-				toBool();
-				coerce(LBool, ret);
-			case TCast(_, _):
-				throw new Unsupported("checked casts", true);
 			case TEnumIndex(e1) if (clrEnum(e1.type) != null):
 				// A CLR enum's value is its index.
 				texpr(RValue(sig(e1.type)), e1);
@@ -489,6 +462,36 @@ class TexprToIl {
 			case TIdent(_):
 				throw new Unsupported("untyped code", false);
 		}
+	}
+
+	// A cast; `checked` for cast(e, T). gencs writes both as C#'s cast to the expression's type, so a cast
+	// that changes the type converts or checks through that type even when the value goes on somewhere
+	// else, as C#'s `(object)(int)d` does: between value types, from Dynamic to a value type, a type
+	// parameter, a String or a class, and every checked cast.
+	function castExpr(ret:Ret, e:TExpr, e1:TExpr, checked:Bool):Void {
+		var from = null, to = null;
+		if (!isNullConst(e1)) {
+			from = try sig(e1.type) catch (_:Unsupported) null;
+			to = try sig(e.type) catch (_:Unsupported) null;
+			// A cast between instantiations is reported at the cast.
+			if (from != null && to != null) checkInstantiationCast(from, to);
+		}
+		var want = switch (ret) {
+			case RValue(w): w;
+			case _: null;
+		}
+		var viaOwn = from != null && to != null && !IlPaths.sigEq(from, to) && !to.match(LObject) && (checked
+			|| want != null && !IlPaths.sigEq(want, to) && (DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)
+				|| from.match(LObject) && (DotnetTypes.isValueType(to) || isTypeParam(to) || isReference(to) && !g.isGenericHaxeClass(to))));
+		if (viaOwn) {
+			texpr(RValue(to), e1);
+			coerce(to, ret);
+			return;
+		}
+		texpr(switch (ret) {
+			case RValue(null): RValue(sig(e.type));
+			case r: r;
+		}, e1);
 	}
 
 	// Statements, then the last expression where `ret` wants it. In user code a failing statement is
@@ -573,6 +576,30 @@ class TexprToIl {
 		}
 	}
 
+	// The extern .NET enum that values of type `t` belong to, or null.
+	static function externEnum(t:T):Null<TEnum> {
+		return switch (TypeFunctions.follow(t)) {
+			case TEnum(e, _) if (e.isExtern): e;
+			case _: null;
+		}
+	}
+
+	// `e` as enumIndex(x) of a value x of an extern .NET enum, or null. An index is not the value .NET
+	// stores, so a switch or comparison on it compares x with the constructors' values instead, as
+	// gencs's SwitchToIf turns `switch enumIndex(x)` back into a switch on x.
+	static function externEnumIndex(e:TExpr):Null<{value:TExpr, en:TEnum}> {
+		return switch (strip(e).expr) {
+			case TEnumIndex(x) if (externEnum(x.type) != null): {value: x, en: externEnum(x.type)};
+			case _: null;
+		}
+	}
+
+	// The constructor of `en` with index `i`.
+	static function enumFieldAt(en:TEnum, i:Int):TEnumField {
+		for (ef in en.constrs) if (ef.index == i) return ef;
+		throw "internal error: " + Globals.sTypePath(en.path) + " has no constructor " + i;
+	}
+
 	function assign(ret:Ret, lhs:TExpr, rhs:TExpr):Void {
 		switch (lhs.expr) {
 			case TLocal(v) if (refTarget(anySlot(v)) != null):
@@ -650,6 +677,9 @@ class TexprToIl {
 					case _:
 						throw new Unsupported("assignments to a read-only .NET member", true);
 				}
+			case TField(obj, fa) if (TexprDynamic.isDynamicReceiver(fa, obj)):
+				// Runtime.setField, as gencs assigns a field of a Dynamic.
+				dyn.fieldSet(ret, lhs, obj, TexprDynamic.fieldName(fa), rhs, lhs.type);
 			case _:
 				throw new Unsupported("this kind of assignment", false);
 		}
@@ -679,12 +709,6 @@ class TexprToIl {
 		var s = sig(e.type);
 		if (!isNumeric(s)) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		return s;
-	}
-
-	// Dynamic reaches Bool and Float through Runtime.toBool and toDouble in gencs, which are not
-	// ported yet.
-	function noDynamic(e:TExpr, what:String):Void {
-		if (sig(strip(e).type).match(LObject)) throw new Unsupported(what, false);
 	}
 
 	// A local or a Haxe class's static variable, which can be loaded and stored without a receiver; an

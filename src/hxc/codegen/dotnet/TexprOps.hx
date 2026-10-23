@@ -31,7 +31,7 @@ import hxc.codegen.dotnet.TexprToIl.strip;
 
 // The operators of TexprToIl: arithmetic, comparison, boolean conditions, increments and compound
 // assignment, and string concatenation. Shares its state through the TexprToIl that owns it.
-@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprCalls)
+@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.TexprDynamic)
 class TexprOps {
 	final tl:TexprToIl;
 	final g:DotnetCtx;
@@ -44,6 +44,8 @@ class TexprOps {
 	}
 
 	function binary(ret:Ret, e:TExpr, op:Binop, e1:TExpr, e2:TExpr):Void {
+		// An operator with a Dynamic operand goes through haxe.lang.Runtime.
+		if (tl.dyn.binop(ret, e, op, e1, e2)) return;
 		switch (op) {
 			case OpBoolAnd | OpBoolOr:
 				boolValue(ret, e);
@@ -159,7 +161,13 @@ class TexprOps {
 			tl.texpr(RValue(netOperator == null ? null : netOperator.args[1]), e2);
 		} else {
 			var s1 = tl.sig(e1.type), s2 = tl.sig(e2.type);
-			if (mixesUIntAndInt(s1, s2)) {
+			var idx1 = TexprToIl.externEnumIndex(e1), idx2 = TexprToIl.externEnumIndex(e2);
+			if (equality && (idx1 != null && constInt(e2) != null || idx2 != null && constInt(e1) != null)) {
+				// enumIndex(x) == i on a .NET enum: x against the value of the constructor at i.
+				var x = idx1 != null ? idx1 : idx2;
+				tl.texpr(RValue(tl.sig(x.value.type)), x.value);
+				tl.calls.externEnumLiteral(x.en, TexprToIl.enumFieldAt(x.en, idx1 != null ? constInt(e2) : constInt(e1)));
+			} else if (mixesUIntAndInt(s1, s2)) {
 				tl.texpr(RValue(s1), e1);
 				widen(s1);
 				tl.texpr(RValue(s2), e2);
@@ -170,10 +178,22 @@ class TexprOps {
 				unsigned = t.match(LUInt32);
 				tl.texpr(RValue(t), e1);
 				tl.texpr(RValue(t), e2);
-			} else if (equality && TexprToIl.clrEnum(e1.type) != null && TexprToIl.clrEnum(e1.type) == TexprToIl.clrEnum(e2.type)) {
-				// Two values of one CLR enum compare as their indices.
+			} else if (equality && (TexprToIl.clrEnum(e1.type) != null && TexprToIl.clrEnum(e1.type) == TexprToIl.clrEnum(e2.type)
+				|| TexprToIl.externEnum(e1.type) != null && TexprToIl.externEnum(e1.type) == TexprToIl.externEnum(e2.type))) {
+				// Two values of one CLR enum compare as their indices, two of a .NET enum as their values.
 				tl.texpr(RValue(s1), e1);
 				tl.texpr(RValue(s2), e2);
+			} else if (s1.match(LInt64) && s2.match(LInt64) || s1.match(LUInt64) && s2.match(LUInt64)) {
+				// Two Int64 or two UInt64 values, as C# compares longs.
+				unsigned = s1.match(LUInt64);
+				tl.texpr(RValue(s1), e1);
+				tl.texpr(RValue(s2), e2);
+			} else if (equality && s1.match(LValueType(_, _)) && IlPaths.sigEq(s1, s2) && TexprToIl.externEnum(e1.type) == null) {
+				// Two .NET structs of one type, such as System.Decimal, through the operator C# binds.
+				netOperator = equalityOperator(op, e1, e2);
+				if (netOperator == null) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+				tl.texpr(RValue(netOperator.args[0]), e1);
+				tl.texpr(RValue(netOperator.args[1]), e2);
 			} else if (equality && s1.match(LBool) && s2.match(LBool)) {
 				tl.texpr(RValue(LBool), e1);
 				tl.texpr(RValue(LBool), e2);
@@ -289,8 +309,7 @@ class TexprOps {
 			case TConst(TBool(b)):
 				if (b == sense) code.branch(IlOps.BR, l);
 			case _:
-				// Dynamic needs Runtime.toBool (null is false), which only haxe.lang.Runtime reaches yet.
-				if (!tl.inRuntimeClass()) tl.noDynamic(e, "Dynamic as a condition");
+				// A Dynamic converts through Runtime.toBool, as gencs casts a condition to Bool.
 				tl.texpr(RValue(LBool), e);
 				code.branch(sense ? IlOps.BRTRUE : IlOps.BRFALSE, l);
 		}
@@ -313,9 +332,9 @@ class TexprOps {
 	}
 
 	function unary(ret:Ret, e:TExpr, op:Unop, flag:UnopFlag, e1:TExpr):Void {
+		if (op.match(Neg | NegBits) && tl.dyn.unary(ret, e, op, e1)) return;
 		switch (op) {
 			case Not:
-				tl.noDynamic(e1, "Dynamic with the ! operator");
 				tl.texpr(RValue(LBool), e1);
 				not();
 				tl.coerce(LBool, ret);
@@ -332,13 +351,14 @@ class TexprOps {
 				code.op(IlOps.NOT, 1, 1);
 				tl.coerce(t, ret);
 			case Increment | Decrement:
-				incDec(ret, op.match(Increment), flag.match(Postfix), e1);
+				incDec(ret, e, op.match(Increment), flag.match(Postfix), e1);
 			case Spread:
 				throw new Unsupported("the spread operator", false);
 		}
 	}
 
-	function incDec(ret:Ret, increment:Bool, postfix:Bool, e1:TExpr):Void {
+	function incDec(ret:Ret, e:TExpr, increment:Bool, postfix:Bool, e1:TExpr):Void {
+		if (tl.dyn.incDec(ret, e, increment, postfix, e1)) return;
 		var p = tl.place(e1);
 		if (p == null) throw new Unsupported("this kind of assignment", false);
 		if (!isNumeric(p.sig)) throw new Unsupported("the " + (increment ? "++" : "--") + " operator on these types", false);
@@ -384,7 +404,8 @@ class TexprOps {
 		return tmp;
 	}
 
-	function compound(ret:Ret, op:Binop, lhs:TExpr, rhs:TExpr):Void {
+	function compound(ret:Ret, e:TExpr, op:Binop, lhs:TExpr, rhs:TExpr):Void {
+		if (tl.dyn.compound(ret, e, op, lhs, rhs)) return;
 		var p = tl.place(lhs);
 		if (p == null) throw new Unsupported("this kind of assignment", false);
 		p.prepare();
@@ -436,10 +457,7 @@ class TexprOps {
 	// Throws for the types a String conversion does not handle yet.
 	static function stringKind(s:IlSigNorm):Void {
 		switch (s) {
-			case LObject:
-				throw new Unsupported("Dynamic in string concatenation", false);
-			case LTypeParam(_) | LMethodTypeParam(_):
-				throw new Unsupported("generic values in string concatenation", true);
+			case LObject | LTypeParam(_) | LMethodTypeParam(_):
 			case LString | LBool | LClass(_, _) | LVector(_) | LArray(_, _):
 			case _ if (DotnetTypes.isValueType(s)):
 			case _:
@@ -452,6 +470,12 @@ class TexprOps {
 		stringKind(s);
 		function nullText() code.opToken(IlOps.LDSTR, g.mb.userString("null"), 0, 1);
 		switch (s) {
+			case LObject:
+				// Std.string, as gencs writes a Dynamic in a concatenation.
+				tl.dyn.stdString();
+			case LTypeParam(_) | LMethodTypeParam(_):
+				code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+				tl.dyn.stdString();
 			case LString:
 				var notNull = code.newLabel();
 				code.op(IlOps.DUP, 1, 2);

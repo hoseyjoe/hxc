@@ -478,7 +478,7 @@ class P {
 P.hx:6: characters 17-25 : dotnet: `return` inside expressions is not supported yet
 P.hx:15: characters 13-21 : dotnet: `continue` inside expressions is not supported yet
 P.hx:18: characters 35-40 : dotnet: `break` inside expressions is not supported yet
---- dynamic-conditions-are-errors
+--- dynamic-conditions @gencs
 class P {
 	static function main() {
 		var d:Dynamic = null;
@@ -486,15 +486,20 @@ class P {
 		Sys.println(!d);
 		Sys.println(Std.int(d));
 		while (d) {}
+		var t:Dynamic = true;
+		if (t) Sys.println("true is true");
+		Sys.println(t && !d ? "and" : "not and");
+		Sys.println(Std.int((2.75 : Dynamic)));
 	}
 }
 ===
-[compile]
-P.hx:4: characters 3-29 : dotnet: Dynamic as a condition is not supported yet
-P.hx:5: characters 15-17 : dotnet: Dynamic with the ! operator is not supported yet
-P.hx:6: characters 15-25 : dotnet: Dynamic in Std.int is not supported yet
-P.hx:7: characters 3-15 : dotnet: Dynamic as a condition is not supported yet
---- dynamic-to-primitive-is-an-error
+[run]
+True
+0
+true is true
+and
+2
+--- dynamic-to-primitive @gencs
 class P {
 	static function flag(b:Bool):Int return b ? 1 : 0;
 	static function half(f:Float):Float return f / 2;
@@ -510,20 +515,19 @@ class P {
 		var i:Int = d;
 		Sys.println(flag(d));
 		Sys.println(half(d));
+		Sys.println(b + " " + f + " " + i + " " + back(d));
+		var n:Dynamic = 5;
+		Sys.println(half(n) + back(n));
 	}
 }
 ===
-[compile]
-P.hx:4: characters 47-48 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
-P.hx:7: characters 12-13 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
-P.hx:8: characters 8-9 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
-P.hx:9: characters 22-23 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
-P.hx:10: characters 28-29 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
-P.hx:11: characters 16-17 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
-P.hx:12: characters 17-18 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
-P.hx:13: characters 15-16 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
-P.hx:14: characters 20-21 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
-P.hx:15: characters 20-21 : dotnet: Dynamic to Bool/Int/Float conversions are not supported yet
+[run]
+True
+0
+0
+0
+false 0 0 0
+7.5
 --- classes-and-inheritance @gencs
 class Animal {
 	public var name:String;
@@ -1653,12 +1657,12 @@ class P {
 		var d:Dynamic = null;
 		var y:Int = try {
 			Sys.println("b");
-			d.foo;
+			d[0];
 		} catch (e:cs.system.Exception) 0;
 		var c = Math.random() > 2;
 		var z:Int = if (c) {
 			Sys.println("a");
-			d.foo;
+			d[0];
 		} else 1;
 		try {
 			var f = function() {};
@@ -1677,8 +1681,8 @@ class P {
 ===
 [compile]
 P.hx:16: characters 15-66 : dotnet: `try` in an operand after a member of a struct field is not supported yet
-P.hx:20: characters 4-9 : dotnet: dynamic field access is not supported yet
-P.hx:25: characters 4-9 : dotnet: dynamic field access is not supported yet
+P.hx:20: characters 4-8 : dotnet: array access is not supported yet
+P.hx:25: characters 4-8 : dotnet: array access is not supported yet
 P.hx:28: characters 12-25 : dotnet: local functions are not supported yet
 P.hx:37: characters 10-18 : dotnet: `return` inside expressions is not supported yet
 --- throw-and-return-as-values
@@ -2569,3 +2573,245 @@ class P {
 [compile]
 P.hx:4: lines 4-9 : dotnet: classes extending an extern class marked @:hxGen are not supported yet
 P.hx:12: characters 15-26 : dotnet: Sub (left out: classes extending an extern class marked @:hxGen) is not supported yet
+--- dynamic-operators @gencs
+class P {
+	static var d:Dynamic = 2;
+	static var e:Dynamic = 2.5;
+	static var s:Dynamic = "4";
+	static var n:Dynamic = null;
+	static function main() {
+		Sys.println(d + 1);
+		Sys.println(d + e);
+		Sys.println(d + s);
+		Sys.println(d * 3);
+		Sys.println(d / 4);
+		Sys.println(d % 2);
+		Sys.println(-d);
+		var c:Dynamic = 1;
+		c++;
+		Sys.println(c);
+		Sys.println(Std.isOfType(c, Int) + " " + Std.isOfType(c, Float));
+		Sys.println(d == 2 && d != e);
+		Sys.println(d < e);
+		Sys.println(s < "5");
+		Sys.println(n == null);
+		var i:Int = e;
+		Sys.println(i);
+		var j:Int = cast 3.5;
+		Sys.println(j);
+		var b:Bool = n;
+		Sys.println(b);
+		Sys.println("v=" + d + e + n);
+		if (n) Sys.println("never");
+	}
+}
+===
+--- dynamic-fields @gencs
+class Point {
+	public var x:Int;
+	public var y:Float;
+	public function new(x:Int, y:Float) {
+		this.x = x;
+		this.y = y;
+	}
+	public function sum(k:Int):Float return (x + y) * k;
+}
+class Point3 extends Point {
+	override public function sum(k:Int):Float return super.sum(k) + 100;
+}
+class P {
+	static function main() {
+		var p:Dynamic = new Point(1, 2.5);
+		Sys.println(p.x);
+		p.x = 7;
+		Sys.println(p.x + p.y);
+		Sys.println(p.sum(2));
+		Sys.println(Reflect.callMethod(p, Reflect.field(p, "sum"), [3]));
+		var q:Dynamic = new Point3(1, 1);
+		Sys.println(q.sum(1));
+		Sys.println(Reflect.callMethod(q, Reflect.field(q, "sum"), [1]));
+		var t:Dynamic = cs.system.Environment.NewLine.length > 0 ? "abc" : null;
+		Sys.println(t.length);
+	}
+}
+===
+--- missing-fields @gencs
+class C {
+	public var a = 1;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var c:Dynamic = new C();
+		Sys.println(Reflect.field(c, "b"));
+		try {
+			Sys.println(c.b);
+		} catch (e:cs.system.MemberAccessException) {
+			Sys.println("caught: " + e.Message);
+		}
+		try {
+			c.b = 2;
+		} catch (e:cs.system.MemberAccessException) {
+			Sys.println("caught: " + e.Message);
+		}
+	}
+}
+===
+--- generic-cast-converts @gencs
+class P {
+	static function conv<T>(d:Dynamic):T return d;
+	static function show<T>(x:T):Void {
+		var o:cs.system.Object = cast x;
+		Sys.println(o.GetType().Name + " " + o.ToString());
+	}
+	static function main() {
+		var s:Single = conv(2.5);
+		show(s);
+		var l:cs.types.Int64 = conv(3.75);
+		show(l);
+		var l2:cs.types.Int64 = conv(5);
+		show(l2);
+		var i:Int = conv(4.5);
+		show(i);
+		var f:Float = conv(3);
+		show(f);
+		var str:String = conv("x");
+		show(str);
+	}
+}
+===
+[run]
+Single 2.5
+Int64 3
+Int64 5
+Int32 4
+Double 3
+String x
+--- dynamic-operators-more @gencs
+class Foo {
+	public var x:Int = 1;
+	public var f:Float = 0.5;
+	public function new() {}
+	public function bump():Void x += 10;
+}
+class P {
+	static function isNull<T>(v:T):Bool return v == null;
+	static function same<T>(a:T, b:T):Bool return a == b;
+	static function main() {
+		var d:Dynamic = 7;
+		var c:Dynamic = 10;
+		c += 5;
+		Sys.println(c);
+		c -= 1;
+		Sys.println(c);
+		c *= 2;
+		Sys.println(c);
+		c /= 8;
+		Sys.println(c);
+		c = 6;
+		c %= 4;
+		Sys.println(c);
+		var s:Dynamic = "a";
+		s += 1;
+		Sys.println(s);
+		Sys.println((d & 3) + " " + (d | 8) + " " + (d ^ 1) + " " + (d << 2) + " " + (d >> 1) + " " + (d >>> 1) + " " + ~d);
+		Sys.println((d > 5) + " " + (5 >= d) + " " + (d <= 7.0) + " " + (d == 7.0) + " " + (d == "7"));
+		var t:Dynamic = true;
+		Sys.println(!t);
+		Sys.println(t ? "yes" : "no");
+		var k = 0;
+		var cnt:Dynamic = 3;
+		while (cnt > 0) {
+			cnt--;
+			k++;
+		}
+		Sys.println(k + " " + cnt);
+		var o:Dynamic = new Foo();
+		o.x += 4;
+		Sys.println(o.x);
+		o.x++;
+		Sys.println(o.x);
+		var old = o.x++;
+		Sys.println(old + " " + o.x);
+		Sys.println(++o.f);
+		o.bump();
+		Sys.println(o.x);
+		Sys.println(Std.int(d / 2));
+		var u:UInt = d;
+		var i8:cs.types.Int8 = d;
+		var sg:Single = d;
+		var str:String = d;
+		Sys.println(u + " " + i8 + " " + sg + " " + str);
+		var dd:Dynamic = 2.75;
+		var asInt:Dynamic = (cast dd : Int);
+		Sys.println(asInt);
+		Sys.println(Std.isOfType(d, UInt) + " " + Std.isOfType(d, Dynamic) + " " + Std.isOfType(null, Dynamic) + " " + Std.isOfType(o, Foo)
+			+ " " + Std.isOfType(d, String) + " " + Std.isOfType(t, Bool));
+		Sys.println(Std.downcast(o, Foo) != null);
+		Sys.println(cast(o, Foo).x);
+		Sys.println(cast(d, String));
+		Sys.println(("abc" < "abd") + " " + ("b" >= "a"));
+		var foo = new Foo();
+		var a:{} = foo;
+		Sys.println(a == foo);
+		Sys.println(isNull(3) + " " + isNull((null : String)) + " " + same(1, 1) + " " + same("a", "a") + " " + same(foo, new Foo()));
+		Sys.println(Reflect.field(foo, "x"));
+		Reflect.setField(foo, "f", 2);
+		Sys.println(foo.f);
+	}
+}
+===
+--- net-enum-values @gencs
+import cs.system.reflection.BindingFlags;
+class P {
+	static function code(o:Dynamic):Int {
+		var t = cs.Lib.as(o, cs.system.IConvertible).GetTypeCode();
+		if (t == cs.system.TypeCode.String) return 100;
+		switch (t) {
+			case Double: return 1;
+			case Int32, UInt32: return 2;
+			default: return 3;
+		}
+	}
+	static function main() {
+		var bf:BindingFlags = cast((cast BindingFlags.Public : Int) | (cast BindingFlags.Static : Int));
+		Sys.println(bf);
+		Sys.println(bf == BindingFlags.Public);
+		Sys.println(code(1.5) + " " + code(7) + " " + code("s") + " " + code(true));
+		var t1 = cs.system.TypeCode.Int32, t2 = cs.system.TypeCode.Int64;
+		switch [t1, t2] {
+			case [Int64, _] | [_, Int64]: Sys.println("i64");
+			case _: Sys.println("other");
+		}
+		var dt:Dynamic = cs.system.TypeCode.Decimal;
+		Sys.println(dt);
+	}
+}
+===
+[run]
+Static, Public
+False
+1 2 100 3
+i64
+Decimal
+--- dynamic-equality-and-order @gencs
+class P {
+	static function main() {
+		var i:Dynamic = 5;
+		var f:Dynamic = 5.0;
+		var l:Dynamic = (cast 5 : cs.types.Int64);
+		var m:Dynamic = new cs.system.Decimal(5);
+		var s:Dynamic = "5";
+		var b:Dynamic = true;
+		var n:Dynamic = null;
+		var o:Dynamic = new cs.system.Object();
+		Sys.println((i == f) + " " + (i == l) + " " + (l == f) + " " + (m == i) + " " + (m == f));
+		Sys.println((i == s) + " " + (s == "5") + " " + (b == 1) + " " + (n == i) + " " + (o == o) + " " + (o == i));
+		Sys.println((n < i) + " " + (i < n) + " " + (i <= f) + " " + (f > 4) + " " + (s < "6") + " " + ("4" < s));
+		try Sys.println(i < s) catch (e:cs.system.ArgumentException) Sys.println(e.Message);
+		try Sys.println(o < i) catch (e:cs.system.ArgumentException) Sys.println(e.Message);
+		var u:Dynamic = (cast 7 : UInt);
+		Sys.println((u == 7) + " " + Std.isOfType(u, UInt) + " " + Std.isOfType(u, Int) + " " + Std.isOfType(7.0, UInt) + " " + Std.isOfType(7.5, Int));
+	}
+}
+===

@@ -248,6 +248,16 @@ import cs.system.Object;
 		throw new cs.system.ArgumentException("Cannot dynamically add " + v1 + " and " + v2);
 	}
 
+	// hxc: hxcs builds these with cs.Flags, whose constructor takes the enum as an optional argument, a
+	// Null<T> of it; the flags are the same values joined with C#'s `|`.
+	extern static inline function instanceFlags():BindingFlags {
+		return cast((cast BindingFlags.Instance : Int) | (cast BindingFlags.Public : Int) | (cast BindingFlags.FlattenHierarchy : Int));
+	}
+
+	extern static inline function staticFlags():BindingFlags {
+		return cast((cast BindingFlags.Static : Int) | (cast BindingFlags.Public : Int));
+	}
+
 	public static function slowGetField(obj:Dynamic, field:String, throwErrors:Bool):Dynamic {
 		if (obj == null)
 			if (throwErrors)
@@ -261,13 +271,13 @@ import cs.system.Object;
 			if (s != null)
 				return cs.internal.StringExt.StringRefl.handleGetField(s, field, throwErrors);
 			t = obj.GetType();
-			new cs.Flags(BindingFlags.Instance) | BindingFlags.Public | BindingFlags.FlattenHierarchy;
+			instanceFlags();
 		} else {
 			if (t == Lib.toNativeType(String) && field == "fromCharCode")
 				return new cs.internal.Function.Closure(StringExt, field, 0);
 
 			obj = null;
-			new cs.Flags(BindingFlags.Static) | BindingFlags.Public;
+			staticFlags();
 		}
 
 		var f = t.GetField(field, bf);
@@ -311,12 +321,12 @@ import cs.system.Object;
 			if (s != null)
 				return cs.internal.StringExt.StringRefl.handleGetField(s, field, false) != null;
 			t = obj.GetType();
-			new cs.Flags(BindingFlags.Instance) | BindingFlags.Public | BindingFlags.FlattenHierarchy;
+			instanceFlags();
 		} else {
 			if (t == Lib.toNativeType(String))
 				return field == "fromCharCode";
 			obj = null;
-			new cs.Flags(BindingFlags.Static) | BindingFlags.Public;
+			staticFlags();
 		}
 		var mi = t.GetMember(field, bf);
 		return mi != null && mi.length > 0;
@@ -329,10 +339,10 @@ import cs.system.Object;
 		var t = Lib.as(obj, cs.system.Type);
 		var bf = if (t == null) {
 			t = obj.GetType();
-			new cs.Flags(BindingFlags.Instance) | BindingFlags.Public | BindingFlags.FlattenHierarchy;
+			instanceFlags();
 		} else {
 			obj = null;
-			new cs.Flags(BindingFlags.Static) | BindingFlags.Public;
+			staticFlags();
 		}
 
 		var f = t.GetField(field, bf);
@@ -538,12 +548,12 @@ import cs.system.Object;
 			if (s != null)
 				return cs.internal.StringExt.StringRefl.handleCallField(untyped s, untyped field, args);
 			t = untyped obj.GetType();
-			bf = new Flags(BindingFlags.Instance) | BindingFlags.Public | BindingFlags.FlattenHierarchy;
+			bf = instanceFlags();
 		} else {
 			if (t == Lib.toNativeType(String) && field == 'fromCharCode')
 				return cs.internal.StringExt.fromCharCode(toInt(args[0]));
 			obj = null;
-			bf = new Flags(BindingFlags.Static) | BindingFlags.Public;
+			bf = staticFlags();
 		}
 
 		var mis:NativeArray<MethodBase> = untyped t.GetMethods(bf);

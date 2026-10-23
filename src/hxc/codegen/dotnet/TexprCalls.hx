@@ -31,7 +31,7 @@ import hxc.codegen.dotnet.TexprOps.stringKind;
 
 // The member access of TexprToIl: receivers, fields, constants, calls, constructors, arrays and casts.
 // Shares its state through the TexprToIl that owns it.
-@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow)
+@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprDynamic)
 class TexprCalls {
 	final tl:TexprToIl;
 	final g:DotnetCtx;
@@ -216,6 +216,9 @@ class TexprCalls {
 				tl.coerce(f.sig, ret);
 			case FStatic(_, _):
 				throw new Unsupported("this kind of field access", false);
+			case FAnon(_) | FDynamic(_) if (TexprDynamic.isDynamicReceiver(fa, obj)):
+				// Runtime.getField, as gencs reads a field of a Dynamic or an anonymous structure.
+				tl.dyn.fieldGet(ret, e, obj, TexprDynamic.fieldName(fa), e.type, true);
 			case FAnon(_):
 				throw new Unsupported("anonymous structure fields", true);
 			case FDynamic(_):
@@ -228,9 +231,20 @@ class TexprCalls {
 				g.types.checkKept(TEnumDecl(en));
 				code.ldcI4(ef.index);
 				tl.coerce(tl.sig(e.type), ret);
+			case FEnum(en, ef) if (en.isExtern):
+				// A .NET enum's literal, its value in the referenced assembly.
+				if (!needVal(ret)) return;
+				externEnumLiteral(en, ef);
+				tl.coerce(tl.sig(e.type), ret);
 			case FEnum(_, _):
 				throw new Unsupported("enum constructors", true);
 		}
+	}
+
+	// Pushes the value of a constructor of an extern .NET enum.
+	function externEnumLiteral(en:TEnum, ef:TEnumField):Void {
+		var lit = g.externs.enumLiteral(en, ef);
+		constant(lit.c, lit.underlying);
 	}
 
 	// A native array's Length: ldlen, then the native int as an Int.
@@ -329,14 +343,13 @@ class TexprCalls {
 	function call(ret:Ret, e:TExpr, callee:TExpr, args:Array<TExpr>):Void {
 		switch (callee.expr) {
 			case TField(_, FStatic(c, cf)) if (isStd(c) && cf.name == "int" && args.length == 1):
-				// As gencs writes Std.int: a C# cast.
-				tl.noDynamic(args[0], "Dynamic in Std.int");
+				// As gencs writes Std.int: a C# cast (of a Dynamic converted by Runtime.toDouble).
 				tl.texpr(RValue(LFloat64), args[0]);
 				code.op(IlOps.CONV_I4, 1, 1);
 				tl.coerce(LInt32, ret);
 			case TField(_, FStatic(c, cf)) if (isStd(c) && (cf.name == "isOfType" || cf.name == "is") && args.length == 2
 				&& strip(args[1]).expr.match(TTypeExpr(_))):
-				isOfType(ret, args[0], strip(args[1]));
+				tl.dyn.isOfType(ret, args[0], strip(args[1]));
 			case TField(obj, FDynamic(name)) if (objectMember(name, args.length) != null):
 				// Object's own members, which gencs calls directly on a Dynamic.
 				var m = objectMember(name, args.length);
@@ -345,6 +358,9 @@ class TexprCalls {
 				code.opToken(IlOps.CALLVIRT, g.mb.memberRef(g.typeTokenOf(LObject), name, g.sigs.method(true, m, [for (_ in args) LObject], 0)),
 					args.length + 1, 1);
 				tl.coerce(m, ret);
+			case TField(obj, fa = FDynamic(_) | FAnon(_)) if (TexprDynamic.isDynamicReceiver(fa, obj)):
+				// Runtime.callField, as gencs calls a method of a Dynamic.
+				tl.dyn.fieldCall(ret, e, obj, TexprDynamic.fieldName(fa), args);
 			case TField(_, FStatic(c, cf)) if (isStd(c) && cf.name == "string" && args.length == 1 && stringArg(args[0]) != null):
 				// A value of a known type prints as in a concatenation, Bool as true or false.
 				tl.ops.pushString(stringArg(args[0]));
@@ -381,9 +397,21 @@ class TexprCalls {
 					code.opToken(IlOps.STELEM, elemToken, 3, 0);
 				}
 				tl.coerce(LVector(elem), ret);
-			case TField(_, FStatic(c, cf)) if (isStringClass(c)):
-				if (cf.name != "fromCharCode") throw new Unsupported("the String function " + cf.name, false);
+			case TField(_, FStatic(c, cf)) if (tl.dyn.reflectCall(ret, e, c, cf, args)):
+				// Reflect.field and setField with a constant name, lowered as field access.
+			case TField(_, FStatic(c, cf)) if (isStringClass(c) && cf.name == "fromCharCode"):
 				stringExtCall(ret, cf.name, null, args);
+			case TField(_, FStatic(c, cf)) if (isStringClass(c)):
+				// The private externs name System.String's static methods, such as Compare.
+				var fsig = switch (TypeFunctions.follow(cf.type)) {
+					case TFun(fsig): fsig;
+					case _: throw "internal error: String." + cf.name + " is not a function";
+				}
+				var argSigs = [for (a in fsig.args) tl.sig(a.t)], retSig = tl.sig(fsig.ret);
+				pushArgs(args, argSigs);
+				var token = g.mb.memberRef(g.typeTokenOf(LString), ExternMembers.memberName(cf), g.sigs.method(false, retSig, argSigs, 0));
+				code.opToken(IlOps.CALL, token, argSigs.length, retSig.match(LVoid) ? 0 : 1);
+				tl.coerce(retSig, ret);
 			case TField(_, FStatic(c, cf)) if (!isExtern(c)):
 				g.types.checkKept(TClassDecl(c));
 				var target = pickOverload(c, [], cf, args, true);
@@ -427,48 +455,6 @@ class TexprCalls {
 			case ["Equals", 1]: LBool;
 			case _: null;
 		}
-	}
-
-	// Std.isOfType with a type expression, inline as gencs writes it: C#'s `is`, and for Float
-	// `o is double || o is int || o is uint` (in haxe.lang.Runtime just `o is double`). Int and UInt need
-	// Runtime.isInt and isUInt, a generic class gencs's companion interface (plan 3c), Dynamic the call.
-	function isOfType(ret:Ret, obj:TExpr, texpr:TExpr):Void {
-		var mt = switch (texpr.expr) {
-			case TTypeExpr(mt): mt;
-			case _: throw "internal error: not a type expression";
-		}
-		var path = DotnetTypes.haxePath(mt);
-		var refuse = new Unsupported("type expressions", true);
-		if (TypeFunctions.tParams(mt).length > 0) throw refuse;
-		switch (path) {
-			case "Dynamic":
-				throw refuse;
-			case "Int" | "UInt" if (!tl.inRuntimeClass()):
-				throw refuse;
-			case _:
-		}
-		var t = typeArg(texpr);
-		tl.texpr(RValue(LObject), obj);
-		if (path == "Float" && !tl.inRuntimeClass()) {
-			var tmp = code.addLocal(LObject);
-			code.stloc(tmp);
-			var yes = code.newLabel(), end = code.newLabel();
-			for (s in [LFloat64, LInt32, LUInt32]) {
-				code.ldloc(tmp);
-				code.opToken(IlOps.ISINST, g.typeTokenOf(s), 1, 1);
-				code.branch(IlOps.BRTRUE, yes);
-			}
-			code.ldcI4(0);
-			code.branch(IlOps.BR, end);
-			code.mark(yes);
-			code.ldcI4(1);
-			code.mark(end);
-		} else {
-			code.opToken(IlOps.ISINST, g.typeTokenOf(t), 1, 1);
-			code.op(IlOps.LDNULL, 0, 1);
-			code.op(IlOps.CGT_UN, 2, 1);
-		}
-		tl.coerce(LBool, ret);
 	}
 
 	// The class a call of Type.createEmptyInstance with a constant class in gencs's model creates, with
@@ -880,16 +866,5 @@ class TexprCalls {
 		}
 		code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(owner), ".ctor", g.sigs.method(true, LVoid, ctor.args, 0)), 1, 1);
 		tl.coerce(owner, ret);
-	}
-
-	// cast(e, C): castclass, unless it is an upcast.
-	function checkedCast(ret:Ret, e:TExpr, e1:TExpr):Void {
-		var to = tl.sig(e.type);
-		var from = tl.sig(e1.type);
-		if (!isReference(to) || to.match(LObject) || !isReference(from)) throw new Unsupported("checked casts", true);
-		tl.checkInstantiationCast(from, to);
-		tl.texpr(RValue(from), e1);
-		if (!IlPaths.sigEq(from, to) && !g.isUpcast(from, to)) tl.castTo(to);
-		tl.coerce(to, ret);
 	}
 }

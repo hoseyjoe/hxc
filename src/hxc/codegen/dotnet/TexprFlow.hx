@@ -93,9 +93,12 @@ class TexprFlow {
 		if (def == null && needVal(ret)) throw new Unsupported("switch expressions without a default", true);
 		var r = valueRet(ret, e);
 		if (def == null && isExhaustive(subject)) tl.exhaustiveSwitch = true;
+		// A switch on enumIndex(x) of a .NET enum is one on x, against the constructors' values.
+		var ext = TexprToIl.externEnumIndex(subject);
+		if (ext != null) subject = ext.value;
 		var st = tl.sig(subject.type);
 		var isString = st.match(LString);
-		if (!isString && !st.match(LInt32 | LBool)) throw new Unsupported("switch on this type", false);
+		if (ext == null && !isString && !st.match(LInt32 | LBool)) throw new Unsupported("switch on this type", false);
 		var local:Null<Slot> = null;
 		switch (strip(subject).expr) {
 			case TLocal(v): local = tl.slot(v);
@@ -111,7 +114,13 @@ class TexprFlow {
 		var eq = isString ? g.mb.memberRef(g.typeTokenOf(LString), "op_Equality", g.sigs.method(false, LBool, [LString, LString], 0)) : 0;
 		for (i in 0...cases.length) for (v in cases[i].values) {
 			if (local != null) tl.load(local) else code.ldloc(tmp);
-			tl.texpr(RValue(st), v);
+			if (ext != null) {
+				var i = TexprToIl.constInt(v);
+				if (i == null) throw new Unsupported("switch on this type", false);
+				tl.calls.externEnumLiteral(ext.en, TexprToIl.enumFieldAt(ext.en, i));
+			} else {
+				tl.texpr(RValue(st), v);
+			}
 			if (isString) {
 				code.opToken(IlOps.CALL, eq, 2, 1);
 				code.branch(IlOps.BRTRUE, bodies[i]);
