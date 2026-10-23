@@ -329,6 +329,8 @@ class DotnetTypes {
 					case "Single": return LFloat32;
 					case "UInt": return LUInt32;
 					case "Dynamic": return LObject;
+					// gencs's real type of EnumValue is Dynamic.
+					case "EnumValue": return LObject;
 					case "Null":
 						// gencs's haxe.lang.Null<T>, the standard library's cs.internal.Null struct, for a value
 						// type and, as gencs has it, for a type parameter, which may stand for one.

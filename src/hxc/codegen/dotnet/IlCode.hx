@@ -52,10 +52,13 @@ class IlOps {
 	public static inline var SHR_UN = 0x64;
 	public static inline var NEG = 0x65;
 	public static inline var NOT = 0x66;
+	public static inline var CONV_I1 = 0x67;
+	public static inline var CONV_I2 = 0x68;
 	public static inline var CONV_I4 = 0x69;
 	public static inline var CONV_I8 = 0x6A;
 	public static inline var CONV_R4 = 0x6B;
 	public static inline var CONV_R8 = 0x6C;
+	public static inline var CONV_U4 = 0x6D;
 	public static inline var CONV_U8 = 0x6E;
 	public static inline var CALLVIRT = 0x6F;
 	public static inline var LDOBJ = 0x71;
@@ -78,6 +81,8 @@ class IlOps {
 	public static inline var LDELEM = 0xA3;
 	public static inline var STELEM = 0xA4;
 	public static inline var UNBOX_ANY = 0xA5;
+	public static inline var CONV_U2 = 0xD1;
+	public static inline var CONV_U1 = 0xD2;
 	public static inline var LDTOKEN = 0xD0;
 	public static inline var ENDFINALLY = 0xDC;
 	public static inline var LEAVE = 0xDD;

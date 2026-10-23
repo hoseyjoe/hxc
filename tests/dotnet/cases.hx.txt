@@ -633,10 +633,20 @@ class P {
 [run]
 my error 7
 [dump]
-type public beforefieldinit MyError extends [mscorlib]System.Exception
+type public beforefieldinit MyError extends [mscorlib]System.Exception implements haxe.lang.IHxObject
   field public int32 code
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(int32)
+  method public virtual hidebysig newslot object __hx_lookupField(string, int32, bool, bool)
+  method public virtual hidebysig newslot float64 __hx_lookupField_f(string, int32, bool)
+  method public virtual hidebysig newslot object __hx_lookupSetField(string, int32, object)
+  method public virtual hidebysig newslot float64 __hx_lookupSetField_f(string, int32, float64)
+  method public virtual hidebysig newslot object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig newslot float64 __hx_getField_f(string, int32, bool, bool)
+  method public virtual hidebysig newslot object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig newslot float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig newslot object __hx_invokeField(string, int32, object[])
+  method public virtual hidebysig newslot void __hx_getFields(Array`1<string>)
 --- clr-names @lib @module=pack.Thing @dump=pack.IRun,pack.Thing,pack.Sealed
 package pack;
 interface IRun {
@@ -658,21 +668,29 @@ final class Sealed {
 }
 ===
 [dump]
-type public interface abstract pack.IRun
+type public interface abstract pack.IRun implements haxe.lang.IHxObject
   method public virtual hidebysig newslot abstract void run(int32)
-type public beforefieldinit pack.Thing extends haxe.lang.HxObject implements pack.IRun
+type public beforefieldinit pack.Thing extends haxe.lang.HxObject implements haxe.lang.IHxObject, pack.IRun
   field public int32 Thing_Thing
   field public string other
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method public virtual hidebysig newslot void run(int32)
   method public hidebysig void stop()
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
+  method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor_pack_Thing(pack.Thing)
   method public static hidebysig pack.Thing make()
 type public sealed beforefieldinit pack.Sealed extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method public hidebysig void go()
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method private static hidebysig void __hx_ctor_pack_Sealed(pack.Sealed)
 --- structs-and-field-updates @dump=Vec
 @:struct class Vec {
@@ -805,17 +823,23 @@ type public abstract beforefieldinit Shape extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor()
   method public virtual hidebysig newslot abstract float64 area()
   method public virtual hidebysig newslot string describe()
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method family static hidebysig void __hx_ctor__Shape(Shape)
-type public sealed beforefieldinit Fin extends haxe.lang.HxObject implements Named
+type public sealed beforefieldinit Fin extends haxe.lang.HxObject implements Named, haxe.lang.IHxObject
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method public final virtual hidebysig newslot string name()
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method private static hidebysig void __hx_ctor__Fin(Fin)
 type public beforefieldinit Over extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method public virtual hidebysig newslot string f(int32)
   method public virtual hidebysig newslot string f(string)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method family static hidebysig void __hx_ctor__Over(Over)
 --- class-declarations-that-are-errors
 class A {
@@ -1097,6 +1121,12 @@ type public beforefieldinit pack.Box`1<T> extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(!0)
   method public virtual hidebysig newslot !0 pick<S>(!!0)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
+  method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor_pack_Box<T_c>(pack.Box`1<!!0>, !!0)
 --- type-mapping @lib @module=pack.Sig @dump=pack.Sig
 package pack;
@@ -1218,6 +1248,12 @@ type public Counter`1<T> extends haxe.lang.HxObject
   method public virtual hidebysig newslot object boxed()
   method public virtual hidebysig newslot !0 orDefault(bool)
   method public virtual hidebysig newslot Pair`2<!0, !!0> map<S>(!!0)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
+  method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor__Counter<T_c>(Counter`1<!!0>, !!0)
   method public static hidebysig int32 start()
   method public static hidebysig string describe()
@@ -1308,7 +1344,7 @@ interface IFind<T> {
 }
 ===
 [dump]
-type public interface abstract pack.IFind`1<T>
+type public interface abstract pack.IFind`1<T> implements haxe.lang.IHxObject
   method public virtual hidebysig newslot abstract haxe.lang.Null`1<!0> first()
   method public virtual hidebysig newslot abstract haxe.lang.Null`1<!!0> pick<S>(!!0, haxe.lang.Null`1<!!0>)
   method public virtual hidebysig newslot abstract int32 count(haxe.lang.Null`1<int32>, string)
@@ -2054,11 +2090,21 @@ type public beforefieldinit pk.Base extends haxe.lang.HxObject
   field public int32 a
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(int32)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor_pk_Base(pk.Base, int32)
 type public beforefieldinit pk.Thing extends pk.Base
   field public int32 p
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(int32, string)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor_pk_Thing(pk.Thing, int32, string)
 type public beforefieldinit pk.NG extends [mscorlib]System.Object
   field public int32 q
@@ -2276,6 +2322,9 @@ type public beforefieldinit Ov extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(float64, float64)
   method public hidebysig specialname rtspecialname void .ctor(string)
   method public hidebysig specialname rtspecialname void .ctor(int32)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor__Ov(Ov, string)
   method family static hidebysig void __hx_ctor__Ov(Ov, float64, float64)
   method family static hidebysig void __hx_ctor__Ov(Ov, int32)
@@ -2299,3 +2348,177 @@ class P {
 ===
 [compile]
 P.hx:6: characters 15-44 : dotnet: Type.createEmptyInstance of an abstract class is not supported yet
+--- reflection-on-classes @gencs
+class Base {
+	public var a:Int = 1;
+	public var f:Float = 2.5;
+	public var s:String = "x";
+	public var prop(get, set):Int;
+	var hidden:Int = 3;
+	public function new() {}
+	function get_prop() return a * 10;
+	function set_prop(v:Int) return a = v;
+	public function twice(n:Int):Int return n * 2;
+}
+class Sub extends Base {
+	public var extra:Array<Int> = [1];
+	public function new() {
+		super();
+	}
+	override public function twice(n:Int):Int return n * 3;
+}
+class P {
+	static function main() {
+		var o = new Sub();
+		Sys.println(Reflect.fields(o).join(","));
+		Sys.println(Reflect.field(o, "a"));
+		Reflect.setField(o, "a", 5);
+		Sys.println(o.a);
+		Sys.println(Reflect.field(o, "f"));
+		Sys.println(Reflect.getProperty(o, "prop"));
+		Reflect.setProperty(o, "prop", 9);
+		Sys.println(o.a);
+		Sys.println(Reflect.hasField(o, "s") + " " + Reflect.hasField(o, "nope"));
+		Sys.println(Reflect.isFunction(Reflect.field(o, "twice")));
+		Sys.println(Reflect.field(o, "nope"));
+	}
+}
+===
+--- non-ascii-field-names @gencs
+class P {
+	static function main() {
+		var o = new Holder();
+		Sys.println(Reflect.field(o, "café"));
+		Sys.println(Reflect.hasField(o, "café") + " " + Reflect.hasField(o, "cafe"));
+		try {
+			Reflect.setField(o, "café", 1);
+		} catch (e:cs.system.MemberAccessException) {
+			Sys.println(e.Message);
+		}
+		Sys.println(Reflect.fields(o).join(","));
+	}
+}
+class Holder {
+	public var cafe:Int = 4;
+	public function new() {}
+}
+===
+--- reflection-field-kinds @gencs
+import cs.internal.Runtime;
+
+@:nativeGen @:flatEnum enum Color { Red; Green; }
+class MyError extends cs.system.Exception {
+	public var code:Int = 3;
+	public function new(m:String) {
+		super(m);
+	}
+	public function info():String return "i";
+}
+class Kinds<T> {
+	public var u:UInt = 1;
+	public var sg:Single = 1.5;
+	public var ni:Null<Int>;
+	public var b:Bool = true;
+	public var s:String = "s";
+	public var d:Dynamic = null;
+	public var t:T;
+	public var col:Color = Green;
+	@:readOnly public var ro(default, never):Int = 5;
+	public var p1(get, set):Int;
+	@:isVar public var p2(get, set):Int = 0;
+	public var p3(default, null):Int = 3;
+	public var p5(get, never):Float;
+	public function new(t:T) {
+		this.t = t;
+	}
+	function get_p1() return 11;
+	function set_p1(v) {
+		u = v;
+		return v;
+	}
+	function get_p2() return p2 + 100;
+	function set_p2(v) return p2 = v * 2;
+	function get_p5() return 1.25;
+	public function vm(x:Int):Void {
+		u = x;
+	}
+	public function two(a:Int, b:String):String return a + "," + b;
+	public function useT(x:T):T return x;
+}
+class P {
+	static function show(o:Dynamic, f:String) Sys.println(f + "=" + Std.string(Reflect.field(o, f)));
+	static function set(o:Dynamic, f:String, v:Dynamic) Reflect.setField(o, f, v);
+	static function main() {
+		var k = new Kinds<String>("x");
+		Sys.println(Reflect.fields(k).join(","));
+		for (f in ["u", "sg", "ni", "b", "s", "d", "t", "col", "ro", "p1", "p2", "p3", "p5"]) show(k, f);
+		set(k, "u", 7);
+		show(k, "u");
+		set(k, "sg", 2.5);
+		show(k, "sg");
+		set(k, "ni", 9);
+		show(k, "ni");
+		set(k, "b", false);
+		show(k, "b");
+		set(k, "s", "q");
+		show(k, "s");
+		set(k, "t", "tt");
+		show(k, "t");
+		set(k, "col", Red);
+		show(k, "col");
+		set(k, "p2", 4);
+		show(k, "p2");
+		Reflect.setProperty(k, "p2", 4);
+		Sys.println(Reflect.getProperty(k, "p2"));
+		Reflect.setProperty(k, "p1", 21);
+		show(k, "u");
+		try set(k, "ro", 1) catch (e:cs.system.MemberAccessException) Sys.println("ro: " + e.Message);
+		try set(k, "p5", 1) catch (e:cs.system.MemberAccessException) Sys.println("p5: " + e.Message);
+		Sys.println(Reflect.hasField(k, "vm") + " " + Reflect.hasField(k, "zz"));
+		Sys.println(Reflect.isFunction(Reflect.field(k, "two")));
+		for (f in ["u", "sg", "d", "p1", "p2", "p3", "p5"]) Sys.println(f + "_f=" + Runtime.getField_f(k, f, 0, false));
+		Runtime.setField_f(k, "u", 0, 3.7);
+		show(k, "u");
+		Runtime.setField_f(k, "sg", 0, 0.5);
+		show(k, "sg");
+		Runtime.setField_f(k, "d", 0, 1.5);
+		show(k, "d");
+		Runtime.setField_f(k, "p2", 0, 6);
+		show(k, "p2");
+		try Runtime.setField_f(k, "ro", 0, 1) catch (e:cs.system.MemberAccessException) Sys.println("ro_f: " + e.Message);
+		try Runtime.getField_f(k, "s", 0, true) catch (e:cs.system.MemberAccessException) Sys.println("s_f: " + e.Message);
+		Sys.println(Runtime.getField_f(k, "s", 0, false));
+		Sys.println(Runtime.callField(k, "two", 0, cs.NativeArray.make((1 : Dynamic), ("z" : Dynamic))));
+		Sys.println(Runtime.callField(k, "vm", 0, cs.NativeArray.make((5 : Dynamic))) == null);
+		show(k, "u");
+		Sys.println(Runtime.callField(k, "useT", 0, cs.NativeArray.make(("w" : Dynamic))));
+		try Runtime.callField(k, "nope", 0, null) catch (e:cs.system.MemberAccessException) Sys.println("call: " + e.Message);
+		// FieldLookup starts with the names the program hashed at compile time.
+		Sys.println(cs.internal.FieldLookup.lookupHash(117));
+		var e = new MyError("m");
+		Sys.println(Reflect.fields(e).join(","));
+		show(e, "code");
+		show(e, "Message");
+		set(e, "code", 8);
+		show(e, "code");
+		set(e, "HelpLink", "h");
+		show(e, "HelpLink");
+		Sys.println(Reflect.isFunction(Reflect.field(e, "info")));
+		Sys.println(Reflect.isFunction(Reflect.field(e, "GetBaseException")));
+	}
+}
+===
+--- field-hash-conflict-is-an-error
+class Twins {
+	public var rulujia:Int = 1;
+	public var xpfmath:Int = 2;
+	public function new() {}
+}
+class P {
+	static function main() {
+		Sys.println(new Twins().xpfmath);
+	}
+}
+===
+[compile]
+P.hx:1: lines 1-5 : Field conflict between rulujia and xpfmath

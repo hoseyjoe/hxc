@@ -334,6 +334,17 @@ class TexprCalls {
 				tl.texpr(RValue(LFloat64), args[0]);
 				code.op(IlOps.CONV_I4, 1, 1);
 				tl.coerce(LInt32, ret);
+			case TField(_, FStatic(c, cf)) if (isStd(c) && (cf.name == "isOfType" || cf.name == "is") && args.length == 2
+				&& strip(args[1]).expr.match(TTypeExpr(_))):
+				isOfType(ret, args[0], strip(args[1]));
+			case TField(obj, FDynamic(name)) if (objectMember(name, args.length) != null):
+				// Object's own members, which gencs calls directly on a Dynamic.
+				var m = objectMember(name, args.length);
+				tl.texpr(RValue(LObject), obj);
+				for (a in args) tl.texpr(RValue(LObject), a);
+				code.opToken(IlOps.CALLVIRT, g.mb.memberRef(g.typeTokenOf(LObject), name, g.sigs.method(true, m, [for (_ in args) LObject], 0)),
+					args.length + 1, 1);
+				tl.coerce(m, ret);
 			case TField(_, FStatic(c, cf)) if (isStd(c) && cf.name == "string" && args.length == 1 && stringArg(args[0]) != null):
 				// A value of a known type prints as in a concatenation, Bool as true or false.
 				tl.ops.pushString(stringArg(args[0]));
@@ -356,6 +367,20 @@ class TexprCalls {
 				code.ldcI4(0);
 				code.opToken(IlOps.NEWOBJ, token, 1, 1);
 				tl.coerce(owner, ret);
+			case TField(_, FStatic(c, cf)) if (isNativeArrayClass(c) && cf.name == "make"):
+				// cs.NativeArray.make(a, b): C#'s `new T[]{a, b}`, as gencs writes it.
+				var elem = vectorElement(tl.sig(e.type));
+				var elemToken = g.typeTokenOf(elem);
+				code.ldcI4(args.length);
+				code.opToken(IlOps.NEWARR, elemToken, 1, 1);
+				for (i in 0...args.length) {
+					if (strip(args[i]).expr.match(TUnop(Spread, _, _))) throw new Unsupported("the spread operator", false);
+					code.op(IlOps.DUP, 1, 2);
+					code.ldcI4(i);
+					tl.texpr(RValue(elem), args[i]);
+					code.opToken(IlOps.STELEM, elemToken, 3, 0);
+				}
+				tl.coerce(LVector(elem), ret);
 			case TField(_, FStatic(c, cf)) if (isStringClass(c)):
 				if (cf.name != "fromCharCode") throw new Unsupported("the String function " + cf.name, false);
 				stringExtCall(ret, cf.name, null, args);
@@ -391,6 +416,59 @@ class TexprCalls {
 			case _:
 				throw new Unsupported("calls of function values", true);
 		}
+	}
+
+	// The return type of System.Object's member `name` taking `argc` arguments, or null for another name.
+	function objectMember(name:String, argc:Int):Null<IlSigNorm> {
+		return switch [name, argc] {
+			case ["ToString", 0]: LString;
+			case ["GetHashCode", 0]: LInt32;
+			case ["GetType", 0]: systemType;
+			case ["Equals", 1]: LBool;
+			case _: null;
+		}
+	}
+
+	// Std.isOfType with a type expression, inline as gencs writes it: C#'s `is`, and for Float
+	// `o is double || o is int || o is uint` (in haxe.lang.Runtime just `o is double`). Int and UInt need
+	// Runtime.isInt and isUInt, a generic class gencs's companion interface (plan 3c), Dynamic the call.
+	function isOfType(ret:Ret, obj:TExpr, texpr:TExpr):Void {
+		var mt = switch (texpr.expr) {
+			case TTypeExpr(mt): mt;
+			case _: throw "internal error: not a type expression";
+		}
+		var path = DotnetTypes.haxePath(mt);
+		var refuse = new Unsupported("type expressions", true);
+		if (TypeFunctions.tParams(mt).length > 0) throw refuse;
+		switch (path) {
+			case "Dynamic":
+				throw refuse;
+			case "Int" | "UInt" if (!tl.inRuntimeClass()):
+				throw refuse;
+			case _:
+		}
+		var t = typeArg(texpr);
+		tl.texpr(RValue(LObject), obj);
+		if (path == "Float" && !tl.inRuntimeClass()) {
+			var tmp = code.addLocal(LObject);
+			code.stloc(tmp);
+			var yes = code.newLabel(), end = code.newLabel();
+			for (s in [LFloat64, LInt32, LUInt32]) {
+				code.ldloc(tmp);
+				code.opToken(IlOps.ISINST, g.typeTokenOf(s), 1, 1);
+				code.branch(IlOps.BRTRUE, yes);
+			}
+			code.ldcI4(0);
+			code.branch(IlOps.BR, end);
+			code.mark(yes);
+			code.ldcI4(1);
+			code.mark(end);
+		} else {
+			code.opToken(IlOps.ISINST, g.typeTokenOf(t), 1, 1);
+			code.op(IlOps.LDNULL, 0, 1);
+			code.op(IlOps.CGT_UN, 2, 1);
+		}
+		tl.coerce(LBool, ret);
 	}
 
 	// The class a call of Type.createEmptyInstance with a constant class in gencs's model creates, with

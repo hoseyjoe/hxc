@@ -78,8 +78,7 @@ class HxObject implements IHxObject {
 	}
 
 	public function __hx_invokeField(field:String, hash:Int, dynargs:NativeArray<Dynamic>):Dynamic {
-		var fn:Dynamic = this.__hx_getField(field, hash, true, false, false);
-		return untyped fn.__hx_invokeDynamic(dynargs);
+		return (cast this.__hx_getField(field, hash, true, false, false) : Function).__hx_invokeDynamic(dynargs);
 	}
 
 	public function __hx_getFields(baseArr:Array<String>):Void {}
@@ -272,7 +271,7 @@ class DynamicObject extends HxObject {
 			throw 'Cannot invoke field $field: It does not exist';
 		}
 
-		return untyped fn.__hx_invokeDynamic(dynargs);
+		return fn.__hx_invokeDynamic(dynargs);
 	}
 
 	@:skipReflection public function toString() {

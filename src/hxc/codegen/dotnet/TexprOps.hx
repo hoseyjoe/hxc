@@ -132,6 +132,15 @@ class TexprOps {
 		code.op(IlOps.CEQ, 2, 1);
 	}
 
+	// haxe.lang.Runtime.undefined, the value `__hx_getField` gives for a missing field when asked to check.
+	static function isUndefined(e:TExpr):Bool {
+		return switch (strip(e).expr) {
+			case TField(_, FStatic(c, cf)): cf.name == "undefined" && DotnetTypes.haxePath(TClassDecl(c)) == "cs.internal.Runtime";
+			case TIdent("__undefined__"): true;
+			case _: false;
+		}
+	}
+
 	function compare(ret:Ret, op:Binop, e1:TExpr, e2:TExpr):Void {
 		var equality = op.match(OpEq | OpNotEq);
 		var isFloat = false;
@@ -172,6 +181,10 @@ class TexprOps {
 				string = true;
 				tl.texpr(RValue(LString), e1);
 				tl.texpr(RValue(LString), e2);
+			} else if (equality && (isUndefined(e1) || isUndefined(e2))) {
+				// gencs leaves a comparison with Runtime.undefined C#'s reference comparison.
+				tl.texpr(RValue(LObject), e1);
+				tl.texpr(RValue(LObject), e2);
 			} else if (equality && isReference(s1) && isReference(s2) && !s1.match(LObject) && !s2.match(LObject)) {
 				netOperator = equalityOperator(op, e1, e2);
 				tl.texpr(RValue(netOperator == null ? null : netOperator.args[0]), e1);
@@ -276,8 +289,8 @@ class TexprOps {
 			case TConst(TBool(b)):
 				if (b == sense) code.branch(IlOps.BR, l);
 			case _:
-				// Dynamic would need Runtime.toBool (null is false); an unbox here would throw.
-				tl.noDynamic(e, "Dynamic as a condition");
+				// Dynamic needs Runtime.toBool (null is false), which only haxe.lang.Runtime reaches yet.
+				if (!tl.inRuntimeClass()) tl.noDynamic(e, "Dynamic as a condition");
 				tl.texpr(RValue(LBool), e);
 				code.branch(sense ? IlOps.BRTRUE : IlOps.BRFALSE, l);
 		}

@@ -95,6 +95,27 @@ class TexprToIl {
 		slots.set(v.id, {arg: true, index: index, sig: sig});
 	}
 
+	// A local the caller added and fills itself.
+	public function bindLocal(v:TVar, index:Int, sig:IlSigNorm):Void {
+		slots.set(v.id, {arg: false, index: index, sig: sig});
+	}
+
+	// haxe.lang.Runtime, whose code gencs lowers as plain C#: a Dynamic converts to Int, Float or a
+	// String with a C# cast (unbox.any, castclass), not through Runtime's own toInt, toDouble, toString.
+	function inRuntimeClass():Bool {
+		return cls != null && DotnetTypes.haxePath(TClassDecl(cls)) == "cs.internal.Runtime";
+	}
+
+	// Runtime.toBool, which gencs converts a Dynamic to Bool with, the object on the stack.
+	function toBool():Void {
+		var rt = g.runtimeClass("cs.internal.Runtime");
+		var cf = rt == null ? null : rt.statics.get("toBool");
+		var token = cf == null ? null : g.methodTokens.get(cf);
+		if (token == null) throw new Unsupported("Dynamic to Bool conversions", true);
+		g.types.checkKept(TClassDecl(rt));
+		code.opToken(IlOps.CALL, token, 1, 1);
+	}
+
 	public function texpr(ret:Ret, e:TExpr):Void {
 		if (!code.reachable()) return;
 		try {
@@ -175,8 +196,15 @@ class TexprToIl {
 			if (isTypeParam(from) && !to.match(LObject)) castTo(to);
 		} else if (!fromValue && toValue) {
 			// gencs converts Dynamic to a primitive through Runtime.toBool, toInt and toDouble, which accept
-			// null and boxed numbers of another type; an unbox.any would throw on them.
-			if (from.match(LObject) && isPrimitive(to)) throw new Unsupported("Dynamic to Bool/Int/Float conversions", true);
+			// null and boxed numbers of another type; an unbox.any would throw on them. Inside
+			// haxe.lang.Runtime it writes C#'s cast for all but Bool.
+			if (from.match(LObject) && isPrimitive(to)) {
+				if (!inRuntimeClass()) throw new Unsupported("Dynamic to Bool/Int/Float conversions", true);
+				if (to.match(LBool)) {
+					toBool();
+					return;
+				}
+			}
 			code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
 		} else if (fromValue) {
 			if (from.match(LInt32) && to.match(LFloat64)) code.op(IlOps.CONV_R8, 1, 1);
@@ -190,6 +218,12 @@ class TexprToIl {
 				code.op(IlOps.CONV_R_UN, 1, 1);
 				code.op(IlOps.CONV_R4, 1, 1);
 			} else if (from.match(LFloat64 | LInt32) && to.match(LInt64)) code.op(IlOps.CONV_I8, 1, 1);
+			// Single and the small integers widen to Float, as C# does implicitly.
+			else if (from.match(LFloat32 | LInt8 | LInt16) && to.match(LFloat64)) code.op(IlOps.CONV_R8, 1, 1);
+			else if (from.match(LUInt8 | LUInt16 | LChar) && to.match(LFloat64)) {
+				code.op(IlOps.CONV_R_UN, 1, 1);
+				code.op(IlOps.CONV_R8, 1, 1);
+			}
 			else if (from.match(LUInt32) && to.match(LInt64)) code.op(IlOps.CONV_U8, 1, 1);
 			else if (isTypeParam(from) || isTypeParam(to)) {
 				// Between a type parameter and another type that is one at run time, as C# casts through object.
@@ -201,6 +235,10 @@ class TexprToIl {
 			if (g.isUpcast(from, to) || from.match(LVector(_)) && isSystemArray(to)) return;
 			castTo(to);
 		}
+	}
+
+	function isBoolCastOfDynamic(e:TExpr, e1:TExpr):Bool {
+		return try sig(e.type).match(LBool) && sig(e1.type).match(LObject) catch (_:Unsupported) false;
 	}
 
 	static function isSystemArray(s:IlSigNorm):Bool {
@@ -435,6 +473,11 @@ class TexprToIl {
 				flow.throwExpr(e1);
 			case TCast(e1, TClassDecl(_)):
 				calls.checkedCast(ret, e, e1);
+			case TCast(e1, TAbstractDecl(_)) if (isBoolCastOfDynamic(e, e1)):
+				// cast(d, Bool) is Runtime.toBool in gencs.
+				texpr(RValue(LObject), e1);
+				toBool();
+				coerce(LBool, ret);
 			case TCast(_, _):
 				throw new Unsupported("checked casts", true);
 			case TEnumIndex(e1) if (clrEnum(e1.type) != null):

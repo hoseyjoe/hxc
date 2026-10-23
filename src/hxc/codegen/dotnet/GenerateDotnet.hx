@@ -236,6 +236,7 @@ class GenerateDotnet {
 			throw "internal error: no referenced assembly defines " + NetConverter.ilpathS(path);
 		}
 		DotnetNames.noRoot = ctx.defines.rawDefined("no_root");
+		FieldHashes.reset();
 
 		var candidates:Array<TClass> = [];
 		var enums:Array<TEnum> = [];
@@ -309,7 +310,10 @@ class GenerateDotnet {
 		inline function key(owner:Int) return ModuleBuilder.coded(TableIdx.ITypeOrMethodDef, owner);
 		haxe.ds.ArraySort.sort(generics, (a, b) -> key(a.owner) != key(b.owner) ? key(a.owner) - key(b.owner) : a.number - b.number);
 		for (gp in generics) mb.genericParam(gp.owner, gp.number, gp.name);
-		for (p in plans) TclassToIl.emitPlan(g, p);
+		// FieldLookup last: its table holds every name the other methods hashed.
+		var fieldLookup = null;
+		for (p in plans) if (p.hxPath == TclassToIl.fieldLookupPath) fieldLookup = p else TclassToIl.emitPlan(g, p);
+		if (fieldLookup != null) TclassToIl.emitPlan(g, fieldLookup);
 
 		if (ctx.defines.rawDefined("dotnet_stub_report")) {
 			var lines = g.records.copy();

@@ -11,6 +11,7 @@ import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.codegen.dotnet.HxGen;
 import hxc.codegen.dotnet.IlCode;
 import hxc.codegen.dotnet.IlData;
+import hxc.codegen.dotnet.ReflectionMembers;
 import hxc.codegen.dotnet.TexprToIl;
 
 enum MethodKind {
@@ -32,6 +33,8 @@ enum MethodKind {
 	MStaticCtor(ctor:HaxeCtor);
 	// A constructor cloned from the .NET base class's, under a class that descends from one.
 	MClonedCtor(ctor:HaxeCtor);
+	// One of gencs's `__hx_*` reflection members.
+	MReflect(r:ReflectMember);
 }
 
 typedef MethodPlan = {
@@ -288,6 +291,7 @@ class TclassToIl {
 			methods.push(implicitCtor(c.pos, TypeFunctions.hasClassFlag(c, CAbstract)));
 		}
 		for (cf in c.orderedFields) addMethod(cf, false, false);
+		for (r in ReflectionMembers.members(g, c)) methods.push(ReflectionMembers.plan(g, c, r));
 		var toString = isInterface ? null : c.fields.get("toString");
 		if (toString != null && wrapsToString(g, c, toString)) {
 			methods.push({
@@ -360,9 +364,16 @@ class TclassToIl {
 		};
 	}
 
-	// The interfaces the class lists and the ones they extend, as C# writes them all on the type.
+	// The interfaces the class lists and the ones they extend, as C# writes them all on the type. As
+	// gencs makes them, an interface in its model extends haxe.lang.IHxObject, and so does a class in it
+	// whose members are the first of the hierarchy (ReflectionMembers.isRoot).
 	static function interfaceClosure(g:DotnetCtx, c:TClass):Array<ImplementedInterface> {
 		var r:Array<ImplementedInterface> = [];
+		var ihx = g.runtimeClass("cs.internal.IHxObject");
+		function extendsIHxObject(i:TClass):Bool {
+			return ihx != null && i != ihx && TypeFunctions.hasClassFlag(i, CInterface) && !TypeFunctions.hasClassFlag(i, CExtern)
+				&& HxGen.isHxGen(TClassDecl(i));
+		}
 		function add(i:TClass, params:Array<T>) {
 			// An extern interface with no .NET counterpart is only a Haxe type.
 			if (TypeFunctions.hasClassFlag(i, CExtern) && !g.ctx.netPathMap.exists(Globals.sTypePath(i.path))
@@ -372,8 +383,10 @@ class TclassToIl {
 			for (x in r) if (IlPaths.sigEq(x.sig, sig)) return;
 			r.push({c: i, params: params, sig: sig});
 			for (sup in i.interfaces) add(sup.c, [for (t in sup.params) TypeFunctions.applyParams(i.params, params, t)]);
+			if (extendsIHxObject(i)) add(ihx, []);
 		}
 		for (i in c.interfaces) add(i.c, i.params);
+		if (extendsIHxObject(c) || ihx != null && c != ihx && ReflectionMembers.applies(c) && ReflectionMembers.isRoot(c)) add(ihx, []);
 		return r;
 	}
 
@@ -396,7 +409,10 @@ class TclassToIl {
 	// by name and exact signature, so an interface method without one it would match throws.
 	static function interfaceImpls(g:DotnetCtx, c:TClass, interfaces:Array<ImplementedInterface>):ObjectMap<TClassField, Bool> {
 		var own = new ObjectMap<TClassField, Bool>();
+		var ihx = g.runtimeClass("cs.internal.IHxObject");
 		for (i in interfaces) {
+			// The reflection members, which the class or HxObject has, implement IHxObject.
+			if (i.c == ihx) continue;
 			var isExternInterface = TypeFunctions.hasClassFlag(i.c, CExtern);
 			for (im in i.c.orderedFields) {
 				switch (im.kind) {
@@ -699,6 +715,7 @@ class TclassToIl {
 	}
 
 	public static function emitPlan(g:DotnetCtx, plan:ClassPlan):Void {
+		if (plan.c != null) ReflectionMembers.checkConflicts(g, plan.c);
 		for (m in plan.methods) emitMethod(g, plan, m);
 	}
 
@@ -711,6 +728,7 @@ class TclassToIl {
 			case MToString(_): "ToString";
 			case MEmptyCtor | MSplitCtor(_) | MClonedCtor(_): "new";
 			case MStaticCtor(_): "new";
+			case MReflect(r): ReflectionMembers.label(r);
 		}
 	}
 
@@ -978,6 +996,8 @@ class TclassToIl {
 						staticCtorBody(g, plan, m, hc, code, lower, what);
 						if (failures.length == 0) lower.finish();
 					});
+				case MReflect(r):
+					ReflectionMembers.emit(g, plan, m, r, code, lower);
 				case MToString(cf):
 					code.ldarg(0);
 					code.opToken(plan.isStruct ? IlOps.CALL : IlOps.CALLVIRT, g.memberOf(plan, plan.thisSig, cf), 1, 1);
@@ -1008,6 +1028,7 @@ class TclassToIl {
 					if (failures.length == 0) lower.finish();
 				case MCctor:
 					if (plan.initFlag) initGuard(g, plan, code);
+					if (plan.hxPath == fieldLookupPath) fieldTable(g, plan, code);
 					cctor(plan, lower);
 					if (failures.length == 0) lower.finish();
 			});
@@ -1051,12 +1072,49 @@ class TclassToIl {
 		code.opToken(IlOps.STSFLD, flag, 1, 0);
 	}
 
+	public static inline final fieldLookupPath = "cs.internal.FieldLookup";
+
+	// FieldLookup's first snapshot, `new FieldTable(ids, names)` with every name FieldHashes recorded,
+	// sorted by hash, as gencs fills `fieldIds` and `fields` (gencs.ml). FieldLookup's methods are
+	// emitted after every other class's, so the table has them all; nothing in its .cctor comes before.
+	static function fieldTable(g:DotnetCtx, plan:ClassPlan, code:IlCode):Void {
+		var tableField = plan.c.statics.get("table");
+		var tableClass = g.runtimeClass("cs.internal.FieldTable");
+		var tablePlan = tableClass == null ? null : g.planOf.get(tableClass);
+		var ctor = null;
+		if (tablePlan != null) for (m in tablePlan.methods) if (m.name == ".ctor" && m.args.length == 2) ctor = m;
+		var token = tableField == null ? null : g.fieldTokens.get(tableField);
+		if (ctor == null || token == null) throw "internal error: haxe.lang.FieldLookup has no table";
+		var entries = FieldHashes.table();
+		code.ldcI4(entries.length);
+		code.opToken(IlOps.NEWARR, g.typeTokenOf(LInt32), 1, 1);
+		for (i in 0...entries.length) {
+			code.op(IlOps.DUP, 1, 2);
+			code.ldcI4(i);
+			code.ldcI4(entries[i].id);
+			code.opToken(IlOps.STELEM, g.typeTokenOf(LInt32), 3, 0);
+		}
+		code.ldcI4(entries.length);
+		code.opToken(IlOps.NEWARR, g.typeTokenOf(LString), 1, 1);
+		for (i in 0...entries.length) {
+			code.op(IlOps.DUP, 1, 2);
+			code.ldcI4(i);
+			code.opToken(IlOps.LDSTR, g.mb.userString(entries[i].name), 0, 1);
+			code.opToken(IlOps.STELEM, g.typeTokenOf(LString), 3, 0);
+		}
+		code.opToken(IlOps.NEWOBJ, ctor.token, 2, 1);
+		code.op(IlOps.VOLATILE, 0, 0);
+		code.opToken(IlOps.STSFLD, token, 1, 0);
+	}
+
 	// gencommon's order: @:readOnly initializers, which C# runs as field initializers first, then
-	// __init__, then the other static var initializers in declaration order.
+	// __init__, then the other static var initializers in declaration order. FieldLookup's table is
+	// fieldTable's.
 	static function cctor(plan:ClassPlan, lower:TexprToIl):Void {
 		var c = plan.c;
 		var readOnly = [], others = [];
 		for (f in plan.fields) if (f.flags & FieldAttrs.STATIC != 0 && f.cf.expr != null) {
+			if (plan.hxPath == fieldLookupPath && f.cf.name == "table") continue;
 			var assign:TExpr = {
 				expr: TBinop(OpAssign, {expr: TField({expr: TTypeExpr(TClassDecl(c)), type: f.cf.type, pos: f.cf.pos}, FStatic(c, f.cf)), type: f.cf.type, pos: f.cf.pos}, f.cf.expr),
 				type: f.cf.type,
