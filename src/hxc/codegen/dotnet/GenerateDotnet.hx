@@ -254,6 +254,8 @@ class GenerateDotnet {
 		while (changed) {
 			changed = false;
 			g.plans = [];
+			// A class left out in the last round must not stay planned for the classes that refer to it.
+			g.planOf.clear();
 			for (c in candidates) {
 				var mt = TClassDecl(c);
 				if (g.types.leftOut.exists(DotnetTypes.haxePath(mt))) continue;
