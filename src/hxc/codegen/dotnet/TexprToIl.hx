@@ -402,8 +402,12 @@ class TexprToIl {
 				}
 			case TParenthesis(e1) | TMeta(_, e1):
 				texpr(ret, e1);
-			case TCast(e1, md):
-				castExpr(ret, e, e1, md != null);
+			case TCast(_, _):
+				var c = collapseCast(e);
+				switch (c.expr) {
+					case TCast(e1, md): castExpr(ret, c, e1, md != null);
+					case _: throw "internal error: not a cast";
+				}
 			case TBinop(OpAssign, lhs, rhs):
 				assign(ret, lhs, rhs);
 			case TBinop(OpAssignOp(op), lhs, rhs):
@@ -468,9 +472,8 @@ class TexprToIl {
 
 	// A cast; `checked` for cast(e, T). gencs writes both as C#'s cast to the expression's type, so a cast
 	// that changes the type converts or checks through that type even when the value goes on somewhere
-	// else, as C#'s `(object)(int)d` does: to a String (Runtime.toString), between value types (not a
-	// .NET enum and its integer), from Dynamic to a value type, a type parameter or a class, and every
-	// checked cast.
+	// else, as C#'s `(object)(int)d` does: to a String (Runtime.toString), between value types, from
+	// Dynamic to a value type, a type parameter or a class, and every checked cast.
 	function castExpr(ret:Ret, e:TExpr, e1:TExpr, checked:Bool):Void {
 		var from = null, to = null;
 		if (!isNullConst(e1)) {
@@ -485,8 +488,7 @@ class TexprToIl {
 		}
 		var viaOwn = from != null && to != null && !IlPaths.sigEq(from, to) && !to.match(LObject) && (checked
 			|| want != null && !IlPaths.sigEq(want, to) && (to.match(LString) && !inRuntimeClass()
-				// A .NET enum and its underlying integer are one value: gencs boxes the enum.
-				|| DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to) && !sameAsEnum(from, to) && !sameAsEnum(to, from)
+				|| DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)
 				|| from.match(LObject) && (DotnetTypes.isValueType(to) || isTypeParam(to) || isReference(to) && !g.isGenericHaxeClass(to))));
 		if (viaOwn) {
 			texpr(RValue(to), e1);
@@ -579,6 +581,27 @@ class TexprToIl {
 			case TEnum(e, _) if (HxGen.isClrEnum(e)): e;
 			case _: null;
 		}
+	}
+
+	// The cast `e` as gencs's CastDetect leaves it. When its operand is itself a cast and no cast is
+	// needed from the operand's type to `e`'s (into Dynamic, or to the same type), CastDetect gives
+	// the inner cast `e`'s type, so the inner conversion is lost: `Sys.println((cast f : Int))` passes
+	// f itself. Inner casts are collapsed first, as CastDetect visits them first.
+	function collapseCast(e:TExpr):TExpr {
+		return switch (e.expr) {
+			case TCast(e1, md):
+				var inner = collapseCast(e1);
+				switch (inner.expr) {
+					case TCast(z, md2) if (noCastNeeded(inner.type, e.type)): new TExpr(TCast(z, md2), e.type, e.pos);
+					case _: inner == e1 ? e : new TExpr(TCast(inner, md), e.type, e.pos);
+				}
+			case _: e;
+		}
+	}
+
+	function noCastNeeded(from:T, to:T):Bool {
+		var f = try sig(from) catch (_:Unsupported) null, t = try sig(to) catch (_:Unsupported) null;
+		return f != null && t != null && (t.match(LObject) || IlPaths.sigEq(f, t));
 	}
 
 	// The extern .NET enum that values of type `t` belong to, or null.

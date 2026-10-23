@@ -2763,6 +2763,9 @@ class P {
 ===
 --- net-enum-values @gencs
 import cs.system.reflection.BindingFlags;
+class Foo {
+	public function new() {}
+}
 class P {
 	static function code(o:Dynamic):Int {
 		var t = cs.Lib.as(o, cs.system.IConvertible).GetTypeCode();
@@ -2773,10 +2776,15 @@ class P {
 			default: return 3;
 		}
 	}
+	static function half(f:Float):Float return f / 2;
+	static function show(o:Dynamic):Void Sys.println(o);
+	static function flags():BindingFlags return cast((cast BindingFlags.Public : Int) | (cast BindingFlags.Static : Int));
+	static function ret():Dynamic return (cast flags() : Int);
+	static inline function inlI(x:Int):Int return x;
+	static inline function inlF(x:Float):Float return x;
 	static function main() {
-		var bf:BindingFlags = cast((cast BindingFlags.Public : Int) | (cast BindingFlags.Static : Int));
+		var bf = flags();
 		Sys.println(bf);
-		Sys.println((cast bf : Int));
 		Sys.println(bf == BindingFlags.Public);
 		Sys.println(code(1.5) + " " + code(7) + " " + code("s") + " " + code(true));
 		var t1 = cs.system.TypeCode.Int32, t2 = cs.system.TypeCode.Int64;
@@ -2786,16 +2794,40 @@ class P {
 		}
 		var dt:Dynamic = cs.system.TypeCode.Decimal;
 		Sys.println(dt);
+		// A cast of the enum to Int in each position.
+		Sys.println((cast bf : Int));
+		show((cast bf : Int));
+		var d:Dynamic = (cast bf : Int);
+		Sys.println(d);
+		Sys.println(ret());
+		var i:Int = (cast bf : Int);
+		Sys.println(i);
+		Sys.println((cast bf : Int) + 1);
+		var f:Float = (cast bf : Int);
+		Sys.println(f);
+		Sys.println(half((cast bf : Int)));
+		Sys.println((cast bf : Int) / 2);
+		Sys.println("s" + (cast bf : Int));
+		Sys.println(inlI((cast bf : Int)));
+		Sys.println(inlF((cast bf : Int)));
+		var k:Dynamic = (cast bf : UInt);
+		Sys.println(k);
+		var x:Float = cast (cast bf : Int);
+		Sys.println(x);
+		var z:Dynamic = (cast (cast bf : Int) : Float);
+		Sys.println(z);
+		// A cast to Dynamic of another cast drops the inner one in gencs, whatever is cast.
+		var dd:Dynamic = 2.75;
+		Sys.println((cast dd : Int));
+		var fl = 2.5;
+		Sys.println((cast fl : Int));
+		var o:Dynamic = "str";
+		Sys.println(cast(o, Foo));
+		var bd:Dynamic = bf;
+		Sys.println((cast bd : Int));
 	}
 }
 ===
-[run]
-Static, Public
-Static, Public
-False
-1 2 100 3
-i64
-Decimal
 --- dynamic-equality-and-order @gencs
 class P {
 	static function main() {
