@@ -170,6 +170,10 @@ class TclassToIl {
 		// gencs's class model, for an hxgen class that is not a struct (C# has no struct deriving from
 		// HxObject). Its constructor bodies move to static methods unless it descends from a native type.
 		var model = !isStruct && HxGen.hasCtorModel(c);
+		// An extern superclass in gencs's model (@:hxGen) would have to be a Haxe-generated assembly's class,
+		// with its empty constructor, static constructors and reflection members; nothing here declares them.
+		if (model && c.superClass != null && TypeFunctions.hasClassFlag(c.superClass.c, CExtern) && HxGen.isHxGen(TClassDecl(c.superClass.c)))
+			throw new Unsupported("classes extending an extern class marked @:hxGen", true);
 		var split = model && !HxGen.descendsFromNative(c);
 		if (model && c.superClass == null && DotnetTypes.haxePath(TClassDecl(c)) != DotnetCtx.hxObjectPath)
 			superSig = LClass(g.types.stdClassPath(DotnetCtx.hxObjectPath, "haxe.lang.HxObject", false), []);

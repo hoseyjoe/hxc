@@ -641,10 +641,10 @@ type public beforefieldinit MyError extends [mscorlib]System.Exception implement
   method public virtual hidebysig newslot float64 __hx_lookupField_f(string, int32, bool)
   method public virtual hidebysig newslot object __hx_lookupSetField(string, int32, object)
   method public virtual hidebysig newslot float64 __hx_lookupSetField_f(string, int32, float64)
+  method public virtual hidebysig newslot float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig newslot object __hx_setField(string, int32, object, bool)
   method public virtual hidebysig newslot object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig newslot float64 __hx_getField_f(string, int32, bool, bool)
-  method public virtual hidebysig newslot object __hx_setField(string, int32, object, bool)
-  method public virtual hidebysig newslot float64 __hx_setField_f(string, int32, float64, bool)
   method public virtual hidebysig newslot object __hx_invokeField(string, int32, object[])
   method public virtual hidebysig newslot void __hx_getFields(Array`1<string>)
 --- clr-names @lib @module=pack.Thing @dump=pack.IRun,pack.Thing,pack.Sealed
@@ -677,10 +677,10 @@ type public beforefieldinit pack.Thing extends haxe.lang.HxObject implements hax
   method public hidebysig specialname rtspecialname void .ctor()
   method public virtual hidebysig newslot void run(int32)
   method public hidebysig void stop()
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
-  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
-  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor_pack_Thing(pack.Thing)
@@ -1121,10 +1121,10 @@ type public beforefieldinit pack.Box`1<T> extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(!0)
   method public virtual hidebysig newslot !0 pick<S>(!!0)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
-  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
-  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor_pack_Box<T_c>(pack.Box`1<!!0>, !!0)
@@ -1248,10 +1248,10 @@ type public Counter`1<T> extends haxe.lang.HxObject
   method public virtual hidebysig newslot object boxed()
   method public virtual hidebysig newslot !0 orDefault(bool)
   method public virtual hidebysig newslot Pair`2<!0, !!0> map<S>(!!0)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
-  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
-  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor__Counter<T_c>(Counter`1<!!0>, !!0)
@@ -2090,20 +2090,20 @@ type public beforefieldinit pk.Base extends haxe.lang.HxObject
   field public int32 a
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(int32)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
-  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
-  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor_pk_Base(pk.Base, int32)
 type public beforefieldinit pk.Thing extends pk.Base
   field public int32 p
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(int32, string)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
-  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
-  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor_pk_Thing(pk.Thing, int32, string)
 type public beforefieldinit pk.NG extends [mscorlib]System.Object
@@ -2322,8 +2322,8 @@ type public beforefieldinit Ov extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(float64, float64)
   method public hidebysig specialname rtspecialname void .ctor(string)
   method public hidebysig specialname rtspecialname void .ctor(int32)
-  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor__Ov(Ov, string)
   method family static hidebysig void __hx_ctor__Ov(Ov, float64, float64)
@@ -2522,3 +2522,50 @@ class P {
 ===
 [compile]
 P.hx:1: lines 1-5 : Field conflict between rulujia and xpfmath
+--- reflection-array-conversion-is-refused
+class Box {
+	public var arr:Array<Int> = [1];
+	public function new() {}
+	public function second(a:Array<Int>):Int return a[1];
+}
+class P {
+	static function set(o:Dynamic, f:String, v:Dynamic) Reflect.setField(o, f, v);
+	static function main() {
+		var b = new Box();
+		var ints:Array<Int> = [2, 3];
+		set(b, "arr", ints);
+		Sys.println(b.arr[1]);
+		set(b, "arr", null);
+		Sys.println(b.arr == null);
+		Sys.println(cs.internal.Runtime.callField(b, "second", 0, cs.NativeArray.make((ints : Dynamic))));
+		var dyn:Array<Dynamic> = [6, 7];
+		try set(b, "arr", dyn) catch (e:cs.system.NotSupportedException) Sys.println(e.Message);
+		try cs.internal.Runtime.callField(b, "second", 0, cs.NativeArray.make((dyn : Dynamic))) catch (e:cs.system.NotSupportedException) Sys.println(e.Message);
+	}
+}
+===
+[run]
+3
+True
+3
+hxc dotnet: converting Array<Int> through reflection is not supported yet
+hxc dotnet: converting Array<Int> through reflection is not supported yet
+--- extends-hxgen-extern-is-an-error
+@:hxGen @:native("System.Object") extern class XObj {
+	function new():Void;
+}
+class Sub extends XObj {
+	public var a:Int = 1;
+	public function new() {
+		super();
+	}
+}
+class P {
+	static function main() {
+		Sys.println(new Sub().a);
+	}
+}
+===
+[compile]
+P.hx:4: lines 4-9 : dotnet: classes extending an extern class marked @:hxGen are not supported yet
+P.hx:12: characters 15-26 : dotnet: Sub (left out: classes extending an extern class marked @:hxGen) is not supported yet

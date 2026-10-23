@@ -178,7 +178,7 @@ class ReflectionMembers {
 		];
 	}
 
-	// The members the class gets, in the order they are declared: on a root the lookups first; a member
+	// The members the class gets, in gencs's order: on a root the lookups first; a member
 	// the class declares itself (HxObject, DynamicObject) is not generated, nor one of a class extending
 	// another in the model that has no cases.
 	public static function members(g:DotnetCtx, c:TClass):Array<ReflectMember> {
@@ -187,11 +187,12 @@ class ReflectionMembers {
 		var r = [];
 		inline function declared(n:String) return c.fields.exists(n);
 		if (root && !declared("__hx_lookupField")) r = r.concat([RLookupField, RLookupField_f, RLookupSetField, RLookupSetField_f]);
+		// gencs's order: implement_get_set adds setField_f, setField, getField, getField_f.
 		if (!declared("__hx_getField")) {
+			if (root || setCases(g, c, true).length > 0) r.push(RSetField_f);
+			if (root || setCases(g, c, false).length > 0) r.push(RSetField);
 			if (root || getCases(g, c, false).length > 0) r.push(RGetField);
 			if (root || getCases(g, c, true).length > 0) r.push(RGetField_f);
-			if (root || setCases(g, c, false).length > 0) r.push(RSetField);
-			if (root || setCases(g, c, true).length > 0) r.push(RSetField_f);
 		}
 		if (!declared("__hx_invokeField") && (root || invokeCases(c).own.length > 0)) r.push(RInvokeField);
 		if (!declared("__hx_getFields") && (root || listed(c).length > 0)) r.push(RGetFields);
@@ -364,7 +365,7 @@ private class ReflectionEmitter {
 
 	// The object on the stack as a `to`, as gencs converts a Dynamic: Runtime.toInt, toDouble, toBool,
 	// toString, genericCast for a type parameter, Null<T>.ofDynamic, else C#'s cast.
-	function fromDynamic(to:IlSigNorm):Void {
+	function fromDynamic(to:IlSigNorm, t:T):Void {
 		switch (to) {
 			case LObject:
 			case LInt32 | LUInt32:
@@ -395,9 +396,30 @@ private class ReflectionEmitter {
 				code.opToken(IlOps.CALL, g.mb.methodSpec(token, g.sigs.methodSpec([arg])), 1, 1);
 			case _ if (DotnetTypes.isValueType(to)):
 				code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
+			case LClass(_, _) if (g.isGenericHaxeClass(to)):
+				// gencs converts between instantiations of a generic Haxe class (an Array<Dynamic> into an
+				// Array<Int> field) with __hx_cast, plan 3c; until then a value of another instantiation is
+				// refused loudly rather than with an InvalidCastException: null or the same instantiation
+				// passes, anything else throws NotSupportedException.
+				var tmp = code.addLocal(LObject);
+				var isNull = code.newLabel(), done = code.newLabel();
+				code.stloc(tmp);
+				code.ldloc(tmp);
+				code.branch(IlOps.BRFALSE, isNull);
+				code.ldloc(tmp);
+				code.opToken(IlOps.ISINST, g.typeTokenOf(to), 1, 1);
+				code.op(IlOps.DUP, 1, 2);
+				code.branch(IlOps.BRTRUE, done);
+				code.op(IlOps.POP, 1, 0);
+				var ex = LClass({ns: ["System"], nested: [], name: "NotSupportedException"}, []);
+				code.opToken(IlOps.LDSTR, g.mb.userString("hxc dotnet: converting " + hxc.core.TPrinting.sTypeStr(t)
+					+ " through reflection is not supported yet"), 0, 1);
+				code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(ex), ".ctor", g.sigs.method(true, LVoid, [LString], 0)), 1, 1);
+				code.op(IlOps.THROW, 1, 0);
+				code.mark(isNull);
+				code.op(IlOps.LDNULL, 0, 1);
+				code.mark(done);
 			case LClass(_, _) | LVector(_) | LArray(_, _):
-				// gencs converts an Array between instantiations with __hx_cast (plan 3c); this cast throws
-				// where that would copy.
 				code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
 			case _:
 				throw new Unsupported("reflection of fields of type " + to, false, pos);
@@ -499,7 +521,9 @@ private class ReflectionEmitter {
 			cur = {c: next.c, params: params};
 			t = TInst(cur.c, cur.params);
 		}
-		if (found == null) throw "internal error: no base " + n + " for " + plan.hxPath;
+		// A superclass outside this module's plans, such as an extern class marked @:hxGen, has no members
+		// to call.
+		if (found == null) throw new Unsupported("reflection below a superclass with no " + n, false, pos);
 		var token = found.plan.classParams.length == 0 ? found.m.token : g.mb.memberRef(g.typeTokenOf(found.owner), n,
 			g.sigs.method(true, found.m.ret, found.m.args, 0));
 		for (i in 0...argc + 1) code.ldarg(i);
@@ -673,7 +697,7 @@ private class ReflectionEmitter {
 		var target = field(e);
 		var tmp = local(target.type);
 		code.ldarg(3);
-		if (isFloat) fromDouble(tmp.sig) else fromDynamic(tmp.sig);
+		if (isFloat) fromDouble(tmp.sig) else fromDynamic(tmp.sig, target.type);
 		code.stloc(tmp.index);
 		var store = () -> lower.texpr(RVoid, mk(TBinop(OpAssign, target, localExpr(tmp)), target.type));
 		if (writesCall(cf)) {
@@ -742,7 +766,7 @@ private class ReflectionEmitter {
 				code.ldcI4(i);
 				code.opToken(IlOps.LDELEM, g.typeTokenOf(LObject), 2, 1);
 			}
-			fromDynamic(tmp.sig);
+			fromDynamic(tmp.sig, a.t);
 			code.stloc(tmp.index);
 			args.push(localExpr(tmp));
 		}
