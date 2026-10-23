@@ -3142,3 +3142,53 @@ class P {
 	}
 }
 ===
+--- null-anonymous-field-reads @gencs
+class Foo {
+	public var n:Null<Int>;
+	public var f:Null<Float>;
+	public function new() {}
+}
+class P {
+	static function show(x:Dynamic):Void Sys.println(x);
+	static function kind(x:Dynamic):String {
+		if (x == null) return "null";
+		var o:cs.system.Object = x;
+		return o.GetType().Name + ":" + Std.string(x);
+	}
+	static function main() {
+		var a:{?n:Int, ?f:Float, ?b:Bool} = {};
+		var d:Dynamic = a;
+		d.n = 2.5;
+		d.f = 1;
+		d.b = 1;
+		try Sys.println(a.n) catch (e:Dynamic) Sys.println("EXC1");
+		try show(a.n) catch (e:Dynamic) Sys.println("EXC2");
+		try { var x:Dynamic = a.n; Sys.println(x); } catch (e:Dynamic) Sys.println("EXC3");
+		try Sys.println("" + a.n) catch (e:Dynamic) Sys.println("EXC4");
+		try Sys.println(Std.string(a.n)) catch (e:Dynamic) Sys.println("EXC5");
+		try { var x:Null<Int> = a.n; Sys.println(x); } catch (e:Dynamic) Sys.println("EXC6");
+		try { var x:Float = a.n; Sys.println(x); } catch (e:Dynamic) Sys.println("EXC7");
+		try { var x:Int = a.n; Sys.println(x); } catch (e:Dynamic) Sys.println("EXC8");
+		try Sys.println(a.n + 0.5) catch (e:Dynamic) Sys.println("EXC9");
+		try Sys.println(a.n + 1) catch (e:Dynamic) Sys.println("EXC10");
+		try { var arr:Array<Dynamic> = [a.n]; Sys.println(arr[0]); } catch (e:Dynamic) Sys.println("EXC11");
+		try { var o = {v: a.n}; Sys.println(kind(Reflect.field(o, "v"))); } catch (e:Dynamic) Sys.println("EXC12");
+		try Sys.println(kind(a.n)) catch (e:Dynamic) Sys.println("EXC13");
+		try Sys.println(kind(a.f)) catch (e:Dynamic) Sys.println("EXC14");
+		try { var o = {v: a.f}; Sys.println(kind(Reflect.field(o, "v"))); } catch (e:Dynamic) Sys.println("EXC15");
+		try Sys.println(kind(a.b)) catch (e:Dynamic) Sys.println("EXC16");
+		try Sys.println(a.b) catch (e:Dynamic) Sys.println("EXC17");
+		try Sys.println(a.n == 2) catch (e:Dynamic) Sys.println("EXC18");
+		try Sys.println(Math.floor(a.n * 2)) catch (e:Dynamic) Sys.println("EXC19");
+		try Sys.println(a.n * 0.5) catch (e:Dynamic) Sys.println("EXC23");
+		try Sys.println(a.n < 2.2) catch (e:Dynamic) Sys.println("EXC24");
+		try { var fl = 1.0; fl += a.n; Sys.println(fl); } catch (e:Dynamic) Sys.println("EXC25");
+		try { var s:String = "" + a.f; Sys.println(s + " " + Std.string(a.f)); } catch (e:Dynamic) Sys.println("EXC26");
+		try Sys.println(a.n + a.f) catch (e:Dynamic) Sys.println("EXC27");
+		var foo = new Foo();
+		try { Reflect.setField(foo, "n", 2.5); Sys.println(kind(foo.n) + " " + kind(Reflect.field(foo, "n"))); } catch (e:Dynamic) Sys.println("EXC20");
+		try { var df:Dynamic = foo; df.f = 1; Sys.println(kind(foo.f) + " " + kind(df.f)); } catch (e:Dynamic) Sys.println("EXC21");
+		try { var x:Float = foo.n; Sys.println(x); } catch (e:Dynamic) Sys.println("EXC22");
+	}
+}
+===

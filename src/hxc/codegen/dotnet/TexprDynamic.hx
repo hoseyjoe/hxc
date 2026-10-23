@@ -302,7 +302,14 @@ class TexprDynamic {
 			finish(rs, own(e), ret);
 		} else {
 			runtimeCall("getField", LObject);
-			finish(LObject, own(e), ret);
+			switch (ret) {
+				case RValue(want) if (want != null && isNullType(resultType) && !tl.isHaxeNull(want) && !want.match(LString) && tl.keepNull != e):
+					// A Null<T> read meets a cast to another type, which HardNullableSynf applies to the object
+					// itself (TexprToIl.nullOperand): `(object)getField(...)`, `Runtime.toDouble(getField(...))`.
+					tl.coerce(LObject, ret);
+				case _:
+					finish(LObject, own(e), ret);
+			}
 		}
 	}
 
@@ -609,6 +616,8 @@ class TexprDynamic {
 			case TUnop(_, _, e1): sideEffectFree(e1);
 			case TArray(e1, e2) | TBinop(_, e1, e2): sideEffectFree(e1) && sideEffectFree(e2);
 			case TIf(cond, e1, e2) if (e2 != null): sideEffectFree(cond) && sideEffectFree(e1) && sideEffectFree(e2);
+			// A field reached through Runtime is a call by the time gencs looks.
+			case TField(e1, fa) if (isDynamicReceiver(fa, e1)): false;
 			case TField(e1, _) | TParenthesis(e1) | TMeta(_, e1) | TCast(e1, _): sideEffectFree(e1);
 			case TArrayDecl(el): Lambda.foreach(el, sideEffectFree);
 			case _: false;

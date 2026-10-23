@@ -64,8 +64,10 @@ class TexprOps {
 				// Bitwise operators and shifts take Int operands only.
 				if (!isArith(op) && !(isIntLike(s1) && isIntLike(s2) && isIntLike(t)))
 					throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
-				tl.texpr(RValue(t), e1);
-				numericTail(op, t, e2, s1);
+				// `+` is the operator HardNullableSynf unwraps itself; the others gencs casts first.
+				var add = op.match(OpAdd);
+				if (add) tl.nullOperand(RValue(t), e1) else tl.texpr(RValue(t), e1);
+				numericTail(op, t, e2, s1, true, add);
 				tl.dyn.finish(t, own, ret);
 			case _:
 				throw new Unsupported("the " + Ast.sBinop(op) + " operator", false);
@@ -87,7 +89,8 @@ class TexprOps {
 	// The left operand, of type `t` on the stack and `left` as typed, is there; this pushes the right
 	// one and applies `op`. A compound assignment does not promote: gencs casts its right side to the
 	// left's type, so the left type's own remainder applies.
-	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr, left:IlSigNorm, promote = true):Void {
+	// `keepNull`: the right operand is one HardNullableSynf unwraps itself (TexprToIl.nullOperand).
+	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr, left:IlSigNorm, promote = true, keepNull = false):Void {
 		var bad = new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		if (!isNumeric(t)) throw bad;
 		if (!isArith(op) && !isIntLike(t)) throw bad;
@@ -116,7 +119,7 @@ class TexprOps {
 				}
 				code.op(op.match(OpShl) ? IlOps.SHL : op.match(OpShr) && !unsigned ? IlOps.SHR : IlOps.SHR_UN, 2, 1);
 			case _:
-				tl.texpr(RValue(t), e2);
+				if (keepNull) tl.nullOperand(RValue(t), e2) else tl.texpr(RValue(t), e2);
 				code.op(switch (op) {
 					case OpAdd: IlOps.ADD;
 					case OpSub: IlOps.SUB;
@@ -184,16 +187,16 @@ class TexprOps {
 				tl.texpr(RValue(tl.sig(x.value.type)), x.value);
 				tl.calls.externEnumLiteral(x.en, TexprToIl.enumFieldAt(x.en, idx1 != null ? constInt(e2) : constInt(e1)));
 			} else if (mixesUIntAndInt(s1, s2)) {
-				tl.texpr(RValue(s1), e1);
+				tl.nullOperand(RValue(s1), e1);
 				widen(s1);
-				tl.texpr(RValue(s2), e2);
+				tl.nullOperand(RValue(s2), e2);
 				widen(s2);
 			} else if (isNumeric(s1) && isNumeric(s2)) {
 				var t = s1.match(LFloat64) || s2.match(LFloat64) ? LFloat64 : s1.match(LUInt32) || s2.match(LUInt32) ? LUInt32 : LInt32;
 				isFloat = t.match(LFloat64);
 				unsigned = t.match(LUInt32);
-				tl.texpr(RValue(t), e1);
-				tl.texpr(RValue(t), e2);
+				tl.nullOperand(RValue(t), e1);
+				tl.nullOperand(RValue(t), e2);
 			} else if (equality && (TexprToIl.clrEnum(e1.type) != null && TexprToIl.clrEnum(e1.type) == TexprToIl.clrEnum(e2.type)
 				|| TexprToIl.externEnum(e1.type) != null && TexprToIl.externEnum(e1.type) == TexprToIl.externEnum(e2.type))) {
 				// Two values of one CLR enum compare as their indices, two of a .NET enum as their values.
@@ -469,7 +472,7 @@ class TexprOps {
 		var s = tl.sig(e.type);
 		if (tl.isHaxeNull(s)) {
 			// A Null<T> through toDynamic(), so an empty one prints null.
-			tl.texpr(RValue(LObject), e);
+			tl.nullOperand(RValue(LObject), e);
 			tl.dyn.stdString();
 			return;
 		}

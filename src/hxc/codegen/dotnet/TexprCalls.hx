@@ -270,7 +270,10 @@ class TexprCalls {
 				case TCast(x, null) if (tl.sig(inner.type).match(LObject)): inner = strip(x);
 				case _:
 			}
-			stringKind(tl.sig(inner.type));
+			var s = tl.sig(inner.type);
+			// A Null<T> goes to Std.string as an object, as its Dynamic argument takes it.
+			if (tl.isHaxeNull(s)) return null;
+			stringKind(s);
 		} catch (_:Unsupported) {
 			return null;
 		}

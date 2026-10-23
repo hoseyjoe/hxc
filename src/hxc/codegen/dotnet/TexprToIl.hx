@@ -70,6 +70,10 @@ class TexprToIl {
 	final calls:TexprCalls;
 	final dyn:TexprDynamic;
 
+	// The operand nullOperand is lowering (stripped), whose Null<T> read through Runtime keeps its
+	// ofDynamic step.
+	var keepNull:Null<TExpr> = null;
+
 	// Set for user code: a statement that fails to lower is reported here and lowering goes on with
 	// the next one. Unset, the Unsupported propagates.
 	public var onError:Null<Unsupported->Void> = null;
@@ -134,6 +138,23 @@ class TexprToIl {
 				throw new Unsupported("default argument values of this type", true, a.c.pos);
 			}
 		}
+	}
+
+	// Lowers `e` as an operand that gencs's HardNullableSynf unwraps itself: of `+`, of an ordering
+	// comparison, of a string concatenation. Everywhere else a Null<T> field read through Runtime meets
+	// a cast CastDetect put there, and HardNullableSynf drops the Nullable step under it (an outer cast
+	// of a Null<T>-typed cast reruns with the outer type), so the object goes straight to the cast's type
+	// (TexprDynamic.fieldGet); here it goes through `ofDynamic<T>` and `.value` or `toDynamic()`.
+	function nullOperand(ret:Ret, e:TExpr):Void {
+		var old = keepNull;
+		keepNull = strip(e);
+		try {
+			texpr(ret, e);
+		} catch (x:Dynamic) {
+			keepNull = old;
+			throw x;
+		}
+		keepNull = old;
 	}
 
 	// A local the caller added and fills itself.
