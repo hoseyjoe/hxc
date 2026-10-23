@@ -3071,3 +3071,74 @@ class P {
 	}
 }
 ===
+--- null-fields-ternaries-and-overrides @gencs
+class Base {
+	public var n:Null<Int>;
+	public function new() {}
+	public function f(x:Int = 1, b:Bool = false):String return x + " " + b;
+	public function get(k:Int):Null<Int> return k > 0 ? k : null;
+}
+class Child extends Base {
+	override public function f(x:Int = 2, b:Bool = true):String return "child " + x + " " + b;
+}
+class P {
+	static function main() {
+		var c = true;
+		var x:Null<Int> = c ? 1 : null;
+		var y:Null<Int> = !c ? 1 : null;
+		Sys.println(x + " " + y);
+		var b:Base = new Child();
+		Sys.println(b.f() + " / " + b.f(5) + " / " + new Base().f());
+		Sys.println((b.get(0) == null) + " " + (b.get(3) == null) + " " + b.get(3));
+		b.n = 1;
+		b.n += 2;
+		b.n *= 3;
+		Sys.println(b.n);
+		var ns:Array<Null<Int>> = [1, null, 3];
+		ns[0] += 1;
+		ns[2]++;
+		Sys.println(ns.join(","));
+		var nb:Null<Bool> = false;
+		Sys.println(Std.string(nb) + " " + !nb);
+		Sys.println(Reflect.field(b, "n") + " " + Reflect.getProperty(b, "n"));
+		Reflect.setField(b, "n", 2.0);
+		Sys.println(b.n);
+		Reflect.setField(b, "n", null);
+		Sys.println(b.n == null);
+		var d:Dynamic = b;
+		d.n = 7;
+		Sys.println(b.n + 1);
+		var anon = {n: (null : Null<Int>), m: (5 : Null<Int>)};
+		Sys.println(anon.n + " " + anon.m + " " + (anon.m + 1));
+		anon.m += 1;
+		Sys.println(anon.m);
+	}
+}
+===
+--- null-generic-fields-and-std-defaults @gencs
+class G<T> {
+	public var v:Null<T>;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var g = new G<Int>();
+		Sys.println(g.v);
+		g.v = 4;
+		Sys.println(g.v + 1);
+		Sys.println(Reflect.field(g, "v"));
+		var ni:Null<Int> = 2;
+		Sys.println(Math.max(ni, 1.5));
+		Sys.println(Std.parseInt("12") + 1);
+		Sys.println(Std.parseInt("x") == null);
+		var a = [1, 2, 3, 2];
+		Sys.println(a.indexOf(2) + " " + a.lastIndexOf(2) + " " + a.indexOf(2, 2) + " " + a.slice(1).length + " " + a.slice(1, 2).length);
+		Sys.println("abcabc".substr(1) + " " + "abcabc".indexOf("c") + " " + "abcabc".lastIndexOf("c") + " " + "abcabc".substring(2) + " " + "abc".charCodeAt(1) + " " + "abc".charCodeAt(9));
+		try {
+			throw new haxe.Exception("boom");
+		} catch (e:haxe.Exception) {
+			Sys.println(e.message);
+		}
+	}
+}
+===

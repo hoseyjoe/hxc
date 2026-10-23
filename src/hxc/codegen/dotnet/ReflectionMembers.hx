@@ -136,6 +136,8 @@ class ReflectionMembers {
 	// A field getField_f and setField_f handle: a Float-like type (Int, UInt, Float, Single, the small
 	// integers; not Int64), Dynamic or a type parameter.
 	static function floatLike(g:DotnetCtx, cf:TClassField):Bool {
+		// A haxe.lang.Null<T>, a type parameter's too, is not (gencs's real type).
+		if (TexprDynamic.isNullType(cf.type)) return false;
 		switch (TypeFunctions.followWithAbstracts(cf.type)) {
 			case TDynamic(_): return true;
 			case TMono(m) if (m.type == null): return true;

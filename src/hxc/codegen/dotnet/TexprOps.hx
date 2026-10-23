@@ -170,8 +170,13 @@ class TexprOps {
 			tl.texpr(RValue(netOperator == null ? null : netOperator.args[0]), e1);
 			tl.texpr(RValue(netOperator == null ? null : netOperator.args[1]), e2);
 		} else {
-			// Null<T> operands compare their values, as HardNullableSynf unwraps them.
-			var s1 = tl.unNull(tl.sig(e1.type)), s2 = tl.unNull(tl.sig(e2.type));
+			// Null<T> operands compare their values, as HardNullableSynf unwraps them; Char and the small
+			// integers compare as Ints, as C# promotes them.
+			inline function operand(e:TExpr) return switch (tl.unNull(tl.sig(e.type))) {
+				case LChar | LInt8 | LUInt8 | LInt16 | LUInt16: LInt32;
+				case s: s;
+			}
+			var s1 = operand(e1), s2 = operand(e2);
 			var idx1 = TexprToIl.externEnumIndex(e1), idx2 = TexprToIl.externEnumIndex(e2);
 			if (equality && (idx1 != null && constInt(e2) != null || idx2 != null && constInt(e1) != null)) {
 				// enumIndex(x) == i on a .NET enum: x against the value of the constructor at i.

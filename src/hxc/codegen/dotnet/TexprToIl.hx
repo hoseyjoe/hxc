@@ -267,6 +267,11 @@ class TexprToIl {
 				code.op(IlOps.CONV_R8, 1, 1);
 			}
 			else if (from.match(LUInt32) && to.match(LInt64)) code.op(IlOps.CONV_U8, 1, 1);
+			// To the small integers and Char, as C#'s unchecked casts truncate.
+			else if (isIntLike(from) && to.match(LChar | LUInt16)) code.op(IlOps.CONV_U2, 1, 1);
+			else if (isIntLike(from) && to.match(LInt16)) code.op(IlOps.CONV_I2, 1, 1);
+			else if (isIntLike(from) && to.match(LUInt8)) code.op(IlOps.CONV_U1, 1, 1);
+			else if (isIntLike(from) && to.match(LInt8)) code.op(IlOps.CONV_I1, 1, 1);
 			else if (from.match(LFloat64) && to.match(LUInt32)) code.op(IlOps.CONV_U4, 1, 1);
 			else if (isTypeParam(from) || isTypeParam(to)) {
 				// Between a type parameter and another type that is one at run time, as C# casts through object.
@@ -408,7 +413,8 @@ class TexprToIl {
 	// Throws for a cast from `from` into an instantiation of a generic Haxe class that is not the same
 	// type or an upcast.
 	function checkInstantiationCast(from:IlSigNorm, to:IlSigNorm):Void {
-		if (IlPaths.sigEq(from, to) || !g.isGenericHaxeClass(to)) return;
+		// haxe.lang.Null<T> converts through its value (nullConvert).
+		if (IlPaths.sigEq(from, to) || !g.isGenericHaxeClass(to) || isHaxeNull(to)) return;
 		if (g.isUpcast(from, to)) return;
 		throw instantiationCast(to);
 	}
