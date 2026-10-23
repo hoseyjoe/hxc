@@ -92,7 +92,9 @@ class IlOps {
 typedef Label = Int;
 
 // One method's IL: the instruction bytes, the evaluation stack depth after each instruction and its
-// maximum, labels with the depth each is reached at, local types and exception clauses.
+// maximum, labels with the depth each is reached at, local types and exception clauses. Instructions
+// and branches emitted while nothing reaches the code, such as the rest of an expression after a
+// `throw` in one of its operands, are dropped, as C# leaves out dead code.
 
 class IlCode {
 	// Where a branch's operand is, the end of its instruction, and its target.
@@ -135,11 +137,12 @@ class IlCode {
 		if (depth >= 0) {
 			if (d >= 0 && d != depth) fail("stack depth " + depth + " meets " + d + " at a label");
 			labelDepth[l] = depth;
-		} else {
-			// Reached only by branches: by forward ones at their depth, else the stack is empty.
-			depth = d >= 0 ? d : 0;
-			labelDepth[l] = depth;
+		} else if (d >= 0) {
+			// Reached only by forward branches, at their depth.
+			depth = d;
 		}
+		// Else nothing reaches it yet: a backward branch to it could only come from the dead code after
+		// it, so that stays dead.
 	}
 
 	// Whether a branch already goes to the label.
@@ -166,7 +169,6 @@ class IlCode {
 	}
 
 	function stack(pops:Int, pushes:Int):Void {
-		if (depth < 0) fail("unreachable code");
 		if (depth < pops) fail("stack underflow");
 		depth += pushes - pops;
 		if (depth > maxStack) maxStack = depth;
@@ -178,48 +180,56 @@ class IlCode {
 	}
 
 	public function op(code:Int, pops:Int, pushes:Int):Void {
+		if (depth < 0) return;
 		stack(pops, pushes);
 		opcode(code);
 		if (transfers(code)) depth = -1;
 	}
 
 	public function opI32(code:Int, v:Int, pops:Int, pushes:Int):Void {
+		if (depth < 0) return;
 		stack(pops, pushes);
 		opcode(code);
 		this.code.u32(v);
 	}
 
 	function opI8(code:Int, v:Int, pops:Int, pushes:Int):Void {
+		if (depth < 0) return;
 		stack(pops, pushes);
 		opcode(code);
 		this.code.u8(v);
 	}
 
 	function opU16(code:Int, v:Int, pops:Int, pushes:Int):Void {
+		if (depth < 0) return;
 		stack(pops, pushes);
 		opcode(code);
 		this.code.u16(v);
 	}
 
 	public function opI64(code:Int, v:Int64, pops:Int, pushes:Int):Void {
+		if (depth < 0) return;
 		stack(pops, pushes);
 		opcode(code);
 		this.code.i64(v);
 	}
 
 	public function opR8(code:Int, v:Float, pops:Int, pushes:Int):Void {
+		if (depth < 0) return;
 		stack(pops, pushes);
 		opcode(code);
 		this.code.f64(v);
 	}
 
 	public function opR4(code:Int, v:Float, pops:Int, pushes:Int):Void {
+		if (depth < 0) return;
 		stack(pops, pushes);
 		opcode(code);
 		this.code.f32(v);
 	}
 
 	public function opToken(code:Int, token:Int, pops:Int, pushes:Int):Void {
+		if (depth < 0) return;
 		stack(pops, pushes);
 		opcode(code);
 		this.code.u32(token);
@@ -228,6 +238,7 @@ class IlCode {
 
 	// Always the long form. A conditional branch pops its operands; `leave` empties the stack.
 	public function branch(code:Int, l:Label):Void {
+		if (depth < 0) return;
 		var pops = switch (code) {
 			case IlOps.BR | IlOps.LEAVE: 0;
 			case IlOps.BRFALSE | IlOps.BRTRUE: 1;

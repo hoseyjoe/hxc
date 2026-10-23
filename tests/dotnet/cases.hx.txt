@@ -1569,6 +1569,14 @@ class P {
 			var f = function() {};
 			Sys.println("in");
 		} catch (e:cs.system.Exception) {}
+		Sys.println(returnInArgument());
+	}
+	static function add(a:Int, b:Int):Int {
+		return a + b;
+	}
+	static function returnInArgument():Int {
+		add(1, return 3);
+		return 0;
 	}
 }
 ===
@@ -1577,3 +1585,73 @@ P.hx:16: characters 15-66 : dotnet: `try` in an operand after a member of a stru
 P.hx:20: characters 4-9 : dotnet: dynamic field access is not supported yet
 P.hx:25: characters 4-9 : dotnet: dynamic field access is not supported yet
 P.hx:28: characters 12-25 : dotnet: local functions are not supported yet
+P.hx:37: characters 10-18 : dotnet: `return` inside expressions is not supported yet
+--- throw-and-return-as-values
+@:analyzer(ignore)
+class P {
+	static function probe():Int {
+		var y:Int = throw new cs.system.ArgumentException("probe");
+		return y;
+	}
+	static function g(n:Int):Int {
+		if (n > 0) {
+			var y:Int = throw new cs.system.ArgumentException("w");
+			return y;
+		}
+		return 1;
+	}
+	static function h(a:Int, b:Int):Int {
+		return a + b;
+	}
+	static function k(n:Int):Int {
+		if (n > 0) return h(throw new cs.system.ArgumentException("k"), try 1 catch (e:cs.system.Exception) 2);
+		return 2;
+	}
+	static function r(n:Int):Int {
+		var y:Int = return n * 2;
+		return y;
+	}
+	static function allThrow():Int {
+		return 1 + (try throw new cs.system.ArgumentException("t") catch (e:cs.system.ArgumentException) throw e);
+	}
+	static function tail(n:Int):String {
+		return "v" + (n > 0 ? n : throw new cs.system.ArgumentException("neg"));
+	}
+	static function main() {
+		try probe() catch (e:cs.system.ArgumentException) Sys.println(e.Message);
+		try g(1) catch (e:cs.system.ArgumentException) Sys.println("g " + e.Message);
+		try k(1) catch (e:cs.system.ArgumentException) Sys.println("k " + e.Message);
+		Sys.println(r(4));
+		try allThrow() catch (e:cs.system.ArgumentException) Sys.println("all " + e.Message);
+		Sys.println(g(0) + k(0));
+		Sys.println(tail(3));
+		try tail(-1) catch (e:cs.system.ArgumentException) Sys.println("tail " + e.Message);
+		var c = Math.random() < 2;
+		var x = if (c) 1 else throw new cs.system.ArgumentException("x");
+		Sys.println(x);
+		Q.run();
+	}
+}
+class Q {
+	static var s = 0;
+	static function h(a:Int, b:Int):Int {
+		return a + b;
+	}
+	public static function run() {
+		try Sys.println(h(s, throw new cs.system.ArgumentException("q1"))) catch (e:cs.system.ArgumentException) Sys.println(e.Message);
+		try s = throw new cs.system.ArgumentException("q2") catch (e:cs.system.ArgumentException) Sys.println(e.Message);
+	}
+}
+===
+[run]
+probe
+g w
+k k
+8
+all t
+3
+v3
+tail neg
+1
+q1
+q2
