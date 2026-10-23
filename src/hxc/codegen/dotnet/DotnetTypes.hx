@@ -194,18 +194,18 @@ class DotnetTypes {
 
 	static final systemType:IlPath = {ns: ["System"], nested: [], name: "Type"};
 
-	var stdTypes:Null<Map<String, ModuleType>> = null;
+	var typesByPath:Null<Map<String, ModuleType>> = null;
 
 	// The program's class or enum with this Haxe path, or null.
 	public function typeNamed(hxPath:String):Null<ModuleType> {
-		if (stdTypes == null) {
-			stdTypes = new Map();
+		if (typesByPath == null) {
+			typesByPath = new Map();
 			for (mt in ctx.types) switch (mt) {
-				case TClassDecl(_) | TEnumDecl(_): stdTypes.set(haxePath(mt), mt);
+				case TClassDecl(_) | TEnumDecl(_): typesByPath.set(haxePath(mt), mt);
 				case _:
 			}
 		}
-		return stdTypes.get(hxPath);
+		return typesByPath.get(hxPath);
 	}
 
 	// The CLR path of a standard-library class or enum the mapping needs, which must be kept; without

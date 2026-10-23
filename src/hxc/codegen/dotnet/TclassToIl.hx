@@ -117,8 +117,9 @@ class FieldAttrs {
 }
 
 // A Haxe class as a TypeDef with its fields and methods. Every member is public, as gencs makes
-// them. Members come as instance fields, static fields, .ctor, instance methods, ToString, static
-// methods, each in declaration order, then Main() and .cctor.
+// them. Members come as instance fields, static fields, .ctor (for a class in gencs's model the
+// EmptyObject one first), instance methods, ToString, the static constructors, static methods, each
+// in declaration order, then Main() and .cctor.
 
 class TclassToIl {
 	static final objectPath:IlPath = {ns: ["System"], nested: [], name: "Object"};

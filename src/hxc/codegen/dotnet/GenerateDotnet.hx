@@ -175,7 +175,6 @@ class DotnetCtx {
 	}
 
 	public static inline final hxObjectPath = "cs.internal.HxObject";
-	public static inline final iHxObjectPath = "cs.internal.IHxObject";
 
 	// haxe.lang.EmptyObject, the type of the argument of an hxgen class's empty constructor.
 	public function emptyObjectSig():IlSigNorm {

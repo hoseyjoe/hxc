@@ -3,11 +3,11 @@ package hxc.codegen.dotnet;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
 
-// A constructor a class has as gencs sees it, which lists a constructor's overloads before it: its own, one cloned from the nearest ancestor that has
+// A constructor a class has as gencs sees it: its own, one cloned from the nearest ancestor that has
 // constructors (each calling super(...) with its arguments), or the empty `new()` a class gets when no
-// ancestor has one. `origin` is the Haxe or .NET constructor the arguments reach (its own, or the
-// ancestor's one it was cloned from), null for the empty one; `args` are in terms of the class's type
-// parameters.
+// ancestor has one. Lists of them put a constructor's overloads before it, as gencs writes them.
+// `origin` is the Haxe or .NET constructor the arguments reach (its own, or the ancestor's one it was
+// cloned from), null for the empty one; `args` are in terms of the class's type parameters.
 typedef HaxeCtor = {origin:Null<TClassField>, own:Null<TClassField>, args:Array<{name:String, t:T}>};
 
 // Which types gencs generates with its own class model (setHXGen.ml), and the names that model uses.
