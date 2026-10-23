@@ -211,23 +211,56 @@ class TexprFlow {
 			throw x;
 		}
 		tl.tryDepth--;
-		if (outermost && tl.retLabel >= 0) {
-			code.markIfUsed(tl.retLabel);
-			if (code.reachable()) {
-				if (tl.ret.match(LVoid)) {
-					code.op(IlOps.RET, 0, 0);
-				} else {
-					code.ldloc(tl.retLocal);
-					code.op(IlOps.RET, 1, 0);
-				}
-			}
-			tl.retLabel = -1;
-		}
+		if (outermost) returnAfterTry();
 		code.markIfUsed(end);
 		if (t == null) tl.coerce(LVoid, ret) else if (code.reachable()) {
 			code.ldloc(result);
 			tl.coerce(t, ret);
 		}
+	}
+
+	// After the outermost try: the label a `return` inside it leaves to, which returns the value it
+	// stored.
+	function returnAfterTry():Void {
+		if (tl.retLabel < 0) return;
+		code.markIfUsed(tl.retLabel);
+		if (code.reachable()) {
+			if (tl.ret.match(LVoid)) {
+				code.op(IlOps.RET, 0, 0);
+			} else {
+				code.ldloc(tl.retLocal);
+				code.op(IlOps.RET, 1, 0);
+			}
+		}
+		tl.retLabel = -1;
+	}
+
+	// A protected region with a finally handler, in statement position: `body` lowers the block, which
+	// leaves to the end, and `fin` the handler, which ends with endfinally. A jump out of the block is a
+	// `leave`, which runs the handler.
+	function tryFinally(body:() -> Void, fin:() -> Void):Void {
+		if (code.depth != 0) throw "internal error: a try/finally entered with a non-empty stack";
+		var end = code.newLabel();
+		var outermost = tl.tryDepth == 0;
+		var open = code.openTries;
+		tl.tryDepth++;
+		try {
+			code.beginTry();
+			body();
+			if (code.reachable()) code.branch(IlOps.LEAVE, end);
+			code.beginFinally();
+			fin();
+			code.op(IlOps.ENDFINALLY, 0, 0);
+			code.endTry();
+		} catch (x:Dynamic) {
+			tl.tryDepth--;
+			code.abandonTries(open);
+			if (outermost) tl.retLabel = -1;
+			throw x;
+		}
+		tl.tryDepth--;
+		if (outermost) returnAfterTry();
+		code.markIfUsed(end);
 	}
 
 	static function containsTry(e:TExpr):Bool {

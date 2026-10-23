@@ -1007,6 +1007,7 @@ class Compiler {
 				ctx.forbiddenPackages.remove("jvm");
 			}
 		}
+		if (platform == Cs && ctx.defines.rawDefined("dotnet")) Setup.addDotnetRuntime(ctx);
 		if (platform == Cs) hxc.codegen.dotnet.NetSetup.beforeGenerate(ctx);
 		if (targetDir != null) Setup.addStd(ctx, targetDir);
 		// Run while the arguments are processed: a --display request whose mode does not type the whole

@@ -22,6 +22,8 @@ import hxc.codegen.dotnet.TexprToIl.isExtern;
 import hxc.codegen.dotnet.TexprToIl.isIntLike;
 import hxc.codegen.dotnet.TexprToIl.isReference;
 import hxc.codegen.dotnet.TexprToIl.isStringClass;
+import hxc.codegen.dotnet.TexprToIl.isTypeParam;
+import hxc.codegen.dotnet.TexprToIl.refTarget;
 import hxc.codegen.dotnet.TexprToIl.needVal;
 import hxc.codegen.dotnet.TexprToIl.staticOwner;
 import hxc.codegen.dotnet.TexprToIl.strip;
@@ -79,6 +81,10 @@ class TexprCalls {
 	// `forStore`, a chain that starts at a value with no home throws, as C# rejects a store to it.
 	function pushAddress(e:TExpr, forStore:Bool):Bool {
 		switch (strip(e).expr) {
+			case TLocal(v) if (refTarget(tl.anySlot(v)) != null):
+				// A cs.Ref or cs.Out parameter holds the address already.
+				tl.load(tl.anySlot(v));
+				return true;
 			case TLocal(v):
 				var s = tl.slot(v);
 				if (s.arg) code.ldarga(s.index) else code.ldloca(s.index);
@@ -168,6 +174,7 @@ class TexprCalls {
 				if (!cf.kind.match(Var(_))) throw new Unsupported("method closures", true);
 				var f = tl.staticField(c, cf);
 				if (!needVal(ret)) return;
+				tl.volatilePrefix(cf);
 				code.opToken(IlOps.LDSFLD, f.token, 0, 1);
 				tl.coerce(f.sig, ret);
 			case FInstance(c, _, cf) if (isStringClass(c)):
@@ -204,6 +211,7 @@ class TexprCalls {
 				if (!cf.kind.match(Var(_))) throw new Unsupported("method closures", true);
 				var f = instanceField(c, cparams, cf);
 				receiver(obj, f.owner);
+				tl.volatilePrefix(cf);
 				code.opToken(IlOps.LDFLD, f.token, 1, 1);
 				tl.coerce(f.sig, ret);
 			case FStatic(_, _):
@@ -355,11 +363,97 @@ class TexprCalls {
 				var op = isSuper || DotnetTypes.isValueType(m.owner) ? IlOps.CALL : IlOps.CALLVIRT;
 				code.opToken(op, m.token, args.length + 1, m.ret.match(LVoid) ? 0 : 1);
 				tl.coerce(m.ret, ret);
-			case TIdent(_):
-				throw new Unsupported("untyped code", false);
+			case TIdent(name):
+				magicCall(ret, e, name, args);
 			case _:
 				throw new Unsupported("calls of function values", true);
 		}
+	}
+
+	static final systemType:IlSigNorm = LClass({ns: ["System"], nested: [], name: "Type"}, []);
+	static final monitor:IlSigNorm = LClass({ns: ["System", "Threading"], nested: [], name: "Monitor"}, []);
+
+	// gencs's magic identifiers in untyped code, which hxcs's std uses: `__as__(e)` is C#'s `e as T`
+	// with T the call's type, `__is__(e, T)` C#'s `e is T`, `__typeof__(T)` `typeof(T)` and
+	// `__lock__(obj, block)` `lock (obj) block`.
+	function magicCall(ret:Ret, e:TExpr, name:String, args:Array<TExpr>):Void {
+		switch [name, args.length] {
+			case ["__as__", 1]:
+				var to = tl.sig(e.type);
+				tl.texpr(RValue(LObject), args[0]);
+				if (DotnetTypes.isValueType(to)) {
+					code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
+				} else if (isTypeParam(to)) {
+					code.opToken(IlOps.ISINST, g.typeTokenOf(to), 1, 1);
+					code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
+				} else if (!to.match(LObject)) {
+					code.opToken(IlOps.ISINST, g.typeTokenOf(to), 1, 1);
+				}
+				tl.coerce(to, ret);
+			case ["__is__", 2]:
+				var t = typeArg(args[1]);
+				tl.texpr(RValue(LObject), args[0]);
+				code.opToken(IlOps.ISINST, g.typeTokenOf(t), 1, 1);
+				code.op(IlOps.LDNULL, 0, 1);
+				code.op(IlOps.CGT_UN, 2, 1);
+				tl.coerce(LBool, ret);
+			case ["__typeof__", 1]:
+				pushTypeOf(typeArg(args[0]));
+				tl.coerce(systemType, ret);
+			case ["__lock__", 2]:
+				lock(args[0], args[1]);
+				tl.coerce(LVoid, ret);
+			case _:
+				throw new Unsupported("untyped code", false);
+		}
+	}
+
+	// The type a magic identifier's type argument names: a type expression, or in untyped code the name
+	// of a type parameter in scope.
+	function typeArg(e:TExpr):IlSigNorm {
+		switch (strip(e).expr) {
+			case TTypeExpr(mt):
+				var params = [for (_ in TypeFunctions.tParams(mt)) TypeFunctions.tDynamic];
+				return tl.sig(switch (mt) {
+					// An abstract named as a value is its implementation class.
+					case TClassDecl(c): switch (c.kind) {
+							case KAbstractImpl(a): TAbstract(a, [for (_ in a.params) TypeFunctions.tDynamic]);
+							case _: TInst(c, params);
+						}
+					case TEnumDecl(en): TEnum(en, params);
+					case TTypeDecl(td): TType(td, params);
+					case TAbstractDecl(a): TAbstract(a, params);
+				});
+			case TIdent(name):
+				var t = g.types.paramNamed(name);
+				if (t != null) return tl.sig(t);
+			case _:
+		}
+		throw new Unsupported("untyped code", false);
+	}
+
+	// typeof(T): its token, then System.Type.GetTypeFromHandle.
+	function pushTypeOf(t:IlSigNorm):Void {
+		var handle = LValueType({ns: ["System"], nested: [], name: "RuntimeTypeHandle"}, []);
+		code.opToken(IlOps.LDTOKEN, g.typeTokenOf(t), 0, 1);
+		code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(systemType), "GetTypeFromHandle", g.sigs.method(false, systemType, [handle], 0)), 1, 1);
+	}
+
+	// C#'s `lock (obj) block`: Monitor.Enter on the object, then the block in a try whose finally calls
+	// Monitor.Exit. A type expression locks its System.Type, as gencs writes `lock(typeof(T))`.
+	function lock(obj:TExpr, block:TExpr):Void {
+		if (code.depth != 0) throw new Unsupported("`lock` inside expressions", false);
+		if (strip(obj).expr.match(TTypeExpr(_))) pushTypeOf(typeArg(obj)) else tl.texpr(RValue(LObject), obj);
+		var held = code.addLocal(LObject);
+		code.stloc(held);
+		var enter = g.mb.memberRef(g.typeTokenOf(monitor), "Enter", g.sigs.method(false, LVoid, [LObject], 0));
+		var exit = g.mb.memberRef(g.typeTokenOf(monitor), "Exit", g.sigs.method(false, LVoid, [LObject], 0));
+		code.ldloc(held);
+		code.opToken(IlOps.CALL, enter, 1, 0);
+		tl.flow.tryFinally(() -> tl.texpr(RVoid, block), () -> {
+			code.ldloc(held);
+			code.opToken(IlOps.CALL, exit, 1, 0);
+		});
 	}
 
 	// The overload a call of a Haxe method reaches, as the JVM generator picks it.
@@ -602,6 +696,14 @@ class TexprCalls {
 
 	// a[i]: ldelem on a native array, Array's __get on an Array.
 	function arrayRead(ret:Ret, e1:TExpr, e2:TExpr):Void {
+		if (tl.sig(e1.type).match(LString)) {
+			// s[i] on a String is C#'s indexer, a Char16.
+			tl.texpr(RValue(LString), e1);
+			tl.texpr(RValue(indexSig(e2)), e2);
+			callString("get_Chars", LChar, [LInt32]);
+			tl.coerce(LChar, ret);
+			return;
+		}
 		if (isNativeArray(e1.type)) {
 			var elem = pushArrayAndIndex(e1, e2);
 			code.opToken(IlOps.LDELEM, g.typeTokenOf(elem), 2, 1);

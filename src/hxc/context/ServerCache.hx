@@ -83,7 +83,8 @@ class ServerCache {
 				if (recursive) loop(full + "/");
 			}
 		}
-		for (dir in paths) loop(StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") || dir == "" ? dir : dir + "/");
+		// The .NET runtime's root is no directory.
+		for (dir in paths) if (!hxc.codegen.dotnet.RuntimeSources.isVirtual(dir)) loop(StringTools.endsWith(dir, "/") || StringTools.endsWith(dir, "\\") || dir == "" ? dir : dir + "/");
 		return acc;
 	}
 

@@ -84,6 +84,8 @@ static bool hxc_unix_stat_times(::String file, Array<Float> out) {
 #end
 class FileTime {
 	public static function fileTime(path:String):Float {
+		// The .NET runtime's files embedded in hxc never change while it runs.
+		if (hxc.codegen.dotnet.RuntimeSources.isVirtual(path)) return 0.0;
 		#if cpp
 		return untyped __cpp__("hxc_sys_filetime({0})", path);
 		#else
@@ -93,6 +95,7 @@ class FileTime {
 
 	// Unix.stat's st_atime, st_mtime and st_ctime in seconds, or null where it raises.
 	public static function statTimes(path:String):Null<{atime:Float, mtime:Float, ctime:Float}> {
+		if (hxc.codegen.dotnet.RuntimeSources.isVirtual(path)) return null;
 		#if cpp
 		var out:Array<Float> = [0.0, 0.0, 0.0];
 		var ok:Bool = untyped __cpp__("hxc_unix_stat_times({0}, {1})", path, out);

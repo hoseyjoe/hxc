@@ -61,6 +61,13 @@ class DotnetTypes {
 	// The class type parameters signatures are being written in terms of.
 	public function currentClassParams():TypeParams return classParams;
 
+	// The type parameter in scope with this name, the method's before the class's, or null.
+	public function paramNamed(name:String):Null<T> {
+		for (p in methodParams) if (p.name == name) return p.type;
+		for (p in classParams) if (p.name == name) return p.type;
+		return null;
+	}
+
 	public function inParams(classParams:TypeParams, methodParams:TypeParams, f:() -> Void):Void {
 		withParams(classParams, methodParams, () -> {
 			f();

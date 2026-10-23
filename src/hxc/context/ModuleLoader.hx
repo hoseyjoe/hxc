@@ -89,7 +89,9 @@ class ModuleLoader {
 	static function cacheDirectory(ctx:Context, cp:String, dir:String, fDir:String):Void {
 		var platformExt = "." + (ctx.defines.rawDefined("macro") ? "macro" : hxc.core.Globals.platformName(ctx.platform));
 		var isLoadingCoreApi = ctx.defines.rawDefined("core_api");
-		var listing:Null<Array<String>> = try FileSystem.readDirectory(dir) catch (_:Dynamic) null;
+		// The .NET runtime's root lists the files embedded in hxc instead of a directory.
+		var listing:Null<Array<String>> = if (hxc.codegen.dotnet.RuntimeSources.isVirtual(cp)) hxc.codegen.dotnet.RuntimeSources.readDirectory(dir)
+			else try FileSystem.readDirectory(dir) catch (_:Dynamic) null;
 		ctx.readdirCache.set(cp + "\n" + dir, listing);
 		if (listing == null) return;
 		for (fileOwnName in listing) {
@@ -185,6 +187,12 @@ class ModuleLoader {
 	}
 
 	public static function moduleFileContent(ctx:Context, file:String):String {
+		// A file of the .NET runtime embedded in hxc, registered so diagnostics can quote it.
+		if (hxc.codegen.dotnet.RuntimeSources.isVirtual(file)) {
+			var content = hxc.codegen.dotnet.RuntimeSources.content(file);
+			if (content == null) throw "no embedded file " + file;
+			return Position.registerFileContent(file, content);
+		}
 		if (ctx.fileContents.length > 0) {
 			for (fc in ctx.fileContents) {
 				if (fc.contents == null) continue;

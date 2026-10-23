@@ -567,7 +567,10 @@ class Context {
 	public function cloneForMacro():Context {
 		// Remove target overlays and prepend eval/_std before user and library paths. Otherwise libraries
 		// such as hxnodejs can supply incompatible macro-world sys modules.
-		var macroCp = [for (s in this.classPath) if (StringTools.replace(s, "\\", "/").indexOf("/_std/") < 0) s];
+		var macroCp = [
+			for (s in this.classPath)
+				if (StringTools.replace(s, "\\", "/").indexOf("/_std/") < 0 && !hxc.codegen.dotnet.RuntimeSources.isVirtual(s)) s
+		];
 		macroCp = [for (p in this.stdPath) p + "eval/_std/"].concat(macroCp);
 		var c = new Context(macroCp, Define.adaptToMacroContext(this.defines));
 		c.stdPath = this.stdPath.copy();

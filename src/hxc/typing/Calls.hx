@@ -917,6 +917,8 @@ class Calls {
 	}
 
 	static function relativePosInfosFile(ctx:TyperContext, pfile:String):String {
+		// A file of the .NET runtime embedded in hxc, relative to its root.
+		if (hxc.codegen.dotnet.RuntimeSources.isVirtual(pfile)) return pfile.substr(hxc.codegen.dotnet.RuntimeSources.ROOT.length);
 		var fpath = StringTools.replace(sys.FileSystem.absolutePath(pfile), "\\", "/");
 		var fpathLower = fpath.toLowerCase();
 		for (cp in ctx.com.classPath) {

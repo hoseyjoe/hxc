@@ -1909,3 +1909,77 @@ class P {
 ===
 [run]
 101390
+--- runtime-comes-from-hxc @dump=haxe.lang.FieldTable
+class P {
+	static function main() {}
+}
+===
+[dump]
+type public sealed beforefieldinit haxe.lang.FieldTable extends [mscorlib]System.Object
+  field public int32[] ids
+  field public string[] names
+  method public hidebysig specialname rtspecialname void .ctor(int32[], string[])
+--- lock-refs-and-magic-identifiers @gencs
+class P {
+	static var count = 0;
+	@:volatile static var flag = 1;
+
+	static function locked(n:Int):Int {
+		cs.Lib.lock(P, {
+			if (n > 2)
+				return n * 10;
+			count += n;
+		});
+		return count;
+	}
+
+	static function bump(r:cs.Ref<Int>, by:Int):Void {
+		r += by;
+		var copy = r;
+		r = copy * 2;
+	}
+
+	static function main() {
+		Sys.println(locked(1));
+		Sys.println(locked(5));
+		var i = 0;
+		while (i < 10) {
+			cs.Lib.lock(P, {
+				i++;
+				if (i == 3)
+					break;
+			});
+		}
+		Sys.println(i);
+		var o:Dynamic = "text";
+		var s:String = cs.Lib.as(o, String);
+		Sys.println(s);
+		var n:Dynamic = 5;
+		Sys.println(cs.Lib.as(n, String) == null);
+		var isString:Bool = untyped __is__(o, String);
+		var isInt:Bool = untyped __is__(o, Int);
+		Sys.println(isString + " " + isInt);
+		var t:cs.system.Type = untyped __typeof__(String);
+		Sys.println(t.FullName);
+		var x = 1;
+		bump(x, 41);
+		Sys.println(x);
+		var str = "AZ";
+		var c:Int = cast str[1];
+		Sys.println(c);
+		flag += 2;
+		Sys.println(flag);
+	}
+}
+===
+[run]
+1
+50
+3
+text
+True
+true false
+System.String
+84
+90
+3

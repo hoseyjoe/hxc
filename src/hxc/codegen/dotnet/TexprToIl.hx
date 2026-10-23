@@ -109,7 +109,15 @@ class TexprToIl {
 
 	static inline function needVal(ret:Ret):Bool return ret.match(RValue(_));
 
-	inline function sig(t:T):IlSigNorm return g.types.toSig(t);
+	// The type of a value of type `t`. A cs.Ref or cs.Out is a parameter's own type only: a variable or
+	// value of that type, such as `var node = head` for a cs.Ref parameter `head`, has the referenced type,
+	// as in C#.
+	function sig(t:T):IlSigNorm {
+		return switch (g.types.toSig(t)) {
+			case LManagedPointer(s): s;
+			case s: s;
+		}
+	}
 
 	static function isTypeParam(s:IlSigNorm):Bool return s.match(LTypeParam(_) | LMethodTypeParam(_));
 
@@ -143,6 +151,8 @@ class TexprToIl {
 		if (isHaxeNull(from) || isHaxeNull(to)) throw new Unsupported("Null<T> of a value type", false);
 		// Int and UInt are both an int32 on the stack.
 		if (isIntLike(from) && isIntLike(to)) return;
+		// So is a smaller integer, widened as C# does implicitly.
+		if (from.match(LChar | LInt8 | LUInt8 | LInt16 | LUInt16) && to.match(LInt32)) return;
 		var fromValue = DotnetTypes.isValueType(from) || isTypeParam(from);
 		var toValue = DotnetTypes.isValueType(to) || isTypeParam(to);
 		if (fromValue && !toValue) {
@@ -224,12 +234,40 @@ class TexprToIl {
 	static function isReference(s:IlSigNorm):Bool return s.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _));
 
 	function slot(v:TVar):Slot {
+		var s = anySlot(v);
+		if (s.sig.match(LManagedPointer(_))) throw new Unsupported("cs.Ref and cs.Out parameters", true);
+		return s;
+	}
+
+	// The slot of a variable, a cs.Ref or cs.Out parameter's too.
+	function anySlot(v:TVar):Slot {
 		var s = slots.get(v.id);
 		// The statement using it is not reported again: the declaration already was.
 		if (s == null && poisoned.exists(v.id)) throw new Unsupported("a variable whose declaration failed", false);
 		if (s == null) throw "internal error: unbound variable " + v.name;
-		if (s.sig.match(LManagedPointer(_))) throw new Unsupported("cs.Ref and cs.Out parameters", true);
 		return s;
+	}
+
+	// The type of the variable a cs.Ref or cs.Out parameter's slot holds the address of, else null.
+	static function refTarget(s:Slot):Null<IlSigNorm> {
+		return switch (s.sig) {
+			case LManagedPointer(t): t;
+			case _: null;
+		}
+	}
+
+	// Through the address on the stack, as C# reads and writes a ref parameter.
+	function loadIndirect(t:IlSigNorm):Void {
+		if (DotnetTypes.isValueType(t) || isTypeParam(t)) code.opToken(IlOps.LDOBJ, g.typeTokenOf(t), 1, 1) else code.op(IlOps.LDIND_REF, 1, 1);
+	}
+
+	function storeIndirect(t:IlSigNorm):Void {
+		if (DotnetTypes.isValueType(t) || isTypeParam(t)) code.opToken(IlOps.STOBJ, g.typeTokenOf(t), 2, 0) else code.op(IlOps.STIND_REF, 2, 0);
+	}
+
+	// The prefix a load or store of a @:volatile field takes, as C# compiles a volatile field's.
+	function volatilePrefix(cf:TClassField):Void {
+		if (TypeFunctions.hasMeta(":volatile", cf.meta)) code.op(IlOps.VOLATILE, 0, 0);
 	}
 
 	function load(s:Slot):Void {
@@ -272,9 +310,11 @@ class TexprToIl {
 			case TConst(TSuper):
 				throw new Unsupported("`super`", false);
 			case TLocal(v):
-				var s = slot(v);
+				var s = anySlot(v);
+				var target = refTarget(s);
 				load(s);
-				coerce(s.sig, ret);
+				if (target != null) loadIndirect(target);
+				coerce(target != null ? target : s.sig, ret);
 			case TVarExpr(v, init):
 				// A variable of a type not supported yet is reported after what its initializer uses.
 				var s = try sig(v.type) catch (u:Unsupported) {
@@ -450,6 +490,17 @@ class TexprToIl {
 
 	function assign(ret:Ret, lhs:TExpr, rhs:TExpr):Void {
 		switch (lhs.expr) {
+			case TLocal(v) if (refTarget(anySlot(v)) != null):
+				var s = anySlot(v);
+				var target = refTarget(s);
+				load(s);
+				texpr(RValue(target), rhs);
+				var tmp = needVal(ret) ? ops.keepTop(target) : -1;
+				storeIndirect(target);
+				if (tmp >= 0) {
+					code.ldloc(tmp);
+					coerce(target, ret);
+				}
 			case TLocal(v):
 				var s = slot(v);
 				texpr(RValue(s.sig), rhs);
@@ -477,6 +528,7 @@ class TexprToIl {
 				var f = staticField(c, cf);
 				texpr(RValue(f.sig), rhs);
 				if (needVal(ret)) code.op(IlOps.DUP, 1, 2);
+				volatilePrefix(cf);
 				code.opToken(IlOps.STSFLD, f.token, 1, 0);
 				if (needVal(ret)) coerce(f.sig, ret);
 			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c)):
@@ -484,6 +536,7 @@ class TexprToIl {
 				calls.receiver(obj, f.owner, true);
 				texpr(RValue(f.sig), rhs);
 				var tmp = needVal(ret) ? ops.keepTop(f.sig) : -1;
+				volatilePrefix(cf);
 				code.opToken(IlOps.STFLD, f.token, 2, 0);
 				if (tmp >= 0) {
 					code.ldloc(tmp);
@@ -592,6 +645,19 @@ class TexprToIl {
 						}
 					}
 				};
+			case TLocal(v) if (refTarget(anySlot(v)) != null):
+				var s = anySlot(v);
+				var target = refTarget(s);
+				return {
+					sig: target,
+					receiver: true,
+					prepare: () -> load(s),
+					load: () -> {
+						code.op(IlOps.DUP, 1, 2);
+						loadIndirect(target);
+					},
+					store: () -> storeIndirect(target)
+				};
 			case TLocal(v):
 				var s = slot(v);
 				return {sig: s.sig, receiver: false, prepare: () -> {}, load: () -> load(s), store: () -> store(s)};
@@ -601,8 +667,14 @@ class TexprToIl {
 					sig: f.sig,
 					receiver: false,
 					prepare: () -> {},
-					load: () -> code.opToken(IlOps.LDSFLD, f.token, 0, 1),
-					store: () -> code.opToken(IlOps.STSFLD, f.token, 1, 0)
+					load: () -> {
+						volatilePrefix(cf);
+						code.opToken(IlOps.LDSFLD, f.token, 0, 1);
+					},
+					store: () -> {
+						volatilePrefix(cf);
+						code.opToken(IlOps.STSFLD, f.token, 1, 0);
+					}
 				};
 			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
 				var f = calls.instanceField(c, cparams, cf);
@@ -612,9 +684,13 @@ class TexprToIl {
 					prepare: () -> calls.receiver(obj, f.owner, true),
 					load: () -> {
 						code.op(IlOps.DUP, 1, 2);
+						volatilePrefix(cf);
 						code.opToken(IlOps.LDFLD, f.token, 1, 1);
 					},
-					store: () -> code.opToken(IlOps.STFLD, f.token, 2, 0)
+					store: () -> {
+						volatilePrefix(cf);
+						code.opToken(IlOps.STFLD, f.token, 2, 0);
+					}
 				};
 			case _:
 				return null;

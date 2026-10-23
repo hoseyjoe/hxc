@@ -36,6 +36,8 @@ class IlOps {
 	public static inline var BLE = 0x3E;
 	public static inline var BLT = 0x3F;
 	public static inline var BNE_UN = 0x40;
+	public static inline var LDIND_REF = 0x50;
+	public static inline var STIND_REF = 0x51;
 	public static inline var ADD = 0x58;
 	public static inline var SUB = 0x59;
 	public static inline var MUL = 0x5A;
@@ -67,6 +69,7 @@ class IlOps {
 	public static inline var LDSFLD = 0x7E;
 	public static inline var LDSFLDA = 0x7F;
 	public static inline var STSFLD = 0x80;
+	public static inline var STOBJ = 0x81;
 	public static inline var CONV_R_UN = 0x76;
 	public static inline var BOX = 0x8C;
 	public static inline var NEWARR = 0x8D;
@@ -74,6 +77,8 @@ class IlOps {
 	public static inline var LDELEM = 0xA3;
 	public static inline var STELEM = 0xA4;
 	public static inline var UNBOX_ANY = 0xA5;
+	public static inline var LDTOKEN = 0xD0;
+	public static inline var ENDFINALLY = 0xDC;
 	public static inline var LEAVE = 0xDD;
 	public static inline var CEQ = 0xFE01;
 	public static inline var CGT = 0xFE02;
@@ -86,11 +91,16 @@ class IlOps {
 	public static inline var LDLOC = 0xFE0C;
 	public static inline var LDLOCA = 0xFE0D;
 	public static inline var STLOC = 0xFE0E;
+	public static inline var VOLATILE = 0xFE13;
 	public static inline var INITOBJ = 0xFE15;
 	public static inline var RETHROW = 0xFE1A;
 }
 
 typedef Label = Int;
+
+// An open protected region: where the block and the current handler start, the handler's kind (0 a
+// catch clause, 2 a finally) and caught class, and the clauses of the handlers already ended.
+private typedef TryBlock = {start:Int, end:Int, handler:Int, flags:Int, classToken:Int, clauses:Array<Array<Int>>};
 
 // One method's IL: the instruction bytes, the evaluation stack depth after each instruction and its
 // maximum, labels with the depth each is reached at, local types and exception clauses. Instructions
@@ -103,7 +113,7 @@ class IlCode {
 	// A label's offset (-1 until marked) and the depth it is reached at (-1 until known).
 	final labelPos:Array<Int> = [];
 	final labelDepth:Array<Int> = [];
-	final tries:Array<{start:Int, end:Int, handler:Int, classToken:Int, clauses:Array<Array<Int>>}> = [];
+	final tries:Array<TryBlock> = [];
 	final clauses:Array<Array<Int>> = [];
 	final what:String;
 	final code = new IlBytes();
@@ -177,7 +187,8 @@ class IlCode {
 
 	// After these, nothing falls through.
 	function transfers(code:Int):Bool {
-		return code == IlOps.BR || code == IlOps.LEAVE || code == IlOps.RET || code == IlOps.THROW || code == IlOps.RETHROW;
+		return code == IlOps.BR || code == IlOps.LEAVE || code == IlOps.RET || code == IlOps.THROW || code == IlOps.RETHROW
+			|| code == IlOps.ENDFINALLY;
 	}
 
 	public function op(code:Int, pops:Int, pushes:Int):Void {
@@ -295,7 +306,7 @@ class IlCode {
 	// A try block starts on an empty stack and ends with a `leave` the caller emits.
 	public function beginTry():Void {
 		if (depth != 0) fail("a try block entered with a non-empty stack");
-		tries.push({start: code.length, end: -1, handler: -1, classToken: 0, clauses: []});
+		tries.push({start: code.length, end: -1, handler: -1, flags: 0, classToken: 0, clauses: []});
 	}
 
 	// Ends the try block or the previous handler and starts a handler, which has the exception on the
@@ -306,15 +317,30 @@ class IlCode {
 		closeHandler(t);
 		if (t.end < 0) t.end = code.length;
 		t.handler = code.length;
+		t.flags = 0;
 		t.classToken = classToken;
 		if (depth >= 0) fail("a try block or handler that falls through");
 		depth = 1;
 		if (maxStack < 1) maxStack = 1;
 	}
 
-	function closeHandler(t:{start:Int, end:Int, handler:Int, classToken:Int, clauses:Array<Array<Int>>}):Void {
+	// Ends the try block and starts its finally handler, which starts on an empty stack and ends with
+	// `endfinally`. A try block with a finally handler has no other handler.
+	public function beginFinally():Void {
+		var t = tries[tries.length - 1];
+		if (t == null) fail("a finally outside a try");
+		if (t.end >= 0) fail("a finally after another handler");
+		t.end = code.length;
+		t.handler = code.length;
+		t.flags = 2;
+		t.classToken = 0;
+		if (depth >= 0) fail("a try block that falls through");
+		depth = 0;
+	}
+
+	function closeHandler(t:TryBlock):Void {
 		if (t.handler < 0) return;
-		t.clauses.push([0, t.start, t.end - t.start, t.handler, code.length - t.handler, t.classToken]);
+		t.clauses.push([t.flags, t.start, t.end - t.start, t.handler, code.length - t.handler, t.classToken]);
 		t.handler = -1;
 	}
 

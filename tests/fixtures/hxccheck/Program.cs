@@ -1,6 +1,7 @@
 // Checks assemblies written by hxc's .NET generator.
 //   verify <dll>          ILVerify over method bodies and type definitions
 //   dump <dll> <items>    prints the metadata named by a comma-separated item list
+//   stress-fieldlookup <dll>  calls the assembly's haxe.lang.FieldLookup from many threads at once
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -12,14 +13,82 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using ILVerify;
 
 static class Program {
 	static int Main(string[] args) {
 		if (args.Length == 2 && args[0] == "verify") return Verify(Path.GetFullPath(args[1]));
 		if (args.Length == 3 && args[0] == "dump") return Dump(Path.GetFullPath(args[1]), args[2]);
-		Console.Error.WriteLine("usage: HxcCheck verify <dll> | dump <dll> <items>");
+		if (args.Length == 2 && args[0] == "stress-fieldlookup") return StressFieldLookup(Path.GetFullPath(args[1]));
+		Console.Error.WriteLine("usage: HxcCheck verify <dll> | dump <dll> <items> | stress-fieldlookup <dll>");
 		return 2;
+	}
+
+	// hxcs's FieldLookup.doHash: over the UTF-16 code units, kept positive.
+	static int FieldHash(string s) {
+		var acc = 0;
+		foreach (var c in s) acc = unchecked((223 * (acc >> 1) + c) << 1);
+		return (int)((uint)acc >> 1);
+	}
+
+	// From 16 threads at once, each calls FieldLookup.hash on 2,000 names no thread used before, and
+	// lookupHash on each result right away and again at the end: every name must hash as hxcs hashes it
+	// and map back exactly. A name whose hash another name already owns hashes to ~hash, as in hxcs, and
+	// that other name must be the one lookupHash gives. Any exception fails too (server app issue 6551).
+	static int StressFieldLookup(string path) {
+		const int threads = 16, perThread = 2000;
+		var type = Assembly.LoadFrom(path).GetType("haxe.lang.FieldLookup", true)!;
+		var hash = type.GetMethod("hash", [typeof(string)])!.CreateDelegate<Func<string, int>>();
+		var lookupHash = type.GetMethod("lookupHash", [typeof(int)])!.CreateDelegate<Func<int, string>>();
+		// Names that collide with none of the others, so a conflict can only be with a name the table
+		// started with.
+		var names = new string[threads][];
+		var taken = new HashSet<int>();
+		for (var t = 0; t < threads; t++) {
+			names[t] = new string[perThread];
+			var n = 0;
+			for (var i = 0; n < perThread; i++) {
+				var name = "stress_" + t + "_" + i;
+				if (taken.Add(FieldHash(name))) names[t][n++] = name;
+			}
+		}
+		var problems = new System.Collections.Concurrent.ConcurrentQueue<string>();
+		void Check(string name, int got) {
+			var want = FieldHash(name);
+			if (got == want) {
+				var back = lookupHash(got);
+				if (back != name) problems.Enqueue("lookupHash(" + got + ") of " + name + " gave " + (back ?? "null"));
+			} else if (got == ~want) {
+				var owner = lookupHash(want);
+				if (owner == name) problems.Enqueue(name + " hashed to ~" + want + " but owns it");
+			} else {
+				problems.Enqueue(name + " hashed to " + got + ", not " + want);
+			}
+		}
+		var start = new Barrier(threads);
+		var workers = new Thread[threads];
+		for (var t = 0; t < threads; t++) {
+			var mine = names[t];
+			workers[t] = new Thread(() => {
+				var got = new int[perThread];
+				start.SignalAndWait();
+				try {
+					for (var i = 0; i < perThread; i++) {
+						got[i] = hash(mine[i]);
+						Check(mine[i], got[i]);
+					}
+					for (var i = 0; i < perThread; i++) Check(mine[i], got[i]);
+				} catch (Exception e) {
+					problems.Enqueue(e.GetType().Name + ": " + e.Message);
+				}
+			});
+			workers[t].Start();
+		}
+		foreach (var w in workers) w.Join();
+		foreach (var p in problems.Take(20)) Console.WriteLine(p);
+		Console.WriteLine("stress-fieldlookup: " + threads * perThread + " names from " + threads + " threads, " + problems.Count + " problems");
+		return problems.IsEmpty ? 0 : 1;
 	}
 
 	static int Verify(string path) {

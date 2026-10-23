@@ -95,6 +95,9 @@ class Position {
 	public static function getFileContent(file:String):String {
 		var cached = fileCache.get(file);
 		if (cached != null) return cached.content;
+		// A file of the .NET runtime embedded in hxc, whose root is no directory.
+		var embedded = hxc.codegen.dotnet.RuntimeSources.content(file);
+		if (embedded != null) return registerFileContent(file, embedded);
 		// Read raw bytes so malformed UTF-8 can be detected before decoding.
 		var bytes = File.getBytes(file);
 		return registerFileContent(file, bytes.toString(), utf8FirstInvalid(bytes));

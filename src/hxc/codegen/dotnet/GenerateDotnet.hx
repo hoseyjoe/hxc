@@ -42,7 +42,8 @@ class DotnetCtx {
 		types = new DotnetTypes(ctx, mb);
 		sigs = new SigWriter(mb.typeToken);
 		externs = new ExternMembers(ctx, types);
-		stdRoots = [for (p in ctx.stdPath) normalizePath(p)];
+		// hxc's own copy of the hxcs runtime is standard library too.
+		stdRoots = [for (p in ctx.stdPath) normalizePath(p)].concat([normalizePath(RuntimeSources.ROOT)]);
 	}
 
 	static function normalizePath(p:String):String {
@@ -50,7 +51,7 @@ class DotnetCtx {
 		return Sys.systemName() == "Windows" ? s.toLowerCase() : s;
 	}
 
-	// Code from a file under one of the std directories.
+	// Code from a file under one of the std directories, or from the embedded runtime.
 	public function isStd(pos:Position):Bool {
 		var f = normalizePath(pos.file);
 		for (r in stdRoots) if (r != "" && StringTools.startsWith(f, r)) return true;
