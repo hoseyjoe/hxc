@@ -822,7 +822,7 @@ class TexprCalls {
 	function pushArrayAndIndex(e1:TExpr, e2:TExpr):IlSigNorm {
 		var vec = tl.sig(e1.type);
 		tl.texpr(RValue(vec), e1);
-		tl.texpr(RValue(indexSig(e2)), e2);
+		tl.nullOperand(RValue(indexSig(e2)), e2, false);
 		return vectorElement(vec);
 	}
 
@@ -831,7 +831,7 @@ class TexprCalls {
 		if (tl.sig(e1.type).match(LString)) {
 			// s[i] on a String is C#'s indexer, a Char16.
 			tl.texpr(RValue(LString), e1);
-			tl.texpr(RValue(indexSig(e2)), e2);
+			tl.nullOperand(RValue(indexSig(e2)), e2, false);
 			callString("get_Chars", LChar, [LInt32]);
 			tl.coerce(LChar, ret);
 			return;
@@ -845,7 +845,7 @@ class TexprCalls {
 		if (arrayOf(e1.type) == null) throw new Unsupported("array access", false);
 		var m = arrayAccessor(e1.type, "__get");
 		receiver(e1, m.owner);
-		tl.texpr(RValue(m.args[0]), e2);
+		tl.nullOperand(RValue(m.args[0]), e2, false);
 		code.opToken(IlOps.CALLVIRT, m.token, 2, 1);
 		tl.coerce(m.ret, ret);
 	}

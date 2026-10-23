@@ -66,7 +66,7 @@ class TexprOps {
 					throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 				// `+` is the operator HardNullableSynf unwraps itself; the others gencs casts first.
 				var add = op.match(OpAdd);
-				if (add) tl.nullOperand(RValue(t), e1) else tl.texpr(RValue(t), e1);
+				tl.nullOperand(RValue(t), e1, add);
 				numericTail(op, t, e2, s1, true, add);
 				tl.dyn.finish(t, own, ret);
 			case _:
@@ -89,7 +89,8 @@ class TexprOps {
 	// The left operand, of type `t` on the stack and `left` as typed, is there; this pushes the right
 	// one and applies `op`. A compound assignment does not promote: gencs casts its right side to the
 	// left's type, so the left type's own remainder applies.
-	// `keepNull`: the right operand is one HardNullableSynf unwraps itself (TexprToIl.nullOperand).
+	// `keepNull`: the right operand itself is one HardNullableSynf unwraps (TexprToIl.nullOperand);
+	// otherwise only its Null<T> tails are.
 	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr, left:IlSigNorm, promote = true, keepNull = false):Void {
 		var bad = new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		if (!isNumeric(t)) throw bad;
@@ -119,7 +120,7 @@ class TexprOps {
 				}
 				code.op(op.match(OpShl) ? IlOps.SHL : op.match(OpShr) && !unsigned ? IlOps.SHR : IlOps.SHR_UN, 2, 1);
 			case _:
-				if (keepNull) tl.nullOperand(RValue(t), e2) else tl.texpr(RValue(t), e2);
+				tl.nullOperand(RValue(t), e2, keepNull);
 				code.op(switch (op) {
 					case OpAdd: IlOps.ADD;
 					case OpSub: IlOps.SUB;
@@ -354,21 +355,21 @@ class TexprOps {
 		if (op.match(Neg | NegBits) && tl.dyn.unary(ret, e, op, e1)) return;
 		switch (op) {
 			case Not:
-				tl.texpr(RValue(LBool), e1);
+				tl.nullOperand(RValue(LBool), e1, false);
 				not();
 				tl.coerce(LBool, ret);
 			case Neg:
 				var own = tl.sig(e.type);
 				var t = tl.unNull(own);
 				if (!isNumeric(t)) throw new Unsupported("the - operator on these types", false);
-				tl.texpr(RValue(t), e1);
+				tl.nullOperand(RValue(t), e1, false);
 				code.op(IlOps.NEG, 1, 1);
 				tl.dyn.finish(t, own, ret);
 			case NegBits:
 				var own = tl.sig(e.type);
 				var t = tl.unNull(own);
 				if (!t.match(LInt32)) throw new Unsupported("the ~ operator on these types", false);
-				tl.texpr(RValue(t), e1);
+				tl.nullOperand(RValue(t), e1, false);
 				code.op(IlOps.NOT, 1, 1);
 				tl.dyn.finish(t, own, ret);
 			case Increment | Decrement:

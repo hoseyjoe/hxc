@@ -70,9 +70,9 @@ class TexprToIl {
 	final calls:TexprCalls;
 	final dyn:TexprDynamic;
 
-	// The operand nullOperand is lowering (stripped), whose Null<T> read through Runtime keeps its
+	// The expressions nullOperand marked (stripped): a Null<T> read through Runtime among them keeps its
 	// ofDynamic step.
-	var keepNull:Null<TExpr> = null;
+	final keepNull:Array<TExpr> = [];
 
 	// Set for user code: a statement that fails to lower is reported here and lowering goes on with
 	// the next one. Unset, the Unsupported propagates.
@@ -140,21 +140,43 @@ class TexprToIl {
 		}
 	}
 
-	// Lowers `e` as an operand that gencs's HardNullableSynf unwraps itself: of `+`, of an ordering
-	// comparison, of a string concatenation. Everywhere else a Null<T> field read through Runtime meets
-	// a cast CastDetect put there, and HardNullableSynf drops the Nullable step under it (an outer cast
-	// of a Null<T>-typed cast reruns with the outer type), so the object goes straight to the cast's type
-	// (TexprDynamic.fieldGet); here it goes through `ofDynamic<T>` and `.value` or `toDynamic()`.
-	function nullOperand(ret:Ret, e:TExpr):Void {
-		var old = keepNull;
-		keepNull = strip(e);
+	// Lowers `e` as an operand that gencs's HardNullableSynf unwraps itself. Everywhere else a Null<T>
+	// field read through Runtime meets a cast CastDetect put there, and HardNullableSynf drops the
+	// Nullable step under it (an outer cast of a Null<T>-typed cast reruns with the outer type), so the
+	// object goes straight to the cast's type (TexprDynamic.fieldGet); a marked read goes through
+	// `ofDynamic<T>` and `.value` or `toDynamic()`.
+	// `self`: `e` itself is marked, as an operand of `+`, of an ordering comparison or of a string
+	// concatenation is. Otherwise only the value tails of a Null<T>-typed conditional, switch or block
+	// are, as for the operands of the other operators, `==`, an index or `op=`: there a field read
+	// itself was cast first (by DynamicOperators or CastDetect), but a conditional typed Null<T> is
+	// unwrapped as a whole and its branches, typed Null<T> as well, keep ofDynamic.
+	function nullOperand(ret:Ret, e:TExpr, self = true):Void {
+		var n = keepNull.length;
+		markTails(e, self);
 		try {
 			texpr(ret, e);
 		} catch (x:Dynamic) {
-			keepNull = old;
+			keepNull.resize(n);
 			throw x;
 		}
-		keepNull = old;
+		keepNull.resize(n);
+	}
+
+	function markTails(e:TExpr, self:Bool):Void {
+		var s = strip(e);
+		if (self) keepNull.push(s);
+		if (!TexprDynamic.isNullType(s.type)) return;
+		switch (s.expr) {
+			case TIf(_, e1, e2):
+				markTails(e1, true);
+				if (e2 != null) markTails(e2, true);
+			case TSwitch(_, cases, def):
+				for (c in cases) markTails(c.expr, true);
+				if (def != null) markTails(def, true);
+			case TBlock(el) if (el.length > 0):
+				markTails(el[el.length - 1], true);
+			case _:
+		}
 	}
 
 	// A local the caller added and fills itself.

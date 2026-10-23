@@ -303,7 +303,7 @@ class TexprDynamic {
 		} else {
 			runtimeCall("getField", LObject);
 			switch (ret) {
-				case RValue(want) if (want != null && isNullType(resultType) && !tl.isHaxeNull(want) && !want.match(LString) && tl.keepNull != e):
+				case RValue(want) if (want != null && isNullType(resultType) && !tl.isHaxeNull(want) && !want.match(LString) && tl.keepNull.indexOf(e) < 0):
 					// A Null<T> read meets a cast to another type, which HardNullableSynf applies to the object
 					// itself (TexprToIl.nullOperand): `(object)getField(...)`, `Runtime.toDouble(getField(...))`.
 					tl.coerce(LObject, ret);
@@ -425,8 +425,8 @@ class TexprDynamic {
 				var isBasicOp = isBasic(e1.type) || isBasic(e2.type);
 				var isRef = !isBasicOp && !(isTDynamic(e1.type) || isTDynamic(e2.type) || isStringType(e1.type) || isStringType(e2.type)
 					|| isTypeParamType(e1.type) || isTypeParamType(e2.type));
-				tl.texpr(RValue(LObject), e1);
-				tl.texpr(RValue(LObject), e2);
+				tl.nullOperand(RValue(LObject), e1, false);
+				tl.nullOperand(RValue(LObject), e2, false);
 				runtimeCall(isRef ? "refEq" : "eq");
 				if (op.match(OpNotEq)) tl.ops.not();
 				finish(LBool, own(e), ret);
