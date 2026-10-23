@@ -33,7 +33,7 @@ output.
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
 | `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set |
-| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10, straight to IL with no C# step. Early: classes, interfaces, structs, generics, statics, strings, arrays and native .NET exceptions work; see [.NET output](#net-output) |
+| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes, interfaces, structs, generics, statics, strings, arrays and native .NET exceptions work; see [.NET output](#net-output) |
 | `--lua`, `--python`, `--php`, `--hl`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
@@ -104,9 +104,15 @@ host:port` connects out to a client that is listening instead.
 
 ### .NET output
 
-`--cs <dir> -D dotnet` writes `<dir>/<name>.dll` straight as IL, targeting .NET 10 (`net10.0`).
-With `-main` it also writes `<name>.runtimeconfig.json`, so `dotnet <name>.dll` runs it.
-`-D dll-name=<name>` sets the name; the default is the output directory's last segment.
+`--cs <dir> -D dotnet` writes `<dir>/<name>.dll` straight as IL, with no C# step. Like `--cs`, it needs
+hxcs (`haxelib install hxcs`): hxcs supplies the reference assemblies and the standard library's
+runtime sources. With `-main` it also writes `<name>.runtimeconfig.json` for `net10.0`, so
+`dotnet <name>.dll` runs the program on .NET 10. `-D dll-name=<name>` sets the name; the default is
+the output directory's last segment.
+
+The assembly's references resolve against hxcs's `netlib` directory for `-D net-ver` (default 20), or
+the directories given with `--net-std`. By default that means a reference to `mscorlib` 2.0.0.0,
+which .NET 10 forwards to its own libraries.
 
 This is milestone 2 of the .NET generator. Classes, interfaces, structs, generics, statics,
 operators, strings, arrays and native .NET exceptions work, including `try`/`catch`/`throw` of
@@ -116,10 +122,10 @@ anonymous objects, reflection, `haxe.Exception`-based throws and catches, casts 
 instantiations of a generic class, and `Null<T>` of value types.
 
 The standard library's hxcs runtime is partly stubbed until milestone 3; a stubbed method throws
-`System.NotSupportedException` when called. `-D dotnet-stub-report` prints what was skipped or
-stubbed, one sorted line each.
+`System.NotSupportedException` when called. `-D dotnet-stub-report` prints what was skipped,
+stubbed or ignored, one sorted line each.
 
-The tests need the .NET 10 SDK. They build `tests/fixtures/hxccheck`, compile each case twice to
+The tests need the .NET 10 SDK and hxcs installed globally. They build `tests/fixtures/hxccheck`, compile each case twice to
 check the output is deterministic, verify it with ILVerify, and run it:
 
 ```bash
