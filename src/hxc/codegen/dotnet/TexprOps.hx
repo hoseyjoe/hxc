@@ -161,6 +161,10 @@ class TexprOps {
 				unsigned = t.match(LUInt32);
 				tl.texpr(RValue(t), e1);
 				tl.texpr(RValue(t), e2);
+			} else if (equality && TexprToIl.clrEnum(e1.type) != null && TexprToIl.clrEnum(e1.type) == TexprToIl.clrEnum(e2.type)) {
+				// Two values of one CLR enum compare as their indices.
+				tl.texpr(RValue(s1), e1);
+				tl.texpr(RValue(s2), e2);
 			} else if (equality && s1.match(LBool) && s2.match(LBool)) {
 				tl.texpr(RValue(LBool), e1);
 				tl.texpr(RValue(LBool), e2);

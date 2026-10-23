@@ -8,6 +8,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
+import hxc.codegen.dotnet.HxGen;
 import hxc.codegen.dotnet.IlCode;
 import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.TexprToIl;
@@ -21,6 +22,16 @@ enum MethodKind {
 	MCctor;
 	// gencs's ToString for a class with toString():String, which returns this.toString().
 	MToString(toString:TClassField);
+	// An hxgen class's constructor taking haxe.lang.EmptyObject, which runs no constructor body.
+	MEmptyCtor;
+	// An hxgen class's real constructor: base(EmptyObject.EMPTY), or the parameterless base constructor
+	// when the body calls no super(...), then the static constructor with `this` and the arguments.
+	MSplitCtor(ctor:HaxeCtor);
+	// The static __hx_ctor_* method holding a constructor's initializers and body, `__hx_this` (its first
+	// argument) standing for `this` and super(...) calling the base class's static constructor.
+	MStaticCtor(ctor:HaxeCtor);
+	// A constructor cloned from the .NET base class's, under a class that descends from one.
+	MClonedCtor(ctor:HaxeCtor);
 }
 
 typedef MethodPlan = {
@@ -37,6 +48,10 @@ typedef MethodPlan = {
 };
 
 typedef FieldPlan = {cf:TClassField, name:String, flags:Int, sig:IlSigNorm};
+
+// A constructor of a class in gencs's class model: the real one, and the static one holding its body
+// (null when the class descends from a native type).
+typedef CtorPlan = {hx:HaxeCtor, real:MethodPlan, stat:Null<MethodPlan>};
 
 // What a class becomes, worked out before any row is written, so a class that cannot be declared
 // is left out without leaving rows behind. `c` is null for EntryPoint__Main.
@@ -58,6 +73,10 @@ typedef ClassPlan = {
 	// A generic class with a .cctor: gencs's `static bool __hx_init_called`, which lets the .cctor of
 	// only the first instantiation run, since the CLR runs one per instantiation.
 	initFlag:Bool,
+	// gencs's class model (HxGen): the constructors, null for a class outside it, and the constructor
+	// taking haxe.lang.EmptyObject.
+	ctors:Null<Array<CtorPlan>>,
+	emptyCtor:Null<MethodPlan>,
 	token:Int
 };
 
@@ -91,6 +110,10 @@ class FieldAttrs {
 	public static inline var PRIVATE = 0x1;
 	public static inline var PUBLIC = 0x6;
 	public static inline var STATIC = 0x10;
+	public static inline var LITERAL = 0x40;
+	public static inline var SPECIAL_NAME = 0x200;
+	public static inline var RT_SPECIAL_NAME = 0x400;
+	public static inline var HAS_DEFAULT = 0x8000;
 }
 
 // A Haxe class as a TypeDef with its fields and methods. Every member is public, as gencs makes
@@ -140,6 +163,12 @@ class TclassToIl {
 			if (superSig != null) throw new Unsupported("structs that extend a class", true);
 			superSig = LClass(valueTypePath, []);
 		}
+		// gencs's class model, for an hxgen class that is not a struct (C# has no struct deriving from
+		// HxObject). Its constructor bodies move to static methods unless it descends from a native type.
+		var model = !isStruct && HxGen.hasCtorModel(c);
+		var split = model && !HxGen.descendsFromNative(c);
+		if (model && c.superClass == null && DotnetTypes.haxePath(TClassDecl(c)) != DotnetCtx.hxObjectPath)
+			superSig = LClass(g.types.stdClassPath(DotnetCtx.hxObjectPath, "haxe.lang.HxObject", false), []);
 		var interfaces = interfaceClosure(g, c);
 		if (isInterface) for (cf in c.orderedFields) if (cf.kind.match(Var(_))) throw at(new Unsupported("interface variables", true), cf.pos);
 		var implementing = isInterface ? new ObjectMap() : interfaceImpls(g, c, interfaces);
@@ -204,7 +233,54 @@ class TclassToIl {
 				});
 			} catch (u:Unsupported) throw at(u, f.pos);
 		}
-		if (c.constructor != null && !TypeFunctions.hasClassFieldFlag(c.constructor, CfExtern)) {
+		var ctors:Null<Array<CtorPlan>> = null;
+		var emptyCtor:Null<MethodPlan> = null;
+		var staticCtors:Array<MethodPlan> = [];
+		if (model) {
+			emptyCtor = ctorMethod(MEmptyCtor, [g.emptyObjectSig()], ["empty"], MethodAttrs.PUBLIC, c.pos);
+			methods.push(emptyCtor);
+			ctors = [];
+			for (hc in HxGen.ctors(c)) try {
+				var pos = hc.own != null ? hc.own.pos : c.pos;
+				var args = [for (a in hc.args) g.types.toSig(a.t)];
+				var names = [for (a in hc.args) a.name];
+				var kind = if (split) {
+					MSplitCtor(hc);
+				} else if (hc.own != null) {
+					if (!hasSuperCall(hc.own.expr)) checkParameterlessBase(g, c);
+					MField(hc.own);
+				} else if (hc.origin != null) {
+					MClonedCtor(hc);
+				} else {
+					checkParameterlessBase(g, c);
+					MImplicitCtor;
+				}
+				// A constructor cloned from a protected one stays protected, as gencs keeps @:protected.
+				var access = hc.own == null && hc.origin != null && TypeFunctions.hasMeta(":protected", hc.origin.meta) ? MethodAttrs.FAMILY : MethodAttrs.PUBLIC;
+				var real = ctorMethod(kind, args, names, access, pos);
+				methods.push(real);
+				var stat:Null<MethodPlan> = null;
+				if (split) {
+					// In a generic class, the static constructor has the class's type parameters as its own.
+					var self = g.types.withParams([], c.params, () -> g.types.toSig(TInst(c, TypeFunctions.extractParamTypes(c.params))));
+					var statArgs = g.types.withParams([], c.params, () -> [for (a in hc.args) g.types.toSig(a.t)]);
+					stat = {
+						kind: MStaticCtor(hc),
+						name: HxGen.ctorName(c),
+						flags: (TypeFunctions.hasClassFlag(c, CFinal) ? MethodAttrs.PRIVATE : MethodAttrs.FAMILY) | MethodAttrs.STATIC | MethodAttrs.HIDE_BY_SIG,
+						hasThis: false,
+						ret: LVoid,
+						args: [self].concat(statArgs),
+						argNames: ["__hx_this"].concat(names),
+						generics: [for (p in c.params) p.name + "_c"],
+						pos: pos,
+						token: 0
+					};
+					staticCtors.push(stat);
+				}
+				ctors.push({hx: hc, real: real, stat: stat});
+			} catch (u:Unsupported) throw at(u, hc.own != null ? hc.own.pos : c.pos);
+		} else if (c.constructor != null && !TypeFunctions.hasClassFieldFlag(c.constructor, CfExtern)) {
 			addMethod(c.constructor, false, true);
 		} else if (!isInterface && !isStruct) {
 			checkParameterlessBase(g, c);
@@ -226,6 +302,7 @@ class TclassToIl {
 				token: 0
 			});
 		}
+		for (m in staticCtors) methods.push(m);
 		for (cf in c.orderedStatics) addMethod(cf, true, false);
 		if (g.mainClass == c && c.path.name != "Main") methods.push(entryPoint(c.pos));
 
@@ -269,6 +346,8 @@ class TclassToIl {
 			thisSig: g.types.toSig(TInst(c, TypeFunctions.extractParamTypes(c.params))),
 			isStruct: isStruct,
 			initFlag: hasCctor && c.params.length > 0,
+			ctors: ctors,
+			emptyCtor: emptyCtor,
 			token: 0
 		};
 	}
@@ -493,6 +572,22 @@ class TclassToIl {
 		}
 	}
 
+	// A constructor of a class in gencs's class model.
+	static function ctorMethod(kind:MethodKind, args:Array<IlSigNorm>, names:Array<String>, access:Int, pos:Position):MethodPlan {
+		return {
+			kind: kind,
+			name: ".ctor",
+			flags: access | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME | MethodAttrs.RT_SPECIAL_NAME,
+			hasThis: true,
+			ret: LVoid,
+			args: args,
+			argNames: names,
+			generics: [],
+			pos: pos,
+			token: 0
+		};
+	}
+
 	static function implicitCtor(pos:Position, isAbstract:Bool):MethodPlan {
 		return {
 			kind: MImplicitCtor,
@@ -541,6 +636,8 @@ class TclassToIl {
 			thisSig: LClass(path, []),
 			isStruct: false,
 			initFlag: false,
+			ctors: null,
+			emptyCtor: null,
 			token: 0
 		};
 	}
@@ -569,6 +666,11 @@ class TclassToIl {
 					g.methodPlans.set(cf, m);
 					g.methodSigs.set(cf, {ret: m.ret, args: m.args});
 					g.ownerOf.set(cf, plan);
+				case MSplitCtor(hc) if (hc.own != null):
+					g.methodTokens.set(hc.own, m.token);
+					g.methodPlans.set(hc.own, m);
+					g.methodSigs.set(hc.own, {ret: m.ret, args: m.args});
+					g.ownerOf.set(hc.own, plan);
 				case MEntryPoint:
 					g.entryPoint = m.token;
 				case _:
@@ -599,6 +701,8 @@ class TclassToIl {
 			case MEntryPoint: "Main";
 			case MCctor: "__init__";
 			case MToString(_): "ToString";
+			case MEmptyCtor | MSplitCtor(_) | MClonedCtor(_): "new";
+			case MStaticCtor(_): "new";
 		}
 	}
 
@@ -607,20 +711,188 @@ class TclassToIl {
 	static function baseCtor(g:DotnetCtx, plan:ClassPlan, code:IlCode):Void {
 		var parent = plan.superSig == null ? LClass(objectPath, []) : plan.superSig;
 		var token = 0;
-		var superPlan = plan.c == null || plan.c.superClass == null ? null : g.planOf.get(plan.c.superClass.c);
+		var superPlan = superPlanOf(g, plan);
 		if (superPlan != null && parent.match(LClass(_, []))) for (m in superPlan.methods) if (m.name == ".ctor" && m.args.length == 0) token = m.token;
 		if (token == 0) token = g.mb.memberRef(g.typeTokenOf(parent), ".ctor", g.sigs.method(true, LVoid, [], 0));
 		code.ldarg(0);
 		code.opToken(IlOps.CALL, token, 1, 0);
 	}
 
-	static function descendsFromNative(c:TClass):Bool {
-		var s = c.superClass;
-		while (s != null) {
-			if (TypeFunctions.hasClassFlag(s.c, CExtern)) return true;
-			s = s.c.superClass;
+	// The plan of the type the class extends, when this module defines it: its Haxe superclass's, or for
+	// an hxgen class without one HxObject's.
+	static function superPlanOf(g:DotnetCtx, plan:ClassPlan):Null<ClassPlan> {
+		if (plan.c == null) return null;
+		if (plan.c.superClass != null) return g.planOf.get(plan.c.superClass.c);
+		if (plan.ctors == null) return null;
+		var h = g.runtimeClass(DotnetCtx.hxObjectPath);
+		return h == null || h == plan.c ? null : g.planOf.get(h);
+	}
+
+	// A constructor of the base type `parent`: its MethodDef token for a non-generic class, else a
+	// MemberRef on the instantiation.
+	static function ctorToken(g:DotnetCtx, parent:IlSigNorm, m:MethodPlan):Int {
+		if (parent.match(LClass(_, []))) return m.token;
+		return g.mb.memberRef(g.typeTokenOf(parent), ".ctor", g.sigs.method(true, LVoid, m.args, 0));
+	}
+
+	// base(EmptyObject.EMPTY): the base class's empty constructor.
+	static function emptyBaseCtor(g:DotnetCtx, plan:ClassPlan, code:IlCode):Void {
+		var superPlan = superPlanOf(g, plan);
+		if (superPlan == null || superPlan.emptyCtor == null) throw "internal error: the base class of " + plan.hxPath + " has no empty constructor";
+		code.ldarg(0);
+		code.ldcI4(0);
+		code.opToken(IlOps.CALL, ctorToken(g, plan.superSig, superPlan.emptyCtor), 2, 0);
+	}
+
+	// The constructor plan of a class in gencs's model that `origin` (null: the empty `new()`) reaches.
+	public static function ctorOf(plan:ClassPlan, origin:Null<TClassField>):CtorPlan {
+		for (cp in plan.ctors) if (cp.hx.origin == origin) return cp;
+		throw "internal error: " + plan.hxPath + " has no constructor for " + (origin == null ? "new()" : origin.name);
+	}
+
+	// A static constructor as a call reaches it: through the class's instantiation with object for each
+	// type parameter, with `margs` for the method's own, as gencs writes `C<object>.__hx_ctor_C<T>(...)`.
+	public static function staticCtorRef(g:DotnetCtx, plan:ClassPlan, stat:MethodPlan, margs:Array<IlSigNorm>):Int {
+		if (plan.classParams.length == 0) return stat.token;
+		var owner = DotnetCtx.instanceOf(plan, [for (_ in plan.classParams) LObject]);
+		var token = g.mb.memberRef(g.typeTokenOf(owner), stat.name, g.sigs.method(false, LVoid, stat.args, stat.generics.length));
+		return g.mb.methodSpec(token, g.sigs.methodSpec(margs));
+	}
+
+	// The real constructor of the Haxe class `plan` that `origin` reaches (null: its parameterless one).
+	static function realCtorOf(g:DotnetCtx, plan:ClassPlan, origin:Null<TClassField>):MethodPlan {
+		if (plan.ctors != null) return ctorOf(plan, origin).real;
+		var m = origin == null ? null : g.methodPlans.get(origin);
+		if (m == null) for (x in plan.methods) if (x.name == ".ctor" && x.kind.match(MImplicitCtor)) m = x;
+		if (m == null) throw "internal error: no constructor of " + plan.hxPath;
+		return m;
+	}
+
+	// C#'s default value of a type, as gencs passes `null` for each argument.
+	static function pushDefault(g:DotnetCtx, code:IlCode, t:IlSigNorm):Void {
+		if (DotnetTypes.isValueType(t) || t.match(LTypeParam(_) | LMethodTypeParam(_))) {
+			var tmp = code.addLocal(t);
+			code.ldloca(tmp);
+			code.opToken(IlOps.INITOBJ, g.typeTokenOf(t), 1, 0);
+			code.ldloc(tmp);
+		} else {
+			code.op(IlOps.LDNULL, 0, 1);
 		}
-		return false;
+	}
+
+	// The constructor of the native base class that `origin` names (null: the parameterless one), with
+	// the arguments `pushArgs` pushes after `this`.
+	static function nativeBaseCtor(g:DotnetCtx, plan:ClassPlan, code:IlCode, origin:Null<TClassField>, owner:Null<TClass>,
+			pushArgs:Array<IlSigNorm>->Void):Void {
+		var s = plan.c.superClass;
+		if (origin == null) {
+			baseCtor(g, plan, code);
+			return;
+		}
+		if (owner != s.c) throw new Unsupported("inherited .NET constructors", true);
+		var inst = [for (p in s.params) g.types.toSig(p)];
+		code.ldarg(0);
+		if (TypeFunctions.hasClassFlag(s.c, CExtern)) {
+			var m = g.externs.method(s.c, origin);
+			var parent = ExternMembers.subst(m.parent, inst);
+			var parentArgs = switch (parent) {
+				case LClass(_, l) | LValueType(_, l): l;
+				case _: [];
+			}
+			var args = switch (m.sig) {
+				case LMethod(_, _, l): [for (a in l) ExternMembers.subst(a, parentArgs)];
+				case _: throw "internal error: not a method signature";
+			}
+			pushArgs(args);
+			code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(parent), ".ctor", g.sigs.methodSig(m.sig, 0)), args.length + 1, 0);
+		} else {
+			var m = realCtorOf(g, g.planOf.get(s.c), origin);
+			var args = [for (a in m.args) DotnetTypes.substitute(a, inst, [])];
+			pushArgs(args);
+			code.opToken(IlOps.CALL, ctorToken(g, plan.superSig, m), args.length + 1, 0);
+		}
+	}
+
+	// gencs's empty constructor: base(EmptyObject.EMPTY) under an hxgen class, the native base class's
+	// constructor with the fewest parameters given nulls under a native one, nothing (the parameterless
+	// one) at the root.
+	static function emptyCtorBody(g:DotnetCtx, plan:ClassPlan, code:IlCode):Void {
+		var s = plan.c.superClass;
+		var superPlan = superPlanOf(g, plan);
+		if (s == null) {
+			baseCtor(g, plan, code);
+		} else if (superPlan != null && superPlan.emptyCtor != null) {
+			emptyBaseCtor(g, plan, code);
+		} else {
+			// The first with the fewest, looking at the main constructor (listed last) before its overloads.
+			var prev = HxGen.previousCtors(plan.c);
+			var best = null;
+			if (prev.length > 0) for (p in [prev[prev.length - 1]].concat(prev.slice(0, prev.length - 1)))
+				if (best == null || p.args.length < best.args.length) best = p;
+			if (best == null) {
+				baseCtor(g, plan, code);
+			} else {
+				nativeBaseCtor(g, plan, code, best.origin, best.owner, args -> for (a in args) pushDefault(g, code, a));
+			}
+		}
+		code.op(IlOps.RET, 0, 0);
+	}
+
+	static function functionOf(cf:TClassField, what:String):TFunc {
+		return switch (cf.expr.expr) {
+			case TFunction(tf): tf;
+			case _: throw "internal error: method " + what + " has no function";
+		}
+	}
+
+	// An hxgen class's real constructor: base(EmptyObject.EMPTY) when its body calls super(...) (which
+	// the static constructor does), else the parameterless base constructor C# calls implicitly; then the
+	// static constructor with `this` and the arguments.
+	static function splitCtorBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, hc:HaxeCtor, code:IlCode):Void {
+		var callsSuper = hc.own != null ? hasSuperCall(hc.own.expr) : hc.origin != null;
+		if (callsSuper) emptyBaseCtor(g, plan, code) else baseCtor(g, plan, code);
+		var stat = ctorOf(plan, hc.origin).stat;
+		for (i in 0...m.args.length + 1) code.ldarg(i);
+		var token = staticCtorRef(g, plan, stat, [for (i in 0...plan.classParams.length) LTypeParam(i)]);
+		code.opToken(IlOps.CALL, token, m.args.length + 1, 0);
+		code.op(IlOps.RET, 0, 0);
+	}
+
+	// The static constructor: the initializers, then the constructor's body, or for a cloned one the
+	// base class's static constructor with the arguments.
+	static function staticCtorBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, hc:HaxeCtor, code:IlCode, lower:TexprToIl, what:String):Void {
+		var c = plan.c;
+		if (hc.own != null) {
+			if (TypeFunctions.hasMeta(":functionCode", hc.own.meta)) throw new Unsupported("@:functionCode", false, hc.own.pos);
+			var tf = functionOf(hc.own, what);
+			for (i in 0...tf.args.length) {
+				var a = tf.args[i];
+				if (a.c != null) throw new Unsupported("default argument values", true, hc.own.pos);
+				lower.bindArg(a.v, i + 1, m.args[i + 1]);
+			}
+			statement(lower, RReturn, withInits(c, tf.expr));
+			return;
+		}
+		var inits = fieldInits(c);
+		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: c.pos});
+		if (hc.origin != null) {
+			var s = c.superClass;
+			var superPlan = g.planOf.get(s.c);
+			var margs = [for (p in s.params) g.types.toSig(p)];
+			var stat = ctorOf(superPlan, hc.origin).stat;
+			for (i in 0...m.args.length) code.ldarg(i);
+			code.opToken(IlOps.CALL, staticCtorRef(g, superPlan, stat, margs), m.args.length, 0);
+		}
+	}
+
+	// A constructor cloned from a native base class's: that constructor with the arguments, then the
+	// initializers, which C# runs after it.
+	static function clonedCtorBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, hc:HaxeCtor, code:IlCode, lower:TexprToIl):Void {
+		var owner = null;
+		for (p in HxGen.previousCtors(plan.c)) if (p.origin == hc.origin) owner = p.owner;
+		nativeBaseCtor(g, plan, code, hc.origin, owner, _ -> for (i in 0...m.args.length) code.ldarg(i + 1));
+		var inits = fieldInits(plan.c);
+		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: plan.c.pos});
 	}
 
 	// Instance var initializers, as gencommon's init_funcs moves them into constructors: @:readOnly
@@ -643,7 +915,7 @@ class TclassToIl {
 	}
 
 	// The constructor body with the initializers: before it, or after its leading super(...) when the
-	// class descends from a .NET class (whose constructor C# runs first).
+	// class descends from a native class (whose constructor C# runs first).
 	static function withInits(c:TClass, body:TExpr):TExpr {
 		var inits = fieldInits(c);
 		if (inits.length == 0) return body;
@@ -651,7 +923,7 @@ class TclassToIl {
 			case TBlock(el): el;
 			case _: [body];
 		}
-		var first = el.length > 0 && isSuperCall(el[0]) && descendsFromNative(c) ? 1 : 0;
+		var first = el.length > 0 && isSuperCall(el[0]) && HxGen.descendsFromNative(c) ? 1 : 0;
 		return {expr: TBlock(el.slice(0, first).concat(inits).concat(el.slice(first))), type: body.type, pos: body.pos};
 	}
 
@@ -660,7 +932,7 @@ class TclassToIl {
 	// .NET base, whose constructor C# runs first, the other way round.
 	static function initsAndBaseCtor(g:DotnetCtx, plan:ClassPlan, code:IlCode, lower:TexprToIl):Void {
 		var inits = plan.c == null ? [] : fieldInits(plan.c);
-		var native = plan.c != null && descendsFromNative(plan.c);
+		var native = plan.c != null && HxGen.descendsFromNative(plan.c);
 		if (native) baseCtor(g, plan, code);
 		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: plan.c.pos});
 		if (!native) baseCtor(g, plan, code);
@@ -682,6 +954,22 @@ class TclassToIl {
 				case MImplicitCtor:
 					initsAndBaseCtor(g, plan, code, lower);
 					if (failures.length == 0) lower.finish();
+				case MEmptyCtor:
+					emptyCtorBody(g, plan, code);
+				case MSplitCtor(hc):
+					splitCtorBody(g, plan, m, hc, code);
+				case MClonedCtor(hc):
+					clonedCtorBody(g, plan, m, hc, code, lower);
+					if (failures.length == 0) lower.finish();
+				case MStaticCtor(hc):
+					// `__hx_this`, the first argument, stands for `this`; the class's type parameters are the
+					// method's own.
+					lower.thisSig = m.args[0];
+					lower.splitCtor = true;
+					g.types.inParams([], plan.classParams, () -> {
+						staticCtorBody(g, plan, m, hc, code, lower, what);
+						if (failures.length == 0) lower.finish();
+					});
 				case MToString(cf):
 					code.ldarg(0);
 					code.opToken(plan.isStruct ? IlOps.CALL : IlOps.CALLVIRT, g.memberOf(plan, plan.thisSig, cf), 1, 1);

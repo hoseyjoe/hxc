@@ -92,6 +92,7 @@ class TexprFlow {
 	function switchExpr(ret:Ret, e:TExpr, subject:TExpr, cases:Array<TSwitchCase>, def:Null<TExpr>):Void {
 		if (def == null && needVal(ret)) throw new Unsupported("switch expressions without a default", true);
 		var r = valueRet(ret, e);
+		if (def == null && isExhaustive(subject)) tl.exhaustiveSwitch = true;
 		var st = tl.sig(subject.type);
 		var isString = st.match(LString);
 		if (!isString && !st.match(LInt32 | LBool)) throw new Unsupported("switch on this type", false);
@@ -131,6 +132,14 @@ class TexprFlow {
 			tl.texpr(r, def);
 		}
 		code.markIfUsed(end);
+	}
+
+	static function isExhaustive(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TMeta({name: ":exhaustive"}, _): true;
+			case TParenthesis(e1) | TMeta(_, e1): isExhaustive(e1);
+			case _: false;
+		}
 	}
 
 	// `return`: a `ret`, or inside a try a store to the return local and a `leave` to the label after

@@ -194,22 +194,27 @@ class DotnetTypes {
 
 	static final systemType:IlPath = {ns: ["System"], nested: [], name: "Type"};
 
-	var stdClasses:Null<Map<String, TClass>> = null;
+	var stdTypes:Null<Map<String, ModuleType>> = null;
 
-	// The CLR path of a standard-library class the mapping needs, which must be kept; without it, `what`
-	// is not supported.
-	function stdClassPath(hxPath:String, what:String, plural:Bool):IlPath {
-		if (stdClasses == null) {
-			stdClasses = new Map();
+	// The program's class or enum with this Haxe path, or null.
+	public function typeNamed(hxPath:String):Null<ModuleType> {
+		if (stdTypes == null) {
+			stdTypes = new Map();
 			for (mt in ctx.types) switch (mt) {
-				case TClassDecl(c): stdClasses.set(haxePath(mt), c);
+				case TClassDecl(_) | TEnumDecl(_): stdTypes.set(haxePath(mt), mt);
 				case _:
 			}
 		}
-		var c = stdClasses.get(hxPath);
-		if (c == null) throw new Unsupported(what, plural);
-		checkKept(TClassDecl(c));
-		return DotnetNames.typePath(TClassDecl(c));
+		return stdTypes.get(hxPath);
+	}
+
+	// The CLR path of a standard-library class or enum the mapping needs, which must be kept; without
+	// it, `what` is not supported.
+	public function stdClassPath(hxPath:String, what:String, plural:Bool):IlPath {
+		var mt = typeNamed(hxPath);
+		if (mt == null) throw new Unsupported(what, plural);
+		checkKept(mt);
+		return DotnetNames.typePath(mt);
 	}
 
 	// Replaces class type parameters with `classArgs` and method type parameters with `methodArgs`.
@@ -289,6 +294,8 @@ class DotnetTypes {
 			case TEnum(e, params):
 				if (!e.isExtern) {
 					checkKept(TEnumDecl(e));
+					// A @:nativeGen flat enum is a CLR enum.
+					if (HxGen.isClrEnum(e)) return LValueType(DotnetNames.typePath(TEnumDecl(e)), []);
 					throw new Unsupported("enums", true);
 				}
 				LValueType(defined(externPathOf(TEnumDecl(e))), []);

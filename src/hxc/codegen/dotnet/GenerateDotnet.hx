@@ -8,6 +8,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.IlData;
+import hxc.codegen.dotnet.IlMeta.IlConstant;
 import hxc.codegen.dotnet.IlMeta.TableIdx;
 import hxc.codegen.dotnet.TclassToIl;
 
@@ -165,6 +166,22 @@ class DotnetCtx {
 		return reaches(c, args);
 	}
 
+	// A class of hxc's runtime copy (haxe.lang.HxObject, IHxObject, ...) by its Haxe path, or null.
+	public function runtimeClass(hxPath:String):Null<TClass> {
+		return switch (types.typeNamed(hxPath)) {
+			case TClassDecl(c): c;
+			case _: null;
+		}
+	}
+
+	public static inline final hxObjectPath = "cs.internal.HxObject";
+	public static inline final iHxObjectPath = "cs.internal.IHxObject";
+
+	// haxe.lang.EmptyObject, the type of the argument of an hxgen class's empty constructor.
+	public function emptyObjectSig():IlSigNorm {
+		return LValueType(types.stdClassPath("cs.internal.EmptyObject", "haxe.lang.EmptyObject", false), []);
+	}
+
 	// cs.Boot.init's token when cs.Boot is one of the program's types, as gencs calls it. A cs.Boot
 	// that was left out throws, so the entry point reports it.
 	public function bootInit():Null<Int> {
@@ -222,10 +239,13 @@ class GenerateDotnet {
 		DotnetNames.noRoot = ctx.defines.rawDefined("no_root");
 
 		var candidates:Array<TClass> = [];
+		var enums:Array<TEnum> = [];
 		for (mt in ctx.types) switch (mt) {
 			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)):
 				candidates.push(c);
 				if (ctx.mainClass != null && Globals.sTypePath(c.path) == Globals.sTypePath(ctx.mainClass)) g.mainClass = c;
+			case TEnumDecl(e) if (HxGen.isClrEnum(e)):
+				enums.push(e);
 			case TEnumDecl(e) if (!e.isExtern):
 				leaveOut(g, mt, e.pos, new Unsupported("enums", true, e.pos));
 			case _:
@@ -241,6 +261,7 @@ class GenerateDotnet {
 		// Two classes with one CLR name, through @:native, would be two TypeDefs of that name: the second
 		// is left out.
 		var named = new Map<String, Bool>();
+		for (e in enums) named.set(IlPaths.key(DotnetNames.typePath(TEnumDecl(e))), true);
 		for (c in candidates) {
 			var mt = TClassDecl(c);
 			var path = DotnetNames.typePath(mt);
@@ -276,7 +297,10 @@ class GenerateDotnet {
 		g.plans = plans;
 
 		for (p in plans) p.token = mb.typeDef(p.flags, p.path);
+		// CLR enums come after the classes, their fields after the classes' fields.
+		var enumTokens = [for (e in enums) mb.typeDef(TypeAttrs.PUBLIC | TypeAttrs.SEALED, DotnetNames.typePath(TEnumDecl(e)))];
 		for (p in plans) TclassToIl.write(g, p);
+		for (i in 0...enums.length) writeEnum(g, enums[i], enumTokens[i]);
 		// GenericParam rows go in owner order, a TypeDef's before its methods'.
 		var generics = [];
 		for (p in plans) {
@@ -297,6 +321,20 @@ class GenerateDotnet {
 		if (!isDll && g.entryPoint == 0) throw "internal error: the program has no entry point";
 		sys.io.File.saveBytes(dir + "/" + name + ".dll", mb.finish(g.entryPoint));
 		if (!isDll) sys.io.File.saveContent(dir + "/" + name + ".runtimeconfig.json", runtimeConfig);
+	}
+
+	// gencs's C# enum for a @:nativeGen flat enum: `value__`, then a literal per constructor, numbered in
+	// declaration order.
+	static function writeEnum(g:DotnetCtx, e:TEnum, token:Int):Void {
+		var mb = g.mb;
+		mb.setExtends(token, mb.typeToken({ns: ["System"], nested: [], name: "Enum"}, false));
+		mb.field(token, FieldAttrs.PUBLIC | FieldAttrs.SPECIAL_NAME | FieldAttrs.RT_SPECIAL_NAME, "value__", g.sigs.field(LInt32));
+		var self = g.sigs.field(LValueType(DotnetNames.typePath(TEnumDecl(e)), []));
+		for (name in e.names) {
+			var ef = e.constrs.get(name);
+			var f = mb.field(token, FieldAttrs.PUBLIC | FieldAttrs.STATIC | FieldAttrs.LITERAL | FieldAttrs.HAS_DEFAULT, name, self);
+			mb.constant(f, IInt(ef.index));
+		}
 	}
 
 	// A standard-library type is left out and recorded; a user type is an error.

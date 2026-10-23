@@ -222,6 +222,12 @@ class TexprCalls {
 				throw new Unsupported("dynamic field access", false);
 			case FClosure(_, _):
 				throw new Unsupported("method closures", true);
+			case FEnum(en, ef) if (HxGen.isClrEnum(en)):
+				// A CLR enum's literal, its index.
+				if (!needVal(ret)) return;
+				g.types.checkKept(TEnumDecl(en));
+				code.ldcI4(ef.index);
+				tl.coerce(tl.sig(e.type), ret);
 			case FEnum(_, _):
 				throw new Unsupported("enum constructors", true);
 		}
@@ -336,6 +342,18 @@ class TexprCalls {
 				stringCall(ret, obj, cf, args);
 			case TField(obj, FInstance(_, _, cf)) if (cf.name == "get_Length" && args.length == 0 && isNativeArray(obj.type)):
 				nativeLength(ret, obj);
+			case TField(_, FStatic(c, cf)) if (emptyInstanceOf(e, c, cf, args) != null):
+				// overloadingConstructor's init_expr_filter: Type.createEmptyInstance of a constant hxgen class
+				// is `new C(EmptyObject.EMPTY)`, which runs no constructor body.
+				var target = emptyInstanceOf(e, c, cf, args);
+				g.types.checkKept(TClassDecl(target.c));
+				var plan = g.planOf.get(target.c);
+				var owner = DotnetCtx.instanceOf(plan, [for (p in target.params) tl.sig(p)]);
+				var token = plan.classParams.length == 0 ? plan.emptyCtor.token : g.mb.memberRef(g.typeTokenOf(owner), ".ctor",
+					g.sigs.method(true, LVoid, plan.emptyCtor.args, 0));
+				code.ldcI4(0);
+				code.opToken(IlOps.NEWOBJ, token, 1, 1);
+				tl.coerce(owner, ret);
 			case TField(_, FStatic(c, cf)) if (isStringClass(c)):
 				if (cf.name != "fromCharCode") throw new Unsupported("the String function " + cf.name, false);
 				stringExtCall(ret, cf.name, null, args);
@@ -358,6 +376,9 @@ class TexprCalls {
 				var m = haxeMethod(c, params, cf, args, callee.type);
 				// super.m() calls the base class's method itself.
 				var isSuper = strip(obj).expr.match(TConst(TSuper));
+				// A static constructor has no `this` to call the base method on non-virtually (gencs's C#,
+				// `base.m()` in a static method, does not compile either).
+				if (isSuper && tl.splitCtor) throw new Unsupported("super.method() calls in constructors", true);
 				if (isSuper) code.ldarg(0) else receiver(obj, m.owner);
 				pushArgs(args, m.args);
 				var op = isSuper || DotnetTypes.isValueType(m.owner) ? IlOps.CALL : IlOps.CALLVIRT;
@@ -367,6 +388,22 @@ class TexprCalls {
 				magicCall(ret, e, name, args);
 			case _:
 				throw new Unsupported("calls of function values", true);
+		}
+	}
+
+	// The class a call of Type.createEmptyInstance with a constant class in gencs's model creates, with
+	// its type arguments, or null.
+	function emptyInstanceOf(e:TExpr, c:TClass, cf:TClassField, args:Array<TExpr>):Null<{c:TClass, params:TParams}> {
+		if (c.path.pack.length != 0 || c.path.name != "Type" || cf.name != "createEmptyInstance" || args.length != 1) return null;
+		var cl = switch (strip(args[0]).expr) {
+			case TTypeExpr(TClassDecl(cl)): cl;
+			case _: return null;
+		}
+		return switch (TypeFunctions.follow(e.type)) {
+			case TInst(c2, params) if (c2 == cl && HxGen.isHxGen(TClassDecl(cl))):
+				var plan = g.planOf.get(cl);
+				plan == null || plan.emptyCtor == null ? null : {c: cl, params: params};
+			case _: null;
 		}
 	}
 
@@ -578,7 +615,17 @@ class TexprCalls {
 		var inst = [for (p in params) tl.sig(p)];
 		var owner = DotnetCtx.instanceOf(plan, inst);
 		var m:Null<MethodPlan> = null;
-		if (c.constructor == null || TypeFunctions.hasClassFieldFlag(c.constructor, CfExtern)) {
+		if (plan.ctors != null) {
+			// gencs's model: the class's own constructor, or one cloned from an ancestor's, that the
+			// arguments reach.
+			var origin = null;
+			if (TypeFunctions.hasConstructor(c)) {
+				var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
+				if (r == null) throw "internal error: no constructor of " + Globals.sTypePath(c.path) + " fits";
+				origin = r.cf;
+			}
+			m = TclassToIl.ctorOf(plan, origin).real;
+		} else if (c.constructor == null || TypeFunctions.hasClassFieldFlag(c.constructor, CfExtern)) {
 			for (x in plan.methods) if (x.name == ".ctor") m = x;
 		} else {
 			var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
@@ -590,10 +637,23 @@ class TexprCalls {
 		return {token: token, args: [for (a in m.args) DotnetTypes.substitute(a, inst, [])], owner: owner};
 	}
 
-	// super(...): the base class's constructor on `this`.
+	// super(...): the base class's constructor on `this`; in a static constructor, the base class's
+	// static constructor on `__hx_this`.
 	function superCtorCall(args:Array<TExpr>):Void {
 		var s = tl.cls == null ? null : tl.cls.superClass;
 		if (s == null || tl.thisSig == null) throw new Unsupported("`super` calls", true);
+		if (tl.splitCtor) {
+			g.types.checkKept(TClassDecl(s.c));
+			var plan = g.planOf.get(s.c);
+			var r = OverloadResolution.maybeResolveConstructorOverload(s.c, s.params, args);
+			if (r == null) throw "internal error: no constructor of " + Globals.sTypePath(s.c.path) + " fits";
+			var stat = TclassToIl.ctorOf(plan, r.cf).stat;
+			var margs = [for (p in s.params) tl.sig(p)];
+			code.ldarg(0);
+			pushArgs(args, [for (i in 1...stat.args.length) DotnetTypes.substitute(stat.args[i], [], margs)]);
+			code.opToken(IlOps.CALL, TclassToIl.staticCtorRef(g, plan, stat, margs), args.length + 1, 0);
+			return;
+		}
 		if (isExtern(s.c)) {
 			code.ldarg(0);
 			var ctor = externCtor(s.c, s.params, args);

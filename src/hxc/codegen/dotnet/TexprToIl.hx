@@ -76,6 +76,11 @@ class TexprToIl {
 	// The class whose method this is, and its own type as `this` has it (null in a static method).
 	public var cls:Null<TClass> = null;
 	public var thisSig:Null<IlSigNorm> = null;
+	// Set in a static __hx_ctor_* method: `this` is its first argument, and super(...) calls the base
+	// class's static constructor.
+	public var splitCtor = false;
+	// Set once an @:exhaustive switch without a default is lowered: the code after it is reachable.
+	var exhaustiveSwitch = false;
 
 	public function new(g:DotnetCtx, code:IlCode, ret:IlSigNorm) {
 		this.g = g;
@@ -100,10 +105,17 @@ class TexprToIl {
 		}
 	}
 
-	// The end of the body: a void method returns.
+	// The end of the body: a void method returns. A method with a value can reach its end only after a
+	// switch over every constructor of an enum, which has no default; as gencs does, it returns the
+	// default value there.
 	public function finish():Void {
 		if (!code.reachable()) return;
-		if (!ret.match(LVoid)) throw "internal error: a non-void method falls off its end";
+		if (!ret.match(LVoid)) {
+			if (!exhaustiveSwitch) throw "internal error: a non-void method falls off its end";
+			if (DotnetTypes.isValueType(ret) || isTypeParam(ret)) defaultValue(ret) else code.op(IlOps.LDNULL, 0, 1);
+			code.op(IlOps.RET, 1, 0);
+			return;
+		}
 		code.op(IlOps.RET, 0, 0);
 	}
 
@@ -425,6 +437,10 @@ class TexprToIl {
 				calls.checkedCast(ret, e, e1);
 			case TCast(_, _):
 				throw new Unsupported("checked casts", true);
+			case TEnumIndex(e1) if (clrEnum(e1.type) != null):
+				// A CLR enum's value is its index.
+				texpr(RValue(sig(e1.type)), e1);
+				coerce(LInt32, ret);
 			case TEnumParameter(_, _, _) | TEnumIndex(_):
 				throw new Unsupported("enum values", true);
 			case TIdent(_):
@@ -505,6 +521,14 @@ class TexprToIl {
 	}
 
 	static function isExtern(c:TClass):Bool return TypeFunctions.hasClassFlag(c, CExtern);
+
+	// The @:nativeGen flat enum, a CLR enum, that values of type `t` belong to, or null.
+	static function clrEnum(t:T):Null<TEnum> {
+		return switch (TypeFunctions.follow(t)) {
+			case TEnum(e, _) if (HxGen.isClrEnum(e)): e;
+			case _: null;
+		}
+	}
 
 	function assign(ret:Ret, lhs:TExpr, rhs:TExpr):Void {
 		switch (lhs.expr) {

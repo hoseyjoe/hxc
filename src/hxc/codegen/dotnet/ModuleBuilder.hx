@@ -2,6 +2,7 @@ package hxc.codegen.dotnet;
 
 import haxe.io.Bytes;
 import hxc.codegen.dotnet.IlData;
+import hxc.codegen.dotnet.IlMeta.IlConstant;
 import hxc.codegen.dotnet.IlMeta.TableIdx as T;
 import hxc.codegen.dotnet.MetaTables.CodedIndex;
 
@@ -110,6 +111,44 @@ class ModuleBuilder {
 		if (body.get(0) & 3 == 3) il.align(4);
 		tables.methodDef[row(method) - 1][0] = PeWriter.IL_RVA + il.length;
 		il.bytes(body);
+	}
+
+	// A Constant row for a field, parameter or property token; the table is sorted when it is written.
+	public function constant(parent:Int, c:IlConstant):Void {
+		var b = new IlBytes();
+		var type = switch (c) {
+			case IBool(v):
+				b.u8(v ? 1 : 0);
+				0x02;
+			case IChar(i):
+				b.u16(i);
+				0x03;
+			case IByte(i):
+				b.u8(i);
+				0x05;
+			case IShort(i):
+				b.u16(i & 0xFFFF);
+				0x06;
+			case IInt(i):
+				b.u32(i);
+				0x08;
+			case IInt64(_, i):
+				b.i64(i);
+				0x0A;
+			case IFloat32(f):
+				b.f32(f);
+				0x0C;
+			case IFloat64(f):
+				b.f64(f);
+				0x0D;
+			case IString(s):
+				b.bytes(s);
+				0x0E;
+			case INull:
+				b.u32(0);
+				0x12;
+		}
+		tables.constant.push([type, coded(T.IHasConstant, parent), heaps.blobs.add(b.getBytes())]);
 	}
 
 	// Must be added in key order: by owner, then number.

@@ -22,6 +22,7 @@ class CodedIndex {
 	static final customAttributeTypeTables = [-1, -1, T.IMethod, T.IMemberRef, -1];
 	static final resolutionScopeTables = [T.IModule, T.IModuleRef, T.IAssemblyRef, T.ITypeRef];
 	static final typeOrMethodDefTables = [T.ITypeDef, T.IMethod];
+	static final hasConstantTables = [T.IField, T.IParam, T.IProperty];
 
 	public static function tables(kind:Int):Array<Int> {
 		return switch (kind) {
@@ -32,6 +33,7 @@ class CodedIndex {
 			case T.ICustomAttributeType: customAttributeTypeTables;
 			case T.IResolutionScope: resolutionScopeTables;
 			case T.ITypeOrMethodDef: typeOrMethodDefTables;
+			case T.IHasConstant: hasConstantTables;
 			case _: throw "unsupported coded index " + kind;
 		}
 	}
@@ -87,6 +89,7 @@ class MetaTables {
 	public final param:Array<Row> = [];
 	public final interfaceImpl:Array<Row> = [];
 	public final memberRef:Array<Row> = [];
+	public final constant:Array<Row> = [];
 	public final customAttribute:Array<Row> = [];
 	public final standAloneSig:Array<Row> = [];
 	public final typeSpec:Array<Row> = [];
@@ -109,6 +112,8 @@ class MetaTables {
 			{table: T.IParam, rows: param, schema: [U16, U16, STR]},
 			{table: T.IInterfaceImpl, rows: interfaceImpl, schema: [T.ITypeDef, T.ITypeDefOrRef]},
 			{table: T.IMemberRef, rows: memberRef, schema: [T.IMemberRefParent, STR, BLOB]},
+			// The constant's type is one byte followed by a padding byte, written here as one U16.
+			{table: T.IConstant, rows: constant, schema: [U16, T.IHasConstant, BLOB]},
 			{table: T.ICustomAttribute, rows: customAttribute, schema: [T.IHasCustomAttribute, T.ICustomAttributeType, BLOB]},
 			{table: T.IStandAloneSig, rows: standAloneSig, schema: [BLOB]},
 			{table: T.ITypeSpec, rows: typeSpec, schema: [BLOB]},
@@ -138,7 +143,8 @@ class MetaTables {
 	}
 
 	public function writeMetadata(h:MetaHeaps):{bytes:Bytes, mvidOffset:Int} {
-		// Nothing points at a CustomAttribute row, so that table alone is sorted here.
+		// Nothing points at a Constant or CustomAttribute row, so those tables alone are sorted here.
+		sortBy(constant, [1]);
 		sortBy(customAttribute, [0]);
 		checkSorted("InterfaceImpl", interfaceImpl, [0, 1]);
 		checkSorted("GenericParam", genericParam, [2, 0]);

@@ -104,8 +104,10 @@ class P {
 }
 ===
 [dump]
-type public beforefieldinit P extends [mscorlib]System.Object
+type public beforefieldinit P extends haxe.lang.HxObject
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor__P(P)
   method public static hidebysig void main()
   method public static hidebysig void Main()
 entrypoint P::Main
@@ -115,8 +117,10 @@ class Main {
 }
 ===
 [dump]
-type public beforefieldinit Main extends [mscorlib]System.Object
+type public beforefieldinit Main extends haxe.lang.HxObject
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor__Main(Main)
   method public static hidebysig void main()
 type public beforefieldinit EntryPoint__Main extends [mscorlib]System.Object
   method public hidebysig specialname rtspecialname void .ctor()
@@ -631,6 +635,7 @@ my error 7
 [dump]
 type public beforefieldinit MyError extends [mscorlib]System.Exception
   field public int32 code
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(int32)
 --- clr-names @lib @module=pack.Thing @dump=pack.IRun,pack.Thing,pack.Sealed
 package pack;
@@ -655,16 +660,20 @@ final class Sealed {
 [dump]
 type public interface abstract pack.IRun
   method public virtual hidebysig newslot abstract void run(int32)
-type public beforefieldinit pack.Thing extends [mscorlib]System.Object implements pack.IRun
+type public beforefieldinit pack.Thing extends haxe.lang.HxObject implements pack.IRun
   field public int32 Thing_Thing
   field public string other
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method public virtual hidebysig newslot void run(int32)
   method public hidebysig void stop()
+  method family static hidebysig void __hx_ctor_pack_Thing(pack.Thing)
   method public static hidebysig pack.Thing make()
-type public sealed beforefieldinit pack.Sealed extends [mscorlib]System.Object
+type public sealed beforefieldinit pack.Sealed extends haxe.lang.HxObject
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method public hidebysig void go()
+  method private static hidebysig void __hx_ctor_pack_Sealed(pack.Sealed)
 --- structs-and-field-updates @dump=Vec
 @:struct class Vec {
 	public var x:Int;
@@ -791,17 +800,23 @@ int 3 str s
 Ex 6
 9 true
 [dump]
-type public abstract beforefieldinit Shape extends [mscorlib]System.Object
+type public abstract beforefieldinit Shape extends haxe.lang.HxObject
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method public virtual hidebysig newslot abstract float64 area()
   method public virtual hidebysig newslot string describe()
-type public sealed beforefieldinit Fin extends [mscorlib]System.Object implements Named
+  method family static hidebysig void __hx_ctor__Shape(Shape)
+type public sealed beforefieldinit Fin extends haxe.lang.HxObject implements Named
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method public final virtual hidebysig newslot string name()
-type public beforefieldinit Over extends [mscorlib]System.Object
+  method private static hidebysig void __hx_ctor__Fin(Fin)
+type public beforefieldinit Over extends haxe.lang.HxObject
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method public virtual hidebysig newslot string f(int32)
   method public virtual hidebysig newslot string f(string)
+  method family static hidebysig void __hx_ctor__Over(Over)
 --- class-declarations-that-are-errors
 class A {
 	public function new() {}
@@ -958,7 +973,6 @@ class P {
 P.hx:4: lines 4-7 : dotnet: interface methods implemented with other types are not supported yet
 P.hx:15: characters 1-54 : dotnet: interface methods implemented by a final inherited method are not supported yet
 P.hx:16: lines 16-22 : dotnet: properties of .NET interfaces are not supported yet
-P.hx:23: characters 8-57 : dotnet: a base class without a parameterless constructor is not supported yet
 P.hx:24: characters 10-41 : dotnet: structs that extend a class are not supported yet
 P.hx:26: characters 2-23 : dotnet: instance variable initializers in structs are not supported yet
 P.hx:30: lines 30-32 : dotnet: struct constructors without arguments that do something are not supported yet
@@ -1078,10 +1092,12 @@ class Box<T> {
 }
 ===
 [dump]
-type public beforefieldinit pack.Box`1<T> extends [mscorlib]System.Object
+type public beforefieldinit pack.Box`1<T> extends haxe.lang.HxObject
   field public !0 value
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(!0)
   method public virtual hidebysig newslot !0 pick<S>(!!0)
+  method family static hidebysig void __hx_ctor_pack_Box<T_c>(pack.Box`1<!!0>, !!0)
 --- type-mapping @lib @module=pack.Sig @dump=pack.Sig
 package pack;
 class Sig {
@@ -1089,8 +1105,10 @@ class Sig {
 }
 ===
 [dump]
-type public beforefieldinit pack.Sig extends [mscorlib]System.Object
+type public beforefieldinit pack.Sig extends haxe.lang.HxObject
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor_pack_Sig(pack.Sig)
   method public static hidebysig void f(haxe.lang.Null`1<int32>, object, Array`1<string>, float64[], string, haxe.lang.Function, object, [mscorlib]System.Type)
 --- generic-statics-structs-and-uints @dump=Counter`1
 class Counter<T> {
@@ -1190,15 +1208,17 @@ True
 cell!
 4
 [dump]
-type public Counter`1<T> extends [mscorlib]System.Object
+type public Counter`1<T> extends haxe.lang.HxObject
   field public !0 item
   field public static int32 made
   field public static string log
   field private static bool __hx_init_called
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(!0)
   method public virtual hidebysig newslot object boxed()
   method public virtual hidebysig newslot !0 orDefault(bool)
   method public virtual hidebysig newslot Pair`2<!0, !!0> map<S>(!!0)
+  method family static hidebysig void __hx_ctor__Counter<T_c>(Counter`1<!!0>, !!0)
   method public static hidebysig int32 start()
   method public static hidebysig string describe()
   method private static hidebysig specialname rtspecialname void .cctor()
@@ -2010,3 +2030,185 @@ Int64 1
 Single 2.5
 Int64 3000000000
 Int64 7
+--- hxgen-shape @lib @module=pk.Thing @dump=pk.Base,pk.Thing,pk.NG
+package pk;
+class Base {
+	public var a:Int;
+	public function new(a:Int) {
+		this.a = a;
+	}
+}
+class Thing extends Base {
+	var p = 0;
+	public function new(a:Int, s:String) {
+		super(a + 1);
+	}
+}
+@:nativeGen class NG {
+	public var q:Int;
+	public function new() {}
+}
+===
+[dump]
+type public beforefieldinit pk.Base extends haxe.lang.HxObject
+  field public int32 a
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor(int32)
+  method family static hidebysig void __hx_ctor_pk_Base(pk.Base, int32)
+type public beforefieldinit pk.Thing extends pk.Base
+  field public int32 p
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor(int32, string)
+  method family static hidebysig void __hx_ctor_pk_Thing(pk.Thing, int32, string)
+type public beforefieldinit pk.NG extends [mscorlib]System.Object
+  field public int32 q
+  method public hidebysig specialname rtspecialname void .ctor()
+--- split-constructors @gencs
+class Base {
+	public var log:Array<String> = [];
+	public function new(n:Int) {
+		log.push("base " + n);
+	}
+}
+class Mid extends Base {
+	var tag = "m";
+}
+class Leaf extends Mid {
+	public function new() {
+		log.push("leaf before");
+		super(7);
+		log.push("leaf after " + tag);
+	}
+}
+class P {
+	static function main() {
+		var l = new Leaf();
+		Sys.println(l.log.join(","));
+		var e:Leaf = Type.createEmptyInstance(Leaf);
+		Sys.println(e.log == null);
+	}
+}
+===
+--- split-constructor-order @gencs
+class Base {
+	public static var trail = "";
+	public var log:Array<String> = [];
+	public var n = 1;
+	public function new(n:Int) {
+		trail += "base " + n + " " + this.n + ",";
+		log.push("base");
+	}
+}
+class Mid extends Base {
+	var tag = "m";
+}
+class Leaf extends Mid {
+	var extra = "x";
+	public function new() {
+		Base.trail += "leaf before " + extra + ",";
+		super(7);
+		Base.trail += "leaf after " + tag + " " + log.length + " " + log[0] + ",";
+	}
+}
+class Gen<T> {
+	public var v:T;
+	public var count = 2;
+	public function new(v:T) {
+		this.v = v;
+	}
+}
+class GenSub<U> extends Gen<U> {
+	public function new(u:U) {
+		super(u);
+		count++;
+	}
+}
+class NoCtor {
+	public var k = 5;
+}
+class NoCtorChild extends NoCtor {
+	public function new() {
+		Base.trail += "child " + k;
+	}
+}
+class MyList extends cs.system.collections.ArrayList {
+	public var z = 3;
+}
+class P {
+	static function main() {
+		new Leaf();
+		Sys.println(Base.trail);
+		var e:Leaf = Type.createEmptyInstance(Leaf);
+		Sys.println(e.log == null);
+		Sys.println(e.n);
+		var g = new GenSub<String>("s");
+		Sys.println(g.v + " " + g.count);
+		var ge:Gen<Int> = Type.createEmptyInstance(Gen);
+		Sys.println(ge.count);
+		new NoCtorChild();
+		Sys.println(Base.trail);
+		var l = new MyList(4);
+		Sys.println(l.z + " " + l.Capacity);
+		Sys.println(new MyList().Count);
+		var le:MyList = Type.createEmptyInstance(MyList);
+		Sys.println(le.z);
+	}
+}
+===
+--- native-gen-enum @gencs @dump=Color
+@:nativeGen enum Color {
+	Red;
+	Green;
+	Blue;
+}
+class P {
+	static var favourite = Blue;
+	static function name(c:Color):String {
+		return switch (c) {
+			case Red: "red";
+			case Green: "green";
+			case Blue: "blue";
+		}
+	}
+	static function main() {
+		var c = Green;
+		Sys.println(name(c) + " " + name(favourite));
+		Sys.println(c == Green);
+		Sys.println(c != favourite);
+		Sys.println(c);
+		var d:Dynamic = favourite;
+		Sys.println(d);
+	}
+}
+===
+[run]
+green blue
+True
+True
+Green
+Blue
+[dump]
+type public sealed Color extends [mscorlib]System.Enum
+  field public int32 value__
+  field public static literal Color Red
+  field public static literal Color Green
+  field public static literal Color Blue
+--- super-method-call-in-constructor-is-an-error
+class B {
+	public function new() {}
+	public function f():Void {}
+}
+class C extends B {
+	public function new() {
+		super();
+		super.f();
+	}
+}
+class P {
+	static function main() {
+		new C();
+	}
+}
+===
+[compile]
+P.hx:8: characters 3-12 : dotnet: super.method() calls in constructors are not supported yet
