@@ -435,8 +435,9 @@ class TexprDynamic {
 				if (!(isDynamic(e1.type) || isDynamic(e2.type))) return false;
 				// A String result is a concatenation, lowered with the other String operands.
 				if (tl.sig(e.type).match(LString)) return false;
-				tl.texpr(RValue(LObject), e1);
-				tl.texpr(RValue(LObject), e2);
+				// A Null<T> conditional operand is unwrapped whole (TexprToIl.nullOperand).
+				tl.nullOperand(RValue(LObject), e1, false);
+				tl.nullOperand(RValue(LObject), e2, false);
 				runtimeCall("plus");
 				finish(LObject, own(e), ret);
 				return true;
@@ -445,7 +446,9 @@ class TexprDynamic {
 					// String.CompareOrdinal(a, b) <op> 0 when the left side is a String, else
 					// Runtime.compare(a, b) <op> 0.
 					var ordinal = isStringType(e1.type);
-					tl.texpr(RValue(ordinal ? LString : LObject), e1);
+					// gencs unwraps a Null<T> conditional on the left whole; on the right CastDetect pushes the
+					// cast into its branches.
+					tl.nullOperand(RValue(ordinal ? LString : LObject), e1, false);
 					tl.texpr(RValue(ordinal ? LString : LObject), e2);
 					if (ordinal) {
 						code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(LString), "CompareOrdinal",
@@ -472,7 +475,7 @@ class TexprDynamic {
 				if (!(isDynamic(e.type) || isDynamic(e1.type) || isDynamic(e2.type))) return false;
 				// Arithmetic on Floats (Ints when the expression is typed Int), bitwise operators on Ints.
 				var t = op.match(OpSub | OpMult | OpDiv | OpMod) && !likeInt(e.type) ? LFloat64 : LInt32;
-				tl.texpr(RValue(t), e1);
+				tl.nullOperand(RValue(t), e1, false);
 				tl.ops.numericTail(op, t, e2, t, false);
 				finish(t, own(e), ret);
 				return true;
