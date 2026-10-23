@@ -10,7 +10,7 @@ import hxc.core.TypeFunctions;
 // cloned from), null for the empty one and for a clone of an ancestor's empty one; `clone` tells a
 // clone, which calls super(...), from the empty one, which does not; `args` are in terms of the
 // class's type parameters.
-typedef HaxeCtor = {origin:Null<TClassField>, own:Null<TClassField>, clone:Bool, args:Array<{name:String, t:T}>};
+typedef HaxeCtor = {origin:Null<TClassField>, own:Null<TClassField>, clone:Bool, args:Array<{name:String, t:T, opt:Bool}>};
 
 // Which types gencs generates with its own class model (setHXGen.ml), and the names that model uses.
 // An "hxgen" class extends haxe.lang.HxObject (or implements haxe.lang.IHxObject), gets a constructor
@@ -93,9 +93,9 @@ class HxGen {
 		return !e.isExtern && e.params.length == 0 && TypeFunctions.hasMeta(":nativeGen", e.meta) && TypeFunctions.hasMeta(":flatEnum", e.meta);
 	}
 
-	static function funArgs(t:T):Array<{name:String, t:T}> {
+	static function funArgs(t:T):Array<{name:String, t:T, opt:Bool}> {
 		return switch (TypeFunctions.follow(t)) {
-			case TFun(sig): [for (a in sig.args) {name: a.name, t: a.t}];
+			case TFun(sig): [for (a in sig.args) {name: a.name, t: a.t, opt: a.opt}];
 			case _: throw "internal error: a constructor without a function type";
 		}
 	}
@@ -122,11 +122,11 @@ class HxGen {
 
 	// The constructors of the nearest ancestor that has any (prev_ctor), with their arguments in terms
 	// of `c`'s type parameters, the main one last; .NET constructors marked @:skipCtor are left out.
-	public static function previousCtors(c:TClass):Array<{origin:Null<TClassField>, args:Array<{name:String, t:T}>, owner:TClass}> {
+	public static function previousCtors(c:TClass):Array<{origin:Null<TClassField>, args:Array<{name:String, t:T, opt:Bool}>, owner:TClass}> {
 		var s = c.superClass;
 		if (s == null) return [];
-		inline function applied(args:Array<{name:String, t:T}>) {
-			return [for (a in args) {name: a.name, t: TypeFunctions.applyParams(s.c.params, s.params, a.t)}];
+		inline function applied(args:Array<{name:String, t:T, opt:Bool}>) {
+			return [for (a in args) {name: a.name, t: TypeFunctions.applyParams(s.c.params, s.params, a.t), opt: a.opt}];
 		}
 		if (TypeFunctions.hasClassFlag(s.c, CExtern)) {
 			var ctor = s.c.constructor;

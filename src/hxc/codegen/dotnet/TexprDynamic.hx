@@ -1,6 +1,7 @@
 package hxc.codegen.dotnet;
 
 import hxc.ast.Ast;
+import hxc.ast.Position;
 import hxc.core.Globals;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
@@ -106,6 +107,31 @@ class TexprDynamic {
 			case TAbstract(a, []) if (isPath(a.path, [], "Float") || isPath(a.path, [], "Int")): true;
 			case TAbstract(a, _) if (isPath(a.path, ["cs"], "Pointer")): false;
 			case TAbstract(a, _): Lambda.exists(a.from, x -> likeFloat(x, depth + 1)) || Lambda.exists(a.to, x -> likeFloat(x, depth + 1));
+			case _: false;
+		}
+	}
+
+	// gencommon's like_float on gencs's real type (`can_be_float (real_type t)`): abstracts followed to
+	// their underlying type, and a Null<T> that is haxe.lang.Null<T> is not like a Float, so a Null<Int>
+	// field reads through getField and a missing one is null.
+	static function likeFloatReal(t:T, depth = 0):Bool {
+		if (depth > 20) return false;
+		return switch (TypeFunctions.followWithoutNull(t)) {
+			case TAbstract(a, [p]) if (isPath(a.path, [], "Null")): !isBasic(p) && !isTypeParamType(p) && likeFloatReal(p, depth + 1);
+			case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta)): likeFloatReal(TypeFunctions.getUnderlyingType(a, tl), depth + 1);
+			case t2: likeFloat(t2);
+		}
+	}
+
+	// gencommon's like_i64: cs.Int64, cs.UInt64 or haxe.Int64, or an abstract with a from or to cast
+	// to one; on gencs's real type, as like_float is.
+	static function likeI64Real(t:T, depth = 0):Bool {
+		if (depth > 20) return false;
+		return switch (TypeFunctions.followWithoutNull(t)) {
+			case TAbstract(a, []) if (isPath(a.path, ["cs"], "Int64") || isPath(a.path, ["cs"], "UInt64") || isPath(a.path, ["haxe"], "Int64")): true;
+			case TAbstract(a, [p]) if (isPath(a.path, [], "Null")): !isBasic(p) && !isTypeParamType(p) && likeI64Real(p, depth + 1);
+			case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta)): likeI64Real(TypeFunctions.getUnderlyingType(a, tl), depth + 1);
+			case TAbstract(a, _): Lambda.exists(a.from, x -> likeI64Real(x, depth + 1)) || Lambda.exists(a.to, x -> likeI64Real(x, depth + 1));
 			case _: false;
 		}
 	}
@@ -239,17 +265,29 @@ class TexprDynamic {
 
 	// ---- field access
 
+	// The compile-time hash of `name`, which code at `pos` uses. As reflectionCFs' hash_field does, a
+	// class whose code hashes two names to the same value is refused: "Field conflict between ...".
+	function hash(name:String, pos:Position):Int {
+		var h = FieldHashes.use(name);
+		var other = FieldHashes.claim(tl.cls == null ? "" : DotnetTypes.haxePath(TClassDecl(tl.cls)), h, name);
+		if (other != null) {
+			g.ctx.addDiagnostic("Field conflict between " + name + " and " + other, pos);
+			g.diagnostics++;
+		}
+		return h;
+	}
+
 	// Pushes the receiver, the name and its hash, the start of every Runtime field call.
 	function fieldHead(obj:TExpr, name:String):Void {
 		tl.texpr(RValue(LObject), obj);
 		code.opToken(IlOps.LDSTR, g.mb.userString(name), 0, 1);
-		code.ldcI4(FieldHashes.use(name));
+		code.ldcI4(hash(name, obj.pos));
 	}
 
 	// `obj.name` through Runtime.getField(obj, "name", hash, throwErrors), or getField_f when the access
 	// is typed like a Float (`resultType`), then converted to it; `e` is the expression whose value this is.
 	function fieldGet(ret:Ret, e:TExpr, obj:TExpr, name:String, resultType:T, throwErrors:Bool):Void {
-		var isFloat = likeFloat(resultType);
+		var isFloat = likeFloatReal(resultType);
 		fieldHead(obj, name);
 		code.ldcI4(throwErrors ? 1 : 0);
 		if (isFloat) {
@@ -271,7 +309,7 @@ class TexprDynamic {
 	// `obj.name = value` through Runtime.setField, or setField_f with the value as a Float when the
 	// assignment is typed like a Float (`fieldType`); its value is what the call returns.
 	function fieldSet(ret:Ret, e:TExpr, obj:TExpr, name:String, value:TExpr, fieldType:T):Void {
-		var isFloat = likeFloat(fieldType);
+		var isFloat = likeFloatReal(fieldType);
 		fieldHead(obj, name);
 		tl.texpr(RValue(isFloat ? LFloat64 : LObject), value);
 		if (isFloat) {
@@ -480,10 +518,10 @@ class TexprDynamic {
 			tl.texpr(RValue(LObject), df.obj);
 			var recv = code.addLocal(LObject);
 			code.stloc(recv);
-			var hash = FieldHashes.use(df.name);
+			var h = hash(df.name, df.obj.pos);
 			code.ldloc(recv);
 			code.opToken(IlOps.LDSTR, g.mb.userString(df.name), 0, 1);
-			code.ldcI4(hash);
+			code.ldcI4(h);
 			code.ldcI4(1);
 			runtimeCall("getField_f", LObject);
 			tl.convert(LFloat64, t);
@@ -496,7 +534,7 @@ class TexprDynamic {
 			code.stloc(next);
 			code.ldloc(recv);
 			code.opToken(IlOps.LDSTR, g.mb.userString(df.name), 0, 1);
-			code.ldcI4(hash);
+			code.ldcI4(h);
 			code.ldloc(next);
 			tl.convert(t, LFloat64);
 			runtimeCall("setField_f", LObject);
@@ -532,63 +570,91 @@ class TexprDynamic {
 		return true;
 	}
 
-	// `lhs op= rhs` with a Dynamic operand, as gencs's DynamicOperators writes it: `lhs = lhs op rhs`
-	// with the operator lowered as above (the receiver of a Dynamic field in a temporary); `+=` is
-	// Dynamic only for a Dynamic left side.
+	// gencs's is_dynamic_expr: a Dynamic, or a field gencs reaches through Runtime (field_is_dynamic).
+	static function isDynamicExpr(e:TExpr):Bool return isDynamic(e.type) || dynamicField(e) != null;
+
+	// `lhs op= rhs` as gencs's DynamicOperators writes it when an operand is Dynamic, the left side is a
+	// field reached through Runtime or a Null<T> (should_change; for `+=` only the left side counts):
+	// `lhs = lhs op rhs`, a field's receiver and an array and its index evaluated once into temporaries.
+	// The operator is then lowered as any other, so `a.x += 1` on an anonymous structure's Int field adds
+	// Ints and a Null<T> is computed in T (HardNullableSynf); a String concatenation stays as it is
+	// unless its left side is such a field.
 	function compound(ret:Ret, e:TExpr, op:Binop, lhs:TExpr, rhs:TExpr):Bool {
-		var changes = op.match(OpAdd) ? isDynamic(lhs.type) || isNullType(lhs.type) : isDynamic(e.type) || isDynamic(lhs.type) || isDynamic(rhs.type);
-		if (!changes || tl.sig(e.type).match(LString)) return false;
-		// The value of `lhs op rhs`, typed as the assignment, with lhs's value pushed by `load` as `ls`.
-		function value(load:Void->Void, ls:IlSigNorm):IlSigNorm {
-			if (op.match(OpAdd)) {
-				load();
-				tl.convert(ls, LObject);
-				tl.texpr(RValue(LObject), rhs);
-				runtimeCall("plus");
-				var t = own(e);
-				tl.convert(LObject, t);
-				return t;
+		var changes = isDynamicExpr(lhs) || isNullType(lhs.type) || !op.match(OpAdd) && (isDynamic(e.type) || isDynamicExpr(rhs));
+		if (!changes || tl.sig(e.type).match(LString) && dynamicField(lhs) == null) return false;
+		// A struct receiver stays where it is: a field of a copy would be stored into the copy.
+		function stable(x:TExpr):TExpr {
+			return switch (strip(x).expr) {
+				case TLocal(_) | TConst(_) | TTypeExpr(_): x;
+				case _ if (tl.flow.isStruct(x)): x;
+				case _: tl.flow.spill(x);
 			}
-			var t = op.match(OpSub | OpMult | OpDiv | OpMod) && !likeInt(e.type) ? LFloat64 : LInt32;
-			load();
-			tl.convert(ls, t);
-			tl.ops.numericTail(op, t, rhs, t, false);
-			return t;
 		}
-		var df = dynamicField(lhs);
-		if (df != null) {
-			tl.texpr(RValue(LObject), df.obj);
-			var recv = code.addLocal(LObject);
-			code.stloc(recv);
-			var hash = FieldHashes.use(df.name);
-			var isFloat = likeFloat(e.type);
-			code.ldloc(recv);
-			code.opToken(IlOps.LDSTR, g.mb.userString(df.name), 0, 1);
-			code.ldcI4(hash);
-			var v = value(() -> {
-				code.ldloc(recv);
-				code.opToken(IlOps.LDSTR, g.mb.userString(df.name), 0, 1);
-				code.ldcI4(hash);
-				code.ldcI4(1);
-				runtimeCall("getField", LObject);
-			}, LObject);
-			tl.convert(v, isFloat ? LFloat64 : LObject);
-			runtimeCall(isFloat ? "setField_f" : "setField", LObject);
-			finish(isFloat ? LFloat64 : LObject, own(e), ret);
-			return true;
+		var target = switch (strip(lhs).expr) {
+			case TField(obj, fa): new TExpr(TField(stable(obj), fa), lhs.type, lhs.pos);
+			case TArray(a, i): new TExpr(TArray(stable(a), stable(i)), lhs.type, lhs.pos);
+			case _: lhs;
 		}
-		var p = tl.place(lhs);
-		if (p == null) throw new Unsupported("this kind of assignment", false);
-		p.prepare();
-		var v = value(p.load, p.sig);
-		tl.convert(v, p.sig);
-		var tmp = needVal(ret) ? tl.ops.keep(p) : -1;
-		p.store();
-		if (needVal(ret)) {
-			if (tmp >= 0) code.ldloc(tmp);
-			finish(p.sig, own(e), ret);
-		}
+		tl.assign(ret, target, new TExpr(TBinop(op, target, rhs), e.type, e.pos));
 		return true;
+	}
+
+	// ---- anonymous objects
+
+	// gencs's is_side_effects_free (reflectionCFs.ml's implement_dynamic_object_ctor).
+	static function sideEffectFree(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TConst(_) | TLocal(_) | TFunction(_) | TTypeExpr(_): true;
+			case TUnop(Increment | Decrement, _, _) | TBinop(OpAssign | OpAssignOp(_), _, _): false;
+			case TUnop(_, _, e1): sideEffectFree(e1);
+			case TArray(e1, e2) | TBinop(_, e1, e2): sideEffectFree(e1) && sideEffectFree(e2);
+			case TIf(cond, e1, e2) if (e2 != null): sideEffectFree(cond) && sideEffectFree(e1) && sideEffectFree(e2);
+			case TField(e1, _) | TParenthesis(e1) | TMeta(_, e1) | TCast(e1, _): sideEffectFree(e1);
+			case TArrayDecl(el): Lambda.foreach(el, sideEffectFree);
+			case _: false;
+		}
+	}
+
+	// `{f: v, ...}` as gencs's ObjectDeclMap writes it: `new haxe.lang.DynamicObject(hashes, dynamics,
+	// hashes_f, dynamics_f)`. A value that may have side effects is evaluated first, in source order, into
+	// a temporary. A field whose real type is like a Float and not an Int64 goes into the second pair as a
+	// double, any other boxed into the first; each pair is sorted by hash, which decides the order
+	// Reflect.fields and the Serializer see.
+	function objectDecl(ret:Ret, fields:Array<TObjectField>):Void {
+		var dyns:Array<{h:Int, v:TExpr}> = [], floats:Array<{h:Int, v:TExpr}> = [];
+		var values = [for (f in fields) sideEffectFree(f.expr) ? f.expr : tl.flow.spill(f.expr)];
+		for (i in 0...fields.length) {
+			var t = fields[i].expr.type;
+			var entry = {h: hash(fields[i].key.name, fields[i].key.pos), v: values[i]};
+			if (likeFloatReal(t) && !likeI64Real(t)) floats.push(entry) else dyns.push(entry);
+		}
+		function byHash(a:{h:Int, v:TExpr}, b:{h:Int, v:TExpr}) return a.h < b.h ? -1 : a.h > b.h ? 1 : 0;
+		haxe.ds.ArraySort.sort(dyns, byHash);
+		haxe.ds.ArraySort.sort(floats, byHash);
+		var c = g.runtimeClass("cs.internal.DynamicObject");
+		if (c == null) throw new Unsupported("anonymous objects without haxe.lang.DynamicObject", true);
+		g.types.checkKept(TClassDecl(c));
+		var plan = g.planOf.get(c);
+		var ctor = null;
+		if (plan != null) for (m in plan.methods) if (m.name == ".ctor" && m.args.length == 4 && IlPaths.sigEq(m.args[0], LVector(LInt32))) ctor = m;
+		if (ctor == null) throw "internal error: haxe.lang.DynamicObject has no constructor from four arrays";
+		function array(elem:IlSigNorm, n:Int, push:Int->Void):Void {
+			var token = g.typeTokenOf(elem);
+			code.ldcI4(n);
+			code.opToken(IlOps.NEWARR, token, 1, 1);
+			for (i in 0...n) {
+				code.op(IlOps.DUP, 1, 2);
+				code.ldcI4(i);
+				push(i);
+				code.opToken(IlOps.STELEM, token, 3, 0);
+			}
+		}
+		array(LInt32, dyns.length, i -> code.ldcI4(dyns[i].h));
+		array(LObject, dyns.length, i -> tl.texpr(RValue(LObject), dyns[i].v));
+		array(LInt32, floats.length, i -> code.ldcI4(floats[i].h));
+		array(LFloat64, floats.length, i -> tl.texpr(RValue(LFloat64), floats[i].v));
+		code.opToken(IlOps.NEWOBJ, ctor.token, 4, 1);
+		tl.coerce(plan.thisSig, ret);
 	}
 
 	// ---- Std.isOfType

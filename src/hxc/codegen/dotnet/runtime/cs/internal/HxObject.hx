@@ -291,8 +291,9 @@ class DynamicObject extends HxObject {
 
 	@:skipReflection public function __hx_toString():String {
 		var ts = Reflect.field(this, "toString");
+		// hxc: the call gencs writes for `ts()`, which hxc does not lower yet.
 		if (ts != null)
-			return ts();
+			return (cast ts : Function).__hx_invoke0_o();
 		var ret = new StringBuf();
 		ret.add("[");
 		var first = true;

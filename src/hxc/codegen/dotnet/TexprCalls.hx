@@ -66,7 +66,10 @@ class TexprCalls {
 			tl.texpr(RValue(parent), obj);
 			return;
 		}
-		if (pushAddress(obj, forStore)) return;
+		// A member of a Null<T>'s T is reached through a copy of its value, as HardNullableSynf unwraps it.
+		var own = try tl.sig(obj.type) catch (_:Unsupported) null;
+		var unwraps = own != null && tl.isHaxeNull(own) && !IlPaths.sigEq(own, parent);
+		if (!unwraps && pushAddress(obj, forStore)) return;
 		// A value with no home, such as a call's result: C# works on a copy too.
 		if (forStore) throw new Unsupported("assignments to fields of struct values", true);
 		tl.texpr(RValue(parent), obj);

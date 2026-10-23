@@ -202,15 +202,14 @@ class ReflectionMembers {
 	// gencs refuses two names a class reflects with the same hash.
 	public static function checkConflicts(g:DotnetCtx, c:TClass):Void {
 		if (!applies(c)) return;
-		var names = new Map<Int, String>();
+		// The class's code hashes names into the same table (TexprDynamic.hash).
+		var owner = DotnetTypes.haxePath(TClassDecl(c));
 		for (e in collect(c, CAll)) {
-			var h = FieldHashes.hash(e.cf.name);
-			var other = names.get(h);
-			if (other != null && other != e.cf.name) {
+			var other = FieldHashes.claim(owner, FieldHashes.hash(e.cf.name), e.cf.name);
+			if (other != null) {
 				g.ctx.addDiagnostic("Field conflict between " + e.cf.name + " and " + other, c.pos);
 				g.diagnostics++;
 			}
-			names.set(h, e.cf.name);
 		}
 	}
 
@@ -367,11 +366,9 @@ private class ReflectionEmitter {
 	// toDouble, toBool, toString, genericCast for a type parameter, C#'s cast), Null<T>.ofDynamic.
 	function fromDynamic(to:IlSigNorm, t:T):Void {
 		switch (to) {
-			case LValueType(p, [arg]) if (lower.isHaxeNull(to)):
+			case LValueType(_, [_]) if (lower.isHaxeNull(to)):
 				// Null<object>.ofDynamic<T>(value), as gencs writes it.
-				var token = g.mb.memberRef(g.typeTokenOf(LValueType(p, [LObject])), "ofDynamic",
-					g.sigs.method(false, LValueType(p, [LMethodTypeParam(0)]), [LObject], 1));
-				code.opToken(IlOps.CALL, g.mb.methodSpec(token, g.sigs.methodSpec([arg])), 1, 1);
+				lower.ofDynamic(to);
 			case LClass(_, _) if (g.isGenericHaxeClass(to)):
 				// gencs converts between instantiations of a generic Haxe class (an Array<Dynamic> into an
 				// Array<Int> field) with __hx_cast, plan 3c; until then a value of another instantiation is
@@ -430,10 +427,7 @@ private class ReflectionEmitter {
 			code.op(IlOps.LDNULL, 0, 1);
 		} else if (lower.isHaxeNull(s)) {
 			lower.texpr(RValue(s), e);
-			var tmp = code.addLocal(s);
-			code.stloc(tmp);
-			code.ldloca(tmp);
-			code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(s), "toDynamic", g.sigs.method(true, LObject, [], 0)), 1, 1);
+			lower.nullToDynamic(s);
 		} else {
 			lower.texpr(RValue(LObject), e);
 		}
@@ -722,7 +716,8 @@ private class ReflectionEmitter {
 		var types = argTypes(m);
 		for (i in 0...types.length) {
 			var a = types[i];
-			var tmp = local(a.t);
+			// An optional argument of a value type is a haxe.lang.Null<T> (DotnetTypes.argSig).
+			var tmp = local(a.opt && DotnetTypes.isValueType(lower.sig(a.t)) ? g.ctx.basic.tnull(a.t) : a.t);
 			if (a.opt) {
 				var missing = code.newLabel(), done = code.newLabel();
 				code.ldarg(3);

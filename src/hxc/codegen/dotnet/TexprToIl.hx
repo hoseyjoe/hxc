@@ -97,6 +97,45 @@ class TexprToIl {
 		slots.set(v.id, {arg: true, index: index, sig: sig});
 	}
 
+	// Binds a method's arguments, the first at `first`, and applies their default values at the top of the
+	// body, the last argument first, as gencommon's default arguments do: a reference argument gets
+	// `if (a == null) a = v`; a haxe.lang.Null<T> one leaves the variable to a new local of its own type,
+	// `!a.hasValue ? v : a.value`. An argument whose default is null needs nothing.
+	public function bindArgs(tf:TFunc, first:Int, sigs:Array<IlSigNorm>):Void {
+		for (i in 0...tf.args.length) bindArg(tf.args[i].v, first + i, sigs[i]);
+		var i = tf.args.length;
+		while (i-- > 0) {
+			var a = tf.args[i];
+			if (a.c == null || isNullConst(a.c)) continue;
+			var arg = {arg: true, index: first + i, sig: sigs[i]};
+			if (isHaxeNull(arg.sig)) {
+				var own = sig(a.v.type);
+				var local = {arg: false, index: code.addLocal(own), sig: own};
+				var has = code.newLabel(), end = code.newLabel();
+				load(arg);
+				loadNullField(arg.sig, "hasValue");
+				code.branch(IlOps.BRTRUE, has);
+				texpr(RValue(own), a.c);
+				code.branch(IlOps.BR, end);
+				code.mark(has);
+				load(arg);
+				convert(arg.sig, own);
+				code.mark(end);
+				store(local);
+				slots.set(a.v.id, local);
+			} else if (isReference(arg.sig)) {
+				var set = code.newLabel();
+				load(arg);
+				code.branch(IlOps.BRTRUE, set);
+				texpr(RValue(arg.sig), a.c);
+				store(arg);
+				code.mark(set);
+			} else {
+				throw new Unsupported("default argument values of this type", true, a.c.pos);
+			}
+		}
+	}
+
 	// A local the caller added and fills itself.
 	public function bindLocal(v:TVar, index:Int, sig:IlSigNorm):Void {
 		slots.set(v.id, {arg: false, index: index, sig: sig});
@@ -167,13 +206,20 @@ class TexprToIl {
 				defaultValue(to);
 				return;
 			}
-			if (isHaxeNull(to)) throw new Unsupported("Null<T> of a value type", false);
+			// null as a haxe.lang.Null<T> is C#'s default(Null<T>), which has no value.
+			if (isHaxeNull(to)) {
+				code.op(IlOps.POP, 1, 0);
+				defaultValue(to);
+				return;
+			}
 			if (DotnetTypes.isValueType(to)) throw new Unsupported("null as a value type", false);
 			return;
 		}
 		if (IlPaths.sigEq(from, to)) return;
-		// haxe.lang.Null<T> converts through its constructor and fields, which milestone 2 does not use.
-		if (isHaxeNull(from) || isHaxeNull(to)) throw new Unsupported("Null<T> of a value type", false);
+		if (isHaxeNull(from) || isHaxeNull(to)) {
+			nullConvert(from, to);
+			return;
+		}
 		// Int and UInt are both an int32 on the stack.
 		if (isIntLike(from) && isIntLike(to)) return;
 		// A .NET enum and its underlying integer are the same value on the stack, as C#'s casts between
@@ -256,6 +302,91 @@ class TexprToIl {
 	// gencs's haxe.lang.Null<T>, which Null<T> of a value type maps to.
 	function isHaxeNull(s:IlSigNorm):Bool {
 		return s.match(LValueType(_, [_])) && g.haxePathOf(s) == "cs.internal._Null.Nullable";
+	}
+
+	// The T of a haxe.lang.Null<T>, or null for any other type.
+	function nullArg(s:IlSigNorm):Null<IlSigNorm> {
+		return switch (s) {
+			case LValueType(_, [a]) if (isHaxeNull(s)): a;
+			case _: null;
+		}
+	}
+
+	// A haxe.lang.Null<T>'s T, any other type itself: the type a Null<T> operand is computed in.
+	function unNull(s:IlSigNorm):IlSigNorm {
+		var a = nullArg(s);
+		return a == null ? s : a;
+	}
+
+	// Reads the field `value` (a T) or `hasValue` of the haxe.lang.Null<T> `s` on the stack.
+	function loadNullField(s:IlSigNorm, name:String):Void {
+		var token = g.mb.memberRef(g.typeTokenOf(s), name, g.sigs.field(name == "value" ? LTypeParam(0) : LBool));
+		code.opToken(IlOps.LDFLD, token, 1, 1);
+	}
+
+	// `new Null<T>(v, true)` with v on the stack: the constructor, which also checks a reference for null.
+	function newNull(s:IlSigNorm):Void {
+		code.ldcI4(1);
+		var token = g.mb.memberRef(g.typeTokenOf(s), ".ctor", g.sigs.method(true, LVoid, [LTypeParam(0), LBool], 0));
+		code.opToken(IlOps.NEWOBJ, token, 2, 1);
+	}
+
+	// `x.toDynamic()` on the haxe.lang.Null<T> `s` on the stack: its value boxed, or null.
+	function nullToDynamic(s:IlSigNorm):Void {
+		var tmp = code.addLocal(s);
+		code.stloc(tmp);
+		code.ldloca(tmp);
+		code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(s), "toDynamic", g.sigs.method(true, LObject, [], 0)), 1, 1);
+	}
+
+	// `Null<object>.ofDynamic<T>(d)` for the object on the stack, as gencs converts a Dynamic to the
+	// haxe.lang.Null<T> `s`.
+	function ofDynamic(s:IlSigNorm):Void {
+		switch (s) {
+			case LValueType(p, [arg]):
+				var token = g.mb.memberRef(g.typeTokenOf(LValueType(p, [LObject])), "ofDynamic",
+					g.sigs.method(false, LValueType(p, [LMethodTypeParam(0)]), [LObject], 1));
+				code.opToken(IlOps.CALL, g.mb.methodSpec(token, g.sigs.methodSpec([arg])), 1, 1);
+			case _:
+				throw "internal error: not a haxe.lang.Null: " + s;
+		}
+	}
+
+	// A conversion to or from haxe.lang.Null<T>, as gencs's HardNullableSynf writes it: a T wraps with
+	// `new Null<T>(v, true)` and a Dynamic with `ofDynamic`; a Null<T> reads its `value` (T's default
+	// when it has none), or goes to Dynamic, a String or another reference type through `toDynamic()`;
+	// between two instantiations, `x.hasValue ? new Null<B>((B)x.value, true) : default(Null<B>)`.
+	function nullConvert(from:IlSigNorm, to:IlSigNorm):Void {
+		var fa = nullArg(from), ta = nullArg(to);
+		if (fa != null && ta != null) {
+			var tmp = code.addLocal(from);
+			code.stloc(tmp);
+			var none = code.newLabel(), end = code.newLabel();
+			code.ldloc(tmp);
+			loadNullField(from, "hasValue");
+			code.branch(IlOps.BRFALSE, none);
+			code.ldloc(tmp);
+			loadNullField(from, "value");
+			convert(fa, ta);
+			newNull(to);
+			code.branch(IlOps.BR, end);
+			code.mark(none);
+			defaultValue(to);
+			code.mark(end);
+		} else if (ta != null) {
+			if (from.match(LObject)) {
+				ofDynamic(to);
+			} else {
+				convert(from, ta);
+				newNull(to);
+			}
+		} else if (isReference(to)) {
+			nullToDynamic(from);
+			convert(LObject, to);
+		} else {
+			loadNullField(from, "value");
+			convert(fa, to);
+		}
 	}
 
 
@@ -449,8 +580,8 @@ class TexprToIl {
 				coerce(TexprCalls.systemType, ret);
 			case TArray(e1, e2):
 				calls.arrayRead(ret, e1, e2);
-			case TObjectDecl(_):
-				throw new Unsupported("anonymous objects", true);
+			case TObjectDecl(fields):
+				dyn.objectDecl(ret, fields);
 			case TArrayDecl(el):
 				calls.arrayLiteral(ret, e, el);
 			case TFor(_, _, _):
@@ -733,8 +864,9 @@ class TexprToIl {
 
 	static function isNumeric(s:IlSigNorm):Bool return s.match(LInt32 | LUInt32 | LFloat64);
 
+	// The type an operand is computed in: a Null<T> operand's T, read from its value.
 	function operandSig(op:Binop, e:TExpr):IlSigNorm {
-		var s = sig(e.type);
+		var s = unNull(sig(e.type));
 		if (!isNumeric(s)) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		return s;
 	}

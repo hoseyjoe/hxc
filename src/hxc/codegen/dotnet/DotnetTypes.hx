@@ -282,6 +282,26 @@ class DotnetTypes {
 		return [for (b in bound) b == null ? TypeFunctions.tDynamic : b];
 	}
 
+	// gencs's haxe.lang.Null<T> of `s`.
+	public function nullOf(s:IlSigNorm):IlSigNorm {
+		return LValueType(stdClassPath("cs.internal._Null.Nullable", "Null<T> of a value type", false), [s]);
+	}
+
+	// Whether `s` is an instantiation of haxe.lang.Null<T>.
+	public function isNullOf(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LValueType(p, [_]): IlPaths.key(p) == IlPaths.key(stdClassPath("cs.internal._Null.Nullable", "Null<T> of a value type", false));
+			case _: false;
+		}
+	}
+
+	// A method argument's type. An optional argument of a value type, which only a default value makes
+	// (`?x:Int` is a Null<Int> already), is a haxe.lang.Null<T>, as gencs's default arguments are.
+	public function argSig(t:T, opt:Bool):IlSigNorm {
+		var s = toSig(t);
+		return opt && isValueType(s) && !isNullOf(s) ? nullOf(s) : s;
+	}
+
 	public function toSig(t:T):IlSigNorm {
 		return switch (t) {
 			case TMono(m): m.type == null ? LObject : toSig(m.type);
@@ -335,8 +355,8 @@ class DotnetTypes {
 						// gencs's haxe.lang.Null<T>, the standard library's cs.internal.Null struct, for a value
 						// type and, as gencs has it, for a type parameter, which may stand for one.
 						var s = toSig(params[0]);
-						if (isValueType(s) || s.match(LTypeParam(_) | LMethodTypeParam(_)))
-							return LValueType(stdClassPath("cs.internal._Null.Nullable", "Null<T> of a value type", false), [s]);
+						if ((isValueType(s) || s.match(LTypeParam(_) | LMethodTypeParam(_))) && !isNullOf(s))
+							return nullOf(s);
 						return s;
 					case "Class" | "Enum":
 						return LClass(defined(systemType), []);

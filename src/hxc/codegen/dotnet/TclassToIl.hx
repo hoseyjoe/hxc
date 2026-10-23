@@ -132,7 +132,7 @@ class TclassToIl {
 	static function functionSig(g:DotnetCtx, t:T):{args:Array<IlSigNorm>, names:Array<String>, ret:IlSigNorm} {
 		return switch (TypeFunctions.follow(t)) {
 			case TFun(sig): {
-					args: [for (a in sig.args) g.types.toSig(a.t)],
+					args: [for (a in sig.args) g.types.argSig(a.t, a.opt)],
 					names: [for (a in sig.args) a.name],
 					ret: g.types.toSig(sig.ret)
 				};
@@ -250,7 +250,7 @@ class TclassToIl {
 			ctors = [];
 			for (hc in HxGen.ctors(c)) try {
 				var pos = hc.own != null ? hc.own.pos : c.pos;
-				var args = [for (a in hc.args) g.types.toSig(a.t)];
+				var args = [for (a in hc.args) g.types.argSig(a.t, a.opt)];
 				var names = [for (a in hc.args) a.name];
 				var kind = if (split) {
 					MSplitCtor(hc);
@@ -271,7 +271,7 @@ class TclassToIl {
 				if (split) {
 					// In a generic class, the static constructor has the class's type parameters as its own.
 					var self = g.types.withParams([], c.params, () -> g.types.toSig(TInst(c, TypeFunctions.extractParamTypes(c.params))));
-					var statArgs = g.types.withParams([], c.params, () -> [for (a in hc.args) g.types.toSig(a.t)]);
+					var statArgs = g.types.withParams([], c.params, () -> [for (a in hc.args) g.types.argSig(a.t, a.opt)]);
 					stat = {
 						kind: MStaticCtor(hc),
 						name: HxGen.ctorName(c),
@@ -895,11 +895,7 @@ class TclassToIl {
 		if (hc.own != null) {
 			if (TypeFunctions.hasMeta(":functionCode", hc.own.meta)) throw new Unsupported("@:functionCode", false, hc.own.pos);
 			var tf = functionOf(hc.own, what);
-			for (i in 0...tf.args.length) {
-				var a = tf.args[i];
-				if (a.c != null) throw new Unsupported("default argument values", true, hc.own.pos);
-				lower.bindArg(a.v, i + 1, m.args[i + 1]);
-			}
+			lower.bindArgs(tf, 1, m.args.slice(1));
 			statement(lower, RReturn, withInits(c, tf.expr));
 			return;
 		}
@@ -1013,15 +1009,11 @@ class TclassToIl {
 						case _: throw "internal error: method " + what + " has no function";
 					}
 					g.types.inParams(plan.classParams, cf.params, () -> {
-						for (i in 0...tf.args.length) {
-							var a = tf.args[i];
-							if (a.c != null) throw new Unsupported("default argument values", true, cf.pos);
-							lower.bindArg(a.v, i + (m.hasThis ? 1 : 0), m.args[i]);
-						}
 						var body = tf.expr;
 						if (m.name == ".ctor") {
 							if (!plan.isStruct && !hasSuperCall(body)) initsAndBaseCtor(g, plan, code, lower) else body = withInits(plan.c, body);
 						}
+						lower.bindArgs(tf, m.hasThis ? 1 : 0, m.args);
 						statement(lower, RReturn, body);
 						if (failures.length == 0) lower.finish();
 					});

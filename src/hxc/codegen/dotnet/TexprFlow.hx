@@ -23,7 +23,7 @@ import hxc.codegen.dotnet.TexprToIl.strip;
 
 // The control flow of TexprToIl: if, while, switch, return, throw and try, and the spilling of operands
 // that a try would otherwise discard. Shares its state through the TexprToIl that owns it.
-@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprCalls)
+@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.TexprDynamic)
 class TexprFlow {
 	final tl:TexprToIl;
 	final g:DotnetCtx;
@@ -96,12 +96,14 @@ class TexprFlow {
 		// A switch on enumIndex(x) of a .NET enum is one on x, against the constructors' values.
 		var ext = TexprToIl.externEnumIndex(subject);
 		if (ext != null) subject = ext.value;
-		var st = tl.sig(subject.type);
+		// A Null<T> subject switches on its value, as HardNullableSynf unwraps it.
+		var own = tl.sig(subject.type);
+		var st = tl.unNull(own);
 		var isString = st.match(LString);
 		if (ext == null && !isString && !st.match(LInt32 | LBool)) throw new Unsupported("switch on this type", false);
 		var local:Null<Slot> = null;
 		switch (strip(subject).expr) {
-			case TLocal(v): local = tl.slot(v);
+			case TLocal(v) if (!tl.isHaxeNull(own)): local = tl.slot(v);
 			case _:
 		}
 		var tmp = -1;

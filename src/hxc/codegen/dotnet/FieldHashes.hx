@@ -27,8 +27,27 @@ class FieldHashes {
 		return h;
 	}
 
+	// The names each class's code has hashed, by class and hash, as reflectionCFs' hash_field keeps
+	// them per generated class.
+	static var claimed = new Map<String, Map<Int, String>>();
+
+	// Records that the code of the class `owner` hashes `name` to `h`; returns the other name that
+	// class already hashed to `h`, which gencs refuses as "Field conflict between <name> and <other>",
+	// or null.
+	public static function claim(owner:String, h:Int, name:String):Null<String> {
+		var m = claimed.get(owner);
+		if (m == null) claimed.set(owner, m = new Map());
+		var other = m.get(h);
+		if (other == null) {
+			m.set(h, name);
+			return null;
+		}
+		return other == name ? null : other;
+	}
+
 	public static function reset():Void {
 		names = new Map();
+		claimed = new Map();
 	}
 
 	// The recorded hashes in ascending order with their names, as FieldLookup searches them.

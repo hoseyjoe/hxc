@@ -58,13 +58,15 @@ class TexprOps {
 				tl.coerce(LString, ret);
 			case OpAdd | OpSub | OpMult | OpDiv | OpMod | OpAnd | OpOr | OpXor | OpShl | OpShr | OpUShr:
 				var s1 = tl.operandSig(op, e1), s2 = tl.operandSig(op, e2);
-				var t = tl.sig(e.type);
+				// A Null<T> result is computed in T and wrapped again, as HardNullableSynf does.
+				var own = tl.sig(e.type);
+				var t = tl.unNull(own);
 				// Bitwise operators and shifts take Int operands only.
 				if (!isArith(op) && !(isIntLike(s1) && isIntLike(s2) && isIntLike(t)))
 					throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 				tl.texpr(RValue(t), e1);
 				numericTail(op, t, e2, s1);
-				tl.coerce(t, ret);
+				tl.dyn.finish(t, own, ret);
 			case _:
 				throw new Unsupported("the " + Ast.sBinop(op) + " operator", false);
 		}
@@ -155,12 +157,21 @@ class TexprOps {
 			var other = isNullConst(e1) ? e2 : e1;
 			if (isNullConst(other)) throw new Unsupported("comparing null with null", false);
 			var s = tl.sig(other.type);
+			if (tl.isHaxeNull(s)) {
+				// `x == null` on a haxe.lang.Null<T> is `!x.hasValue`.
+				tl.texpr(RValue(s), other);
+				tl.loadNullField(s, "hasValue");
+				if (op.match(OpEq)) not();
+				tl.coerce(LBool, ret);
+				return;
+			}
 			if (DotnetTypes.isValueType(s) || isTypeParam(s)) throw new Unsupported("comparing a value type with null", false);
 			netOperator = equalityOperator(op, e1, e2);
 			tl.texpr(RValue(netOperator == null ? null : netOperator.args[0]), e1);
 			tl.texpr(RValue(netOperator == null ? null : netOperator.args[1]), e2);
 		} else {
-			var s1 = tl.sig(e1.type), s2 = tl.sig(e2.type);
+			// Null<T> operands compare their values, as HardNullableSynf unwraps them.
+			var s1 = tl.unNull(tl.sig(e1.type)), s2 = tl.unNull(tl.sig(e2.type));
 			var idx1 = TexprToIl.externEnumIndex(e1), idx2 = TexprToIl.externEnumIndex(e2);
 			if (equality && (idx1 != null && constInt(e2) != null || idx2 != null && constInt(e1) != null)) {
 				// enumIndex(x) == i on a .NET enum: x against the value of the constructor at i.
@@ -339,17 +350,19 @@ class TexprOps {
 				not();
 				tl.coerce(LBool, ret);
 			case Neg:
-				var t = tl.sig(e.type);
+				var own = tl.sig(e.type);
+				var t = tl.unNull(own);
 				if (!isNumeric(t)) throw new Unsupported("the - operator on these types", false);
 				tl.texpr(RValue(t), e1);
 				code.op(IlOps.NEG, 1, 1);
-				tl.coerce(t, ret);
+				tl.dyn.finish(t, own, ret);
 			case NegBits:
-				var t = tl.sig(e.type);
+				var own = tl.sig(e.type);
+				var t = tl.unNull(own);
 				if (!t.match(LInt32)) throw new Unsupported("the ~ operator on these types", false);
 				tl.texpr(RValue(t), e1);
 				code.op(IlOps.NOT, 1, 1);
-				tl.coerce(t, ret);
+				tl.dyn.finish(t, own, ret);
 			case Increment | Decrement:
 				incDec(ret, e, op.match(Increment), flag.match(Postfix), e1);
 			case Spread:
@@ -449,6 +462,12 @@ class TexprOps {
 			case _:
 		}
 		var s = tl.sig(e.type);
+		if (tl.isHaxeNull(s)) {
+			// A Null<T> through toDynamic(), so an empty one prints null.
+			tl.texpr(RValue(LObject), e);
+			tl.dyn.stdString();
+			return;
+		}
 		stringKind(s);
 		tl.texpr(RValue(s), e);
 		stringifyTop(s);

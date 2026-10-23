@@ -165,13 +165,13 @@ class P {
 	static function main() {
 		var f = function() {};
 		Sys.println(f);
-		Sys.println({x: 1});
+		Sys.println(function() return 1);
 	}
 }
 ===
 [compile]
 P.hx:3: characters 11-24 : dotnet: local functions are not supported yet
-P.hx:5: characters 15-21 : dotnet: anonymous objects are not supported yet
+P.hx:5: characters 15-34 : dotnet: local functions are not supported yet
 --- int-arithmetic @gencs
 class P {
 	static var max = 2147483647;
@@ -434,7 +434,7 @@ class P {
 			var g = function() {};
 			Sys.println(g);
 			if (i == 2) {
-				Sys.println({x: 1});
+				Sys.println(function() return 1);
 				continue;
 			}
 			r += i;
@@ -449,7 +449,7 @@ class P {
 ===
 [compile]
 P.hx:6: characters 12-25 : dotnet: local functions are not supported yet
-P.hx:9: characters 17-23 : dotnet: anonymous objects are not supported yet
+P.hx:9: characters 17-36 : dotnet: local functions are not supported yet
 --- jumps-inside-expressions-are-errors
 class P {
 	static var n = 3;
@@ -1288,7 +1288,6 @@ class P {
 P.hx:9: characters 10-16 : dotnet: a cast between instantiations of Box is not supported yet
 P.hx:13: characters 20-21 : dotnet: a cast between instantiations of Box is not supported yet
 P.hx:16: characters 28-36 : dotnet: a cast between instantiations of Array is not supported yet
-P.hx:17: characters 21-31 : dotnet: Null<T> of a value type is not supported yet
 --- array-methods
 class P {
 	static function show(a:Array<Int>):String {
@@ -1352,11 +1351,17 @@ type public interface abstract pack.IFind`1<T> implements haxe.lang.IHxObject
   method public virtual hidebysig newslot abstract haxe.lang.Null`1<!0> first()
   method public virtual hidebysig newslot abstract haxe.lang.Null`1<!!0> pick<S>(!!0, haxe.lang.Null`1<!!0>)
   method public virtual hidebysig newslot abstract int32 count(haxe.lang.Null`1<int32>, string)
---- null-of-type-parameters-is-refused
+--- null-of-type-parameters-values @gencs
 class B<T> {
 	public function new() {}
 	public function find():Null<T> {
 		return null;
+	}
+	public function wrap(v:T):Null<T> {
+		return v;
+	}
+	public function isNull(v:Null<T>):Bool {
+		return v == null;
 	}
 }
 class P {
@@ -1366,13 +1371,13 @@ class P {
 		Sys.println(e.pop());
 		Sys.println(new B<Int>().find());
 		Sys.println(e.length);
+		var bi = new B<Int>(), bs = new B<String>();
+		Sys.println(bi.wrap(3) + " " + bs.wrap("s") + " " + bs.wrap(null) + " " + bi.isNull(bi.find()) + " " + bi.isNull(4) + " " + bs.isNull(null));
+		var n:Null<Int> = bi.wrap(5);
+		Sys.println(n + 1);
 	}
 }
 ===
-[compile]
-P.hx:4: characters 10-14 : dotnet: Null<T> of a value type is not supported yet
-P.hx:11: characters 15-22 : dotnet: Null<T> of a value type is not supported yet
-P.hx:12: characters 15-34 : dotnet: Null<T> of a value type is not supported yet
 --- struct-to-unimplemented-interface-is-an-error
 interface IGet<T> {
 	function get():T;
@@ -2882,6 +2887,187 @@ class P {
 		Sys.println((cast 7.5 : String));
 		var d:Dynamic = (cast true : String);
 		Sys.println(d);
+	}
+}
+===
+--- anonymous-objects @gencs
+class P {
+	static function main() {
+		var o = {y: "a", x: 1, z: 2.5, bb: true, aa: [1]};
+		Sys.println(Reflect.fields(o).join(","));
+		Sys.println(o.x + o.z);
+		o.x = 5;
+		Sys.println(o.x);
+		var d:Dynamic = o;
+		d.x = "str";
+		Sys.println(Reflect.fields(d).join(","));
+		d.newf = 1;
+		Sys.println(Reflect.fields(d).join(","));
+		Sys.println(d.missing);
+		var e = {};
+		Sys.println(Reflect.fields(e).length);
+		var count = 0;
+		var side = {a: count++, b: count++};
+		Sys.println(side.a + "," + side.b);
+	}
+}
+===
+--- hash-collision @gencs
+class P {
+	static function main() {
+		var d:Dynamic = {};
+		var first = "rulujia", second = "xpfmath";
+		Reflect.setField(d, first, 1);
+		Reflect.setField(d, second, 2);
+		Sys.println(Reflect.field(d, first) + " " + Reflect.field(d, second));
+		Sys.println(Reflect.fields(d).length);
+		Sys.println(Reflect.fields(d).join(","));
+		Reflect.setField(d, second, 3.5);
+		Sys.println(Reflect.field(d, first) + " " + Reflect.field(d, second) + " " + Reflect.hasField(d, second));
+		Reflect.deleteField(d, second);
+		Sys.println(Reflect.fields(d).join(",") + " " + Reflect.hasField(d, second));
+	}
+}
+===
+--- null-of-basic-types @gencs
+class P {
+	static function opt(a:Int, ?b:Int, c:Float = 2.5):String {
+		return a + "," + b + "," + c;
+	}
+	static function main() {
+		var ni:Null<Int> = null;
+		Sys.println(ni == null);
+		ni = 5;
+		Sys.println(ni + 1);
+		ni++;
+		Sys.println(ni);
+		var nf:Null<Float> = ni;
+		Sys.println(nf);
+		var d:Dynamic = ni;
+		Sys.println(d);
+		Sys.println(opt(1));
+		Sys.println(opt(1, 2, 3));
+		var e = [1, 2, 3];
+		e.pop();
+		Sys.println(e.pop());
+		var empty:Array<Int> = [];
+		Sys.println(empty.pop());
+	}
+}
+===
+--- default-arguments @gencs
+class Foo {
+	public var v:Int;
+	public function new(a:Int = 7, ?s:String = "q") {
+		v = a;
+		Sys.println(s);
+	}
+	public function m(x:Bool = true, ?y:Int = 3, z:Null<Int> = 4, u:UInt = 9):String return x + "," + y + "," + z + "," + u;
+}
+@:nativeGen class N {
+	public var w:Float;
+	public function new(w:Float = 1.25) {
+		this.w = w;
+	}
+}
+class P {
+	static function s(a:String = "x", ?b:Int, f:Float = -1.5, u:UInt = 3):String {
+		a += "!";
+		return a + b + f + u;
+	}
+	static function main() {
+		Sys.println(s());
+		Sys.println(s(null, null));
+		Sys.println(s("y", 2, 0.5, 4));
+		var f = new Foo();
+		Sys.println(f.v + f.m());
+		Sys.println(f.m(false, null, null));
+		Sys.println(new Foo(1, null).v);
+		Sys.println(Reflect.callMethod(f, Reflect.field(f, "m"), [false, 8]));
+		Sys.println(new N().w + new N(2).w);
+	}
+}
+===
+--- anonymous-and-null-operations @gencs
+class Foo {
+	public var n:Null<Int> = 1;
+	public var f:Null<Float>;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var a:{x:Int, s:String, f:Float, ?n:Int} = {x: 1, s: "s", f: 1.5};
+		a.x += 2;
+		a.s += "t";
+		a.f *= 3;
+		Sys.println(a.x + " " + a.s + " " + a.f + " " + a.n);
+		var v = (a.x -= 1);
+		Sys.println(v + " " + a.x);
+		a.n = 4;
+		a.n++;
+		Sys.println(a.n);
+		var fl = 2.5;
+		Sys.println((cast fl : Null<Int>));
+		var ni:Null<Int> = 3, nj:Null<Int> = null;
+		ni += 2;
+		ni -= 1;
+		Sys.println(ni + " " + (ni < 10) + " " + (ni == nj) + " " + (ni != 4) + " " + (nj == null) + " " + (ni > nj));
+		var nf:Null<Float> = nj;
+		Sys.println(nf == null);
+		Sys.println(Std.string(ni) + "/" + Std.string(nj));
+		var nb:Null<Bool> = true;
+		if (nb) Sys.println("yes " + (nb == true));
+		var dyn:Dynamic = 12;
+		var n2:Null<Int> = dyn;
+		Sys.println(n2 + 1);
+		var post = ni++;
+		var pre = ++ni;
+		Sys.println(post + " " + pre + " " + ni + " " + (-ni));
+		var foo = new Foo();
+		foo.n++;
+		Sys.println(foo.n + " " + foo.f);
+		var ns:Array<Null<Int>> = [1, null];
+		ns.push(5);
+		Sys.println((ns[1] == null) + " " + ns[2] + " " + ns.length);
+		var o:{?q:Int} = {};
+		Sys.println(o.q);
+		var d2:Dynamic = {n: ni, m: nj, i: (3 : UInt)};
+		Sys.println(Reflect.fields(d2).join(","));
+		var big = {f: 0.5, i: (7 : cs.StdTypes.Int64), s: (1.5 : Single), b: false, nested: {k: 1}};
+		Sys.println(Reflect.fields(big).join(",") + " " + big.nested.k + " " + big.i + " " + big.s);
+		switch (ni) {
+			case 6: Sys.println("six");
+			default: Sys.println("other");
+		}
+		var nf2:Null<Float> = 1.5;
+		var neg:Null<Int> = -ni;
+		Sys.println(Math.abs(neg) + nf2 * 2 + " " + (nf2 > ni) + " " + (nf2 + ni));
+	}
+}
+===
+--- dynamic-field-hash-conflict-is-an-error
+class P {
+	static function main() {
+		var d:Dynamic = {};
+		d.rulujia = 1;
+		Reflect.setField(d, "xpfmath", 2);
+		Sys.println({rulujia: 1, xpfmath: 2});
+	}
+}
+===
+[compile]
+P.hx:5: characters 20-21 : Field conflict between xpfmath and rulujia
+P.hx:6: characters 28-35 : Field conflict between xpfmath and rulujia
+--- anonymous-object-printing @gencs
+class P {
+	static function main() {
+		var o = {x: 1, y: "a", z: [1, 2], n: null, inner: {k: 2.5}};
+		Sys.println(o);
+		Sys.println(Std.string({}));
+		Sys.println("" + {a: 1.5, b: false});
+		var d:Dynamic = o;
+		Reflect.deleteField(d, "y");
+		Sys.println(d + " " + Reflect.hasField(d, "y") + " " + Reflect.hasField(d, "x"));
 	}
 }
 ===
