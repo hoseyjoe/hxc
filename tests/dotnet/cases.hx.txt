@@ -1655,3 +1655,68 @@ tail neg
 1
 q1
 q2
+--- inventory
+class Item {
+	public var name:String;
+	public var qty:Int;
+	public function new(name:String, qty:Int) {
+		this.name = name;
+		this.qty = qty;
+	}
+	public function toString():String {
+		return name + " x" + qty;
+	}
+}
+class OutOfStock extends cs.system.Exception {
+	public function new(name:String) {
+		super(name + " is out of stock");
+	}
+}
+class Inventory {
+	static var created = 0;
+	var items:Array<Item> = [];
+	public function new() {
+		created++;
+	}
+	public function add(name:String, qty:Int):Void {
+		items.push(new Item(name, qty));
+	}
+	public function take(name:String):Item {
+		for (it in items) {
+			if (it.name == name) {
+				if (it.qty == 0) throw new OutOfStock(name);
+				it.qty--;
+				return it;
+			}
+		}
+		throw new cs.system.ArgumentException("no " + name);
+	}
+	public static function count():Int {
+		return created;
+	}
+}
+class P {
+	static function main() {
+		var inv = new Inventory();
+		inv.add("apple", 1);
+		inv.add("pear", 0);
+		Sys.println("" + inv.take("apple"));
+		for (n in ["apple", "pear", "plum"]) {
+			try {
+				inv.take(n);
+			} catch (e:OutOfStock) {
+				Sys.println(e.Message);
+			} catch (e:cs.system.ArgumentException) {
+				Sys.println("error: " + e.Message);
+			}
+		}
+		Sys.println(Inventory.count());
+	}
+}
+===
+[run]
+apple x0
+apple is out of stock
+pear is out of stock
+error: no plum
+1

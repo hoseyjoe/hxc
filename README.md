@@ -32,7 +32,8 @@ output.
 | Compilation server | `--wait stdio` and `--server-connect`; listening on a TCP port is not yet supported |
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
-| `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet |
+| `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set |
+| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10, straight to IL with no C# step. Early: classes, interfaces, structs, generics, statics, strings, arrays and native .NET exceptions work; see [.NET output](#net-output) |
 | `--lua`, `--python`, `--php`, `--hl`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
@@ -82,6 +83,7 @@ hxc -p src -m Main --js bin/main.js           # JavaScript
 hxc -p src -m Main --cpp bin/cpp              # C++, built with hxcpp
 hxc -p src -m Main --cppia bin/main.cppia     # cppia
 hxc -p src -m Main --jvm bin/main.jar          # JVM bytecode
+hxc -p src -m Main --cs bin/net -D dotnet    # .NET 10 assembly, bin/net/net.dll (early)
 hxc -p src --run Main arg1 arg2               # run in the interpreter
 hxc -p src -m Main --xml types.xml --no-output
 hxc build.hxml
@@ -99,6 +101,30 @@ hxc --wait stdio
 Requests arrive on stdin as length-prefixed blocks of arguments, and modules stay cached between
 requests, so a warm rebuild of a small project returns in milliseconds. `--server-connect
 host:port` connects out to a client that is listening instead.
+
+### .NET output
+
+`--cs <dir> -D dotnet` writes `<dir>/<name>.dll` straight as IL, targeting .NET 10 (`net10.0`).
+With `-main` it also writes `<name>.runtimeconfig.json`, so `dotnet <name>.dll` runs it.
+`-D dll-name=<name>` sets the name; the default is the output directory's last segment.
+
+This is milestone 2 of the .NET generator. Classes, interfaces, structs, generics, statics,
+operators, strings, arrays and native .NET exceptions work, including `try`/`catch`/`throw` of
+`cs.system.Exception` subclasses. Constructs not supported yet are compile errors in user code
+(`dotnet: ... not supported yet`): `Dynamic` operations, closures and local functions, enums,
+anonymous objects, reflection, `haxe.Exception`-based throws and catches, casts between
+instantiations of a generic class, and `Null<T>` of value types.
+
+The standard library's hxcs runtime is partly stubbed until milestone 3; a stubbed method throws
+`System.NotSupportedException` when called. `-D dotnet-stub-report` prints what was skipped or
+stubbed, one sorted line each.
+
+The tests need the .NET 10 SDK. They build `tests/fixtures/hxccheck`, compile each case twice to
+check the output is deterministic, verify it with ILVerify, and run it:
+
+```bash
+tests/dotnet/run.sh --compiler path/to/hxc [--std path/to/haxe/std] [--case name]
+```
 
 ## Building from source
 
