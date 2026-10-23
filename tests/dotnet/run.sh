@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Runs the .NET generator's cases in cases.hx.txt.
-#   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>]
+#   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>]
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [+ extra hxc args]`, its source, `===`,
 # and the expected result. Each case compiles twice into a fresh directory, and its .dll must be
 # byte-identical between the two, pass ILVerify, run (unless @lib) and dump as expected.
+# A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
+# gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
+# and a case whose expectation has no [run] section takes the gencs output as that expectation.
 # Case directories go under $HXC_TEST_TMP, by default tests/dotnet/tmp (gitignored), so one
 # antivirus exclusion covers the assemblies they write.
 set -u
@@ -13,16 +16,18 @@ root="$(cd "$here/../.." && pwd)"
 compiler=""
 std=""
 only=""
+haxe="haxe"
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--compiler) compiler="$2"; shift 2 ;;
 		--std) std="$2"; shift 2 ;;
 		--case) only="$2"; shift 2 ;;
+		--haxe) haxe="$2"; shift 2 ;;
 		*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
 if [ -z "$compiler" ]; then
-	echo "usage: $0 --compiler <hxc> [--std <dir>] [--case <name>]" >&2
+	echo "usage: $0 --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>]" >&2
 	exit 2
 fi
 compiler="$(cd "$(dirname "$compiler")" && pwd)/$(basename "$compiler")"
@@ -45,9 +50,9 @@ native() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 # Line endings become \n, the case directory $CASE, trailing whitespace goes; the caller's $(...)
 # drops trailing blank lines.
 normalize() {
-	local s="$1" d
+	local s="$1" dir="${2:-$casedir}" d
 	s="${s//$'\r'/}"
-	for d in "$casedir" "$(native "$casedir")" "$(cygpath -w "$casedir" 2>/dev/null)"; do
+	for d in "$dir" "$(native "$dir")" "$(cygpath -w "$dir" 2>/dev/null)"; do
 		[ -n "$d" ] && s="${s//"$d"/\$CASE}"
 	done
 	printf '%s\n' "$s" | sed -e 's/[[:space:]]*$//'
@@ -56,21 +61,91 @@ normalize() {
 failed=0
 total=0
 
+# The module's source file, relative to a case directory.
+source_file() {
+	if [ "$1" = "P" ]; then echo "P.hx"; else echo "$(printf '%s' "$1" | tr . /).hx"; fi
+}
+
+# Builds and runs every @gencs case in one go: generates the C# in parallel, builds all the projects
+# with one batch MSBuild project, runs each. For a case it leaves $gencsroot/<name>/out (the run's
+# output) or $gencsroot/<name>/problem.
+gencsroot=""
+gencs_prepare() {
+	local i t module has
+	local -a todo=()
+	for i in "${!c_name[@]}"; do
+		has=0
+		for t in ${c_tags[$i]}; do [ "$t" = "@gencs" ] && has=1; done
+		[ $has = 1 ] && todo+=("$i")
+	done
+	[ ${#todo[@]} = 0 ] && return 0
+	gencsroot="$(mktemp -d "$tmproot/gencs.XXXXXX")"
+	for i in "${todo[@]}"; do
+		local d="$gencsroot/${c_name[$i]}" file
+		module="P"
+		for t in ${c_tags[$i]}; do
+			case "$t" in @module=*) module="${t#@module=}" ;; esac
+		done
+		file="$(source_file "$module")"
+		mkdir -p "$d/$(dirname "$file")"
+		printf '%s\n' "${c_source[$i]}" > "$d/$file"
+		while [ "$(jobs -rp | wc -l)" -ge 6 ]; do wait -n; done
+		(
+			set -f
+			if glog="$("$haxe" --cwd "$(native "$d")" --haxelib-global -cp . -main "$module" --cs g -D no-compilation ${c_extra[$i]} 2>&1)"; then
+				mainclass="$(sed -n '/^begin main/,/^end main/{/^begin main/d;/^end main/d;p;}' "$d/g/hxcs_build.txt" | tr -d '\r' | head -n 1)"
+				sed -e "s/@NAME@/${module##*.}/" -e "s/@MAIN@/$mainclass/" "$here/gencs.csproj.in" > "$d/g/${module##*.}.csproj"
+			else
+				printf 'gencs could not compile the case:\n%s\n' "$glog" > "$d/problem"
+			fi
+		) &
+	done
+	wait
+
+	cat > "$gencsroot/batch.proj" <<'EOF'
+<Project DefaultTargets="All">
+  <ItemGroup><Case Include="*/g/*.csproj" /></ItemGroup>
+  <Target Name="All">
+    <MSBuild Projects="@(Case)" Targets="Restore" Properties="MSBuildRestoreSessionId=$([System.Guid]::NewGuid())" BuildInParallel="true" />
+    <MSBuild Projects="@(Case)" Properties="Configuration=Release;OutDir=bin/" BuildInParallel="true" />
+  </Target>
+</Project>
+EOF
+	local blog
+	blog="$(cd "$gencsroot" && dotnet build batch.proj -m -nologo -v q 2>&1)" || true
+
+	for i in "${todo[@]}"; do
+		local d="$gencsroot/${c_name[$i]}" dll code=0 out
+		[ -f "$d/problem" ] && continue
+		module="P"
+		for t in ${c_tags[$i]}; do case "$t" in @module=*) module="${t#@module=}" ;; esac; done
+		dll="g/bin/${module##*.}.dll"
+		if [ ! -f "$d/$dll" ]; then
+			printf 'gencs output did not build:\n%s\n' "$(printf '%s\n' "$blog" | grep -F "/${c_name[$i]}/" | sort -u | head -n 20)" > "$d/problem"
+			continue
+		fi
+		out="$(cd "$d" && dotnet "$dll" 2>&1)" || code=$?
+		[ $code != 0 ] && out="${out}"$'\n'"[exit $code]"
+		printf '%s' "$out" > "$d/out"
+	done
+}
+
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" t
+	local lib=0 module="P" dump="" gencs=0 t
 	for t in $tags; do
 		case "$t" in
 			@lib) lib=1 ;;
 			@module=*) module="${t#@module=}" ;;
 			@dump=*) dump="${t#@dump=}" ;;
+			@gencs) gencs=1 ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
 		esac
 	done
 	total=$((total + 1))
 	casedir="$(mktemp -d "$tmproot/case.XXXXXX")"
-	local file="P.hx"
-	if [ "$module" != "P" ]; then file="$(printf '%s' "$module" | tr . /).hx"; fi
+	local file
+	file="$(source_file "$module")"
 	mkdir -p "$casedir/$(dirname "$file")"
 	printf '%s\n' "$source" > "$casedir/$file"
 
@@ -100,6 +175,16 @@ run_case() {
 			rout="$(cd "$casedir" && dotnet "a/P/$(basename "$dll")" 2>&1)" || code=$?
 			[ $code != 0 ] && rout="${rout}"$'\n'"[exit $code]"
 			[ -n "$rout" ] && result="${result:+$result$'\n'}[run]"$'\n'"$rout"
+			if [ $gencs = 1 ] && [ -f "$gencsroot/$name/out" ]; then
+				local gdir="$gencsroot/$name" gout
+				gout="$(normalize "$(cat "$gdir/out")" "$gdir")"
+				if [ "$gout" != "$(normalize "$rout")" ]; then
+					result="${result:+$result$'\n'}[gencs]"$'\n'"$gout"
+				elif ! printf '%s\n' "$expected" | grep -qx '\[run\]'; then
+					# No [run] expectation: gencs's output is it.
+					[ -n "$gout" ] && expected="${expected}[run]"$'\n'"$gout"$'\n'
+				fi
+			fi
 		fi
 		if [ -n "$dump" ]; then
 			local dout
@@ -108,6 +193,7 @@ run_case() {
 		fi
 	fi
 
+	if [ $gencs = 1 ] && [ -f "$gencsroot/$name/problem" ]; then problem="${problem}$(cat "$gencsroot/$name/problem")"$'\n'; fi
 	local want got
 	want="$(normalize "$expected")"
 	got="$(normalize "$result")"
@@ -128,9 +214,10 @@ run_case() {
 
 # Reads the cases: `#` and `# ` lines are comments, trailing blank lines of a block are dropped.
 name=""
+c_name=(); c_tags=(); c_extra=(); c_source=(); c_expected=()
 flush() {
 	if [ -n "$name" ] && { [ -z "$only" ] || [ "$only" = "$name" ]; }; then
-		run_case "$name" "$tags" "$extra" "$source" "$expected"
+		c_name+=("$name"); c_tags+=("$tags"); c_extra+=("$extra"); c_source+=("$source"); c_expected+=("$expected")
 	fi
 	name=""
 }
@@ -162,6 +249,12 @@ while IFS= read -r line || [ -n "$line" ]; do
 	fi
 done < "$here/cases.hx.txt"
 flush
+
+gencs_prepare
+for i in "${!c_name[@]}"; do
+	run_case "${c_name[$i]}" "${c_tags[$i]}" "${c_extra[$i]}" "${c_source[$i]}" "${c_expected[$i]}"
+done
+[ -n "$gencsroot" ] && rm -rf "$gencsroot"
 
 if [ $total = 0 ]; then
 	echo "no case matched" >&2

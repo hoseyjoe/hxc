@@ -133,8 +133,12 @@ The tests need the .NET 10 SDK and hxcs installed globally. They build `tests/fi
 check the output is deterministic, verify it with ILVerify, and run it:
 
 ```bash
-tests/dotnet/run.sh --compiler path/to/hxc [--std path/to/haxe/std] [--case name]
+tests/dotnet/run.sh --compiler path/to/hxc [--std path/to/haxe/std] [--case name] [--haxe path/to/haxe]
 ```
+
+Cases tagged `@gencs` are also compiled with Haxe 4.3.7's own `--cs` generator (`-D no-compilation`), the C# is built
+for net10.0, and its output must match the hxc build's. That needs Haxe 4.3.7 (`haxe`, or `--haxe`) with hxcs on the
+haxelib path, and a case directory path without spaces, since hxcs fails on them (`HXC_TEST_TMP` sets the directory).
 
 ## Building from source
 
