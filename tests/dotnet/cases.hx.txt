@@ -1983,3 +1983,30 @@ System.String
 84
 90
 3
+--- casts-between-value-types-convert @gencs
+class P {
+	static function show<T>(x:T):Void {
+		var o:cs.system.Object = cast x;
+		Sys.println(o.GetType().Name + " " + o.ToString());
+	}
+
+	static function main() {
+		var d = 1.75;
+		var s:Dynamic = (cast d : Single);
+		show(s);
+		var l:Dynamic = (cast d : cs.types.Int64);
+		show(l);
+		show((cast 2.5 : Single));
+		var big = 3e9;
+		show((cast big : cs.types.Int64));
+		var i = 7;
+		show((cast i : cs.types.Int64));
+	}
+}
+===
+[run]
+Single 1.75
+Int64 1
+Single 2.5
+Int64 3000000000
+Int64 7

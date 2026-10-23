@@ -54,6 +54,7 @@ class IlOps {
 	public static inline var NOT = 0x66;
 	public static inline var CONV_I4 = 0x69;
 	public static inline var CONV_I8 = 0x6A;
+	public static inline var CONV_R4 = 0x6B;
 	public static inline var CONV_R8 = 0x6C;
 	public static inline var CONV_U8 = 0x6E;
 	public static inline var CALLVIRT = 0x6F;

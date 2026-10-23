@@ -172,6 +172,13 @@ class TexprToIl {
 				code.op(IlOps.CONV_R_UN, 1, 1);
 				code.op(IlOps.CONV_R8, 1, 1);
 			} else if (from.match(LFloat64) && to.match(LInt32)) code.op(IlOps.CONV_I4, 1, 1);
+			// To Single and Int64 as C#'s casts, and Int's implicit widening, convert.
+			else if (from.match(LFloat64 | LInt32) && to.match(LFloat32)) code.op(IlOps.CONV_R4, 1, 1);
+			else if (from.match(LUInt32) && to.match(LFloat32)) {
+				code.op(IlOps.CONV_R_UN, 1, 1);
+				code.op(IlOps.CONV_R4, 1, 1);
+			} else if (from.match(LFloat64 | LInt32) && to.match(LInt64)) code.op(IlOps.CONV_I8, 1, 1);
+			else if (from.match(LUInt32) && to.match(LInt64)) code.op(IlOps.CONV_U8, 1, 1);
 			else if (isTypeParam(from) || isTypeParam(to)) {
 				// Between a type parameter and another type that is one at run time, as C# casts through object.
 				code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
@@ -347,15 +354,26 @@ class TexprToIl {
 			case TParenthesis(e1) | TMeta(_, e1):
 				texpr(ret, e1);
 			case TCast(e1, null):
-				// A cast between instantiations is reported at the cast.
+				var from = null, to = null;
 				if (!isNullConst(e1)) {
-					var from = try sig(e1.type) catch (_:Unsupported) null, to = try sig(e.type) catch (_:Unsupported) null;
+					from = try sig(e1.type) catch (_:Unsupported) null;
+					to = try sig(e.type) catch (_:Unsupported) null;
+					// A cast between instantiations is reported at the cast.
 					if (from != null && to != null) checkInstantiationCast(from, to);
 				}
-				texpr(switch (ret) {
-					case RValue(null): RValue(sig(e.type));
-					case r: r;
-				}, e1);
+				switch (ret) {
+					case RValue(want) if (want != null && from != null && to != null && DotnetTypes.isValueType(from)
+						&& DotnetTypes.isValueType(to) && !IlPaths.sigEq(from, to) && !IlPaths.sigEq(want, to)):
+						// A cast between value types converts to its own type first, as C#'s `(object)(float)d`
+						// does; the result then goes where the caller wants it.
+						texpr(RValue(to), e1);
+						coerce(to, ret);
+					case _:
+						texpr(switch (ret) {
+							case RValue(null): RValue(sig(e.type));
+							case r: r;
+						}, e1);
+				}
 			case TBinop(OpAssign, lhs, rhs):
 				assign(ret, lhs, rhs);
 			case TBinop(OpAssignOp(op), lhs, rhs):
