@@ -290,7 +290,12 @@ wrong-typed write through `Dynamic`, nested arrays, and two threads casting one 
 - **Debug info**: a Portable PDB with Document rows (`.hx` paths + SHA-256), sequence points per
   expression statement, hidden sequence points for generated code, local scopes and variable names.
   Embedded source and Source Link are optional. The DLL links to it through CodeView and PdbChecksum
-  debug-directory entries.
+  debug-directory entries. `-debug` does not turn off JIT optimization: the server app build always
+  passes it, and under gencs the `dotnet publish` configuration decided optimization instead
+  (`HaxeServer.csproj` sets no `<Optimize>`, so only `-c Release` was optimized, and several of
+  the server app's Docker scripts publish with `-c Debug`). The assembly gets a `DebuggableAttribute` with
+  `DisableOptimizations` only under `-D dotnet-debug-jit`, for stepping with every local kept live.
+  *(The define's name is my call.)*
 - **Verification**: `dotnet-ilverify` (10.x) runs on every generated test assembly. Differential
   tests compare against Haxe 4.3.7 gencs output (built with `dotnet build`) running the same program,
   with stdout and `haxe.Serializer` output diffed.
@@ -312,8 +317,9 @@ wrong-typed write through `Dynamic`, nested arrays, and two threads casting one 
    generics that cross into referenced assemblies, the inline-C# subset, manifest resources.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
-5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code,
-   and `.hx` line numbers in exception stack traces.
+5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
+   (built with `-D dotnet-debug-jit`), and `.hx` line numbers in exception stack traces from an
+   optimized build.
 6. **The server app acceptance.** The two-way test database migration described in Success.
 
 ## Left to the builder
@@ -321,6 +327,12 @@ wrong-typed write through `Dynamic`, nested arrays, and two threads casting one 
 - Internal module layout under `src/hxc/codegen/` (e.g. a `dotnet/` folder next to `jvm/`), and how
   much of the JVM backend's lowering is shared or copied.
 - IL lowering strategy for Haxe's expression-oriented constructs.
+- An IL size pass once milestone 3 compiles the runtime. Milestone 2 always emits long-form
+  branches, never fuses a comparison into its branch (`bne.un`, `ble`, …), and lowers `switch` to a
+  chain of comparisons. The JIT folds those back, but IL size decides what it inlines (a callee of
+  16 bytes or less always is), so measure the server app's method sizes and shorten branches, fuse
+  comparisons or emit `switch` tables only where small methods are pushed over. No benchmark gates
+  it (see Non-goals).
 - How the differential tests plug into hxc's existing harness (`src/hxia/harness`,
   `tests/divergences.json`).
 - PDB extras (embedded source, Source Link).
