@@ -33,7 +33,7 @@ output.
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
 | `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set |
-| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes, interfaces, structs, generics, statics, strings, arrays and native .NET exceptions work; see [.NET output](#net-output) |
+| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>` and native .NET exceptions work; see [.NET output](#net-output) |
 | `--lua`, `--python`, `--php`, `--hl`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
@@ -114,20 +114,35 @@ The assembly's references resolve against hxcs's `netlib` directory for `-D net-
 the directories given with `--net-std`. By default that means a reference to `mscorlib` 2.0.0.0,
 which .NET 10 forwards to its own libraries.
 
-This is milestone 2 of the .NET generator. Classes, interfaces, structs, generics, statics,
-operators, strings, arrays and native .NET exceptions work, including `try`/`catch`/`throw` of
-`cs.system.Exception` subclasses. Constructs not supported yet are compile errors in user code
-(`dotnet: ... not supported yet`): `Dynamic` operations, closures and local functions, enums,
-anonymous objects, reflection, casts between instantiations of a generic class, and `Null<T>` of
-value types.
+Classes, interfaces, structs, generics, statics, operators, strings, arrays and native .NET
+exceptions work, including `try`/`catch`/`throw` of `cs.system.Exception` subclasses. Classes have
+the shape Haxe's own `--cs` generator gives them: they extend `haxe.lang.HxObject`, and fields and
+methods can be reached by reflection (`Reflect.field`, `Reflect.setField`, `Reflect.callMethod`,
+`Reflect.hasField` and the `Dynamic` field operations behind them). `Dynamic` works: field access,
+calls, arithmetic, comparison, equality, string concatenation and conversion to and from the basic
+types. So do anonymous objects (`{x: 1}`, printed and read through `Dynamic`) and `Null<T>`,
+including `Null<Int>`, `Null<Float>` and `Null<Bool>` and defaulted arguments. The `@gencs` cases in
+the tests check that these behave as gencs's output does.
 
-The standard library's hxcs runtime is partly stubbed until milestone 3; a stubbed method throws
-`System.NotSupportedException` when called. `-D dotnet-stub-report` prints what was skipped,
-stubbed or ignored, one sorted line each. `haxe.Exception`-based code compiles but reaches such
-stubs: `throw "x"` and other throws of values that are not `cs.system.Exception`s,
-`new haxe.Exception(...)` and `catch (e:haxe.Exception)` throw `System.NotSupportedException` at
-run time. A catch-all such as `catch (e:Dynamic)` or `catch (e:cs.system.Exception)` catches that
-exception too, so it can hide a stub.
+Constructs not supported yet are compile errors in user code (`dotnet: ... not supported yet`):
+closures and local functions, Haxe enums, casts between instantiations of a generic class (such as
+`Array<Dynamic>` to `Array<Int>`), and `dynamic` methods. They are the next steps for the .NET
+generator, closures, enums, the rest of `Std`, `Type` and `Reflect`, and `haxe.Exception` first; then
+the generic-instantiation casts and the `Array` forwarding fix (Haxe issue 8314). Until then,
+standard-library code that needs them compiles to stubs.
+
+hxc ships its own copy of the hxcs runtime classes that generated code depends on
+(`haxe.lang.HxObject`, `haxe.lang.DynamicObject`, `haxe.lang.FieldLookup`, `haxe.lang.Runtime`,
+`haxe.lang.Null` and related). Messages name their source as `<hxc-dotnet-runtime>/`. They are used
+in place of hxcs's versions, so a class path entry cannot override them.
+
+The rest of the standard library comes from hxcs's runtime sources and is partly stubbed; a stubbed
+method throws `System.NotSupportedException` when called. `-D dotnet-stub-report` prints what was
+skipped, stubbed or ignored, one sorted line each. For a program that only prints it is about seven lines: calls of function
+values in `Array`, and `Std`, `Type` and `Reflect` helpers. `haxe.Exception`-based code compiles but reaches such stubs: `throw "x"` and other throws of
+values that are not `cs.system.Exception`s, `new haxe.Exception(...)` and `catch (e:haxe.Exception)`
+throw `System.NotSupportedException` at run time. A catch-all such as `catch (e:Dynamic)` or
+`catch (e:cs.system.Exception)` catches that exception too, so it can hide a stub.
 
 The tests need the .NET 10 SDK and hxcs installed globally. They build `tests/fixtures/hxccheck`, compile each case twice to
 check the output is deterministic, verify it with ILVerify, and run it:
