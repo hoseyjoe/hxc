@@ -1881,3 +1881,31 @@ class P {
 [compile]
 P.hx:4: lines 4-6 : dotnet: a second class with the CLR name Same is not supported yet
 P.hx:10: characters 3-10 : dotnet: B (left out: a second class with the CLR name Same) is not supported yet
+--- large-metadata-heaps
+#if macro
+import haxe.macro.Context;
+import haxe.macro.Expr;
+class Gen {
+	public static function build():Array<Field> {
+		var fields = Context.getBuildFields();
+		var sum = macro 0;
+		for (i in 0...2500) {
+			var name = 'field_with_a_rather_long_name_number_$i';
+			fields.push({name: name, access: [APublic, AStatic], kind: FVar(macro :String, macro $v{name}), pos: Context.currentPos()});
+			sum = macro $sum + $i{name}.length;
+		}
+		fields.push({name: "total", access: [APublic, AStatic], kind: FFun({args: [], ret: macro :Int, expr: macro return $sum}), pos: Context.currentPos()});
+		return fields;
+	}
+}
+#else
+@:build(P.Gen.build())
+class P {
+	static function main() {
+		Sys.println(total());
+	}
+}
+#end
+===
+[run]
+101390
