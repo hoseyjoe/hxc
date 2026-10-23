@@ -575,14 +575,15 @@ class TexprToIl {
 	}
 
 	// The left operand, of type `t` on the stack and `left` as typed, is there; this pushes the right
-	// one and applies `op`.
-	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr, left:IlSigNorm):Void {
+	// one and applies `op`. A compound assignment does not promote: gencs casts its right side to the
+	// left's type, so the left type's own remainder applies.
+	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr, left:IlSigNorm, promote = true):Void {
 		var bad = new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		if (!isNumeric(t)) throw bad;
 		if (!isArith(op) && !isIntLike(t)) throw bad;
 		var unsigned = t.match(LUInt32);
 		if (op.match(OpDiv) && !t.match(LFloat64)) throw bad;
-		var right = op.match(OpMod) && isIntLike(t) ? sig(e2.type) : null;
+		var right = promote && op.match(OpMod) && isIntLike(t) ? sig(e2.type) : null;
 		if (right != null && mixesUIntAndInt(left, right)) {
 			// gencs casts the long remainder back to the result type.
 			widen(left);
@@ -942,7 +943,7 @@ class TexprToIl {
 			pushString(rhs);
 			concat();
 		} else {
-			numericTail(op, p.sig, rhs, p.sig);
+			numericTail(op, p.sig, rhs, p.sig, false);
 		}
 		var tmp = needVal(ret) ? keep(p) : -1;
 		p.store();

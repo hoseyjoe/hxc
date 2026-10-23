@@ -1811,6 +1811,9 @@ class P {
 		var c:UInt = big;
 		c %= i;
 		Sys.println(c);
+		var x = 7;
+		x %= big;
+		Sys.println(x);
 	}
 }
 ===
@@ -1828,7 +1831,8 @@ True
 0
 2
 2
-0
+4294967294
+1
 --- net-equality-operators
 class P {
 	static function main() {
