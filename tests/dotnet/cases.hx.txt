@@ -2074,8 +2074,9 @@ class Mid extends Base {
 	var tag = "m";
 }
 class Leaf extends Mid {
+	public static var trail = "";
 	public function new() {
-		log.push("leaf before");
+		trail += "leaf before,";
 		super(7);
 		log.push("leaf after " + tag);
 	}
@@ -2083,7 +2084,7 @@ class Leaf extends Mid {
 class P {
 	static function main() {
 		var l = new Leaf();
-		Sys.println(l.log.join(","));
+		Sys.println(Leaf.trail + l.log[0] + "," + l.log[1]);
 		var e:Leaf = Type.createEmptyInstance(Leaf);
 		Sys.println(e.log == null);
 	}
@@ -2212,3 +2213,89 @@ class P {
 ===
 [compile]
 P.hx:8: characters 3-12 : dotnet: super.method() calls in constructors are not supported yet
+--- initializers-through-constructorless-ancestors @gencs
+class A {
+	public var a = P.note("A");
+}
+class B extends A {
+	public var b = P.note("B");
+}
+class C extends B {
+	public var c = P.note("C");
+	public function new() {
+		P.note("body");
+	}
+}
+class D extends C {
+	public var d = P.note("D");
+}
+class P {
+	public static var trail = "";
+	public static function note(s:String):Int {
+		trail += s + ",";
+		return 1;
+	}
+	static function main() {
+		new C();
+		Sys.println(trail);
+		trail = "";
+		new D();
+		Sys.println(trail);
+	}
+}
+===
+--- overloaded-constructors @gencs @dump=Ov,OvC
+class Ov {
+	public var s = "";
+	@:overload public function new(a:Int) {
+		s = "i";
+	}
+	@:overload public function new(a:String) {
+		s = "s";
+	}
+	@:overload public function new(a:Float, b:Float) {
+		s = "ff";
+	}
+}
+class OvC extends Ov {}
+class P {
+	static function main() {
+		var a = new Ov(1);
+		var b = new OvC("x");
+		var c = new OvC(1.0, 2.0);
+		Sys.println(a.s + b.s + c.s);
+	}
+}
+===
+[run]
+isff
+[dump]
+type public beforefieldinit Ov extends haxe.lang.HxObject
+  field public string s
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor(float64, float64)
+  method public hidebysig specialname rtspecialname void .ctor(string)
+  method public hidebysig specialname rtspecialname void .ctor(int32)
+  method family static hidebysig void __hx_ctor__Ov(Ov, string)
+  method family static hidebysig void __hx_ctor__Ov(Ov, float64, float64)
+  method family static hidebysig void __hx_ctor__Ov(Ov, int32)
+type public beforefieldinit OvC extends Ov
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor(float64, float64)
+  method public hidebysig specialname rtspecialname void .ctor(string)
+  method public hidebysig specialname rtspecialname void .ctor(int32)
+  method family static hidebysig void __hx_ctor__OvC(OvC, string)
+  method family static hidebysig void __hx_ctor__OvC(OvC, float64, float64)
+  method family static hidebysig void __hx_ctor__OvC(OvC, int32)
+--- create-empty-instance-of-abstract-class-is-an-error
+abstract class Abs {
+	public function new() {}
+}
+class P {
+	static function main() {
+		var a:Abs = Type.createEmptyInstance(Abs);
+	}
+}
+===
+[compile]
+P.hx:6: characters 15-44 : dotnet: Type.createEmptyInstance of an abstract class is not supported yet

@@ -346,6 +346,8 @@ class TexprCalls {
 				// overloadingConstructor's init_expr_filter: Type.createEmptyInstance of a constant hxgen class
 				// is `new C(EmptyObject.EMPTY)`, which runs no constructor body.
 				var target = emptyInstanceOf(e, c, cf, args);
+				// newobj cannot create an abstract class (gencs's C# does not compile either).
+				if (TypeFunctions.hasClassFlag(target.c, CAbstract)) throw new Unsupported("Type.createEmptyInstance of an abstract class", false);
 				g.types.checkKept(TClassDecl(target.c));
 				var plan = g.planOf.get(target.c);
 				var owner = DotnetCtx.instanceOf(plan, [for (p in target.params) tl.sig(p)]);

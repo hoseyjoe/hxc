@@ -250,7 +250,7 @@ class TclassToIl {
 				} else if (hc.own != null) {
 					if (!hasSuperCall(hc.own.expr)) checkParameterlessBase(g, c);
 					MField(hc.own);
-				} else if (hc.origin != null) {
+				} else if (hc.clone) {
 					MClonedCtor(hc);
 				} else {
 					checkParameterlessBase(g, c);
@@ -302,6 +302,13 @@ class TclassToIl {
 				pos: toString.pos,
 				token: 0
 			});
+		}
+		// gencs adds each overload's static constructor in front of the earlier ones, after the main one:
+		// the overloads come in reverse, the main one (listed last) still last.
+		if (staticCtors.length > 1) {
+			var main = staticCtors.pop();
+			staticCtors.reverse();
+			staticCtors.push(main);
 		}
 		for (m in staticCtors) methods.push(m);
 		for (cf in c.orderedStatics) addMethod(cf, true, false);
@@ -850,7 +857,7 @@ class TclassToIl {
 	// the static constructor does), else the parameterless base constructor C# calls implicitly; then the
 	// static constructor with `this` and the arguments.
 	static function splitCtorBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, hc:HaxeCtor, code:IlCode):Void {
-		var callsSuper = hc.own != null ? hasSuperCall(hc.own.expr) : hc.origin != null;
+		var callsSuper = hc.own != null ? hasSuperCall(hc.own.expr) : hc.clone;
 		if (callsSuper) emptyBaseCtor(g, plan, code) else baseCtor(g, plan, code);
 		var stat = ctorOf(plan, hc.origin).stat;
 		for (i in 0...m.args.length + 1) code.ldarg(i);
@@ -876,7 +883,7 @@ class TclassToIl {
 		}
 		var inits = fieldInits(c);
 		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: c.pos});
-		if (hc.origin != null) {
+		if (hc.clone) {
 			var s = c.superClass;
 			var superPlan = g.planOf.get(s.c);
 			var margs = [for (p in s.params) g.types.toSig(p)];

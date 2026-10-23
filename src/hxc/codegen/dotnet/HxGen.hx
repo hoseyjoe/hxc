@@ -7,8 +7,10 @@ import hxc.core.TypeFunctions;
 // constructors (each calling super(...) with its arguments), or the empty `new()` a class gets when no
 // ancestor has one. Lists of them put a constructor's overloads before it, as gencs writes them.
 // `origin` is the Haxe or .NET constructor the arguments reach (its own, or the ancestor's one it was
-// cloned from), null for the empty one; `args` are in terms of the class's type parameters.
-typedef HaxeCtor = {origin:Null<TClassField>, own:Null<TClassField>, args:Array<{name:String, t:T}>};
+// cloned from), null for the empty one and for a clone of an ancestor's empty one; `clone` tells a
+// clone, which calls super(...), from the empty one, which does not; `args` are in terms of the
+// class's type parameters.
+typedef HaxeCtor = {origin:Null<TClassField>, own:Null<TClassField>, clone:Bool, args:Array<{name:String, t:T}>};
 
 // Which types gencs generates with its own class model (setHXGen.ml), and the names that model uses.
 // An "hxgen" class extends haxe.lang.HxObject (or implements haxe.lang.IHxObject), gets a constructor
@@ -98,21 +100,24 @@ class HxGen {
 		}
 	}
 
-	// The class's constructors. A class outside gencs's model (@:nativeGen, a struct) has its own, or
-	// the parameterless one C# gives it.
+	// The class's constructors. Only a class with no ancestor constructor at all gets the empty `new()`:
+	// a superclass in the model has constructors of its own by then (its own, clones or its empty
+	// one), so its subclasses clone them, as overloadingConstructor processes superclasses first. A
+	// class outside gencs's model (@:nativeGen, a struct) has its own, or the parameterless one C#
+	// gives it.
 	public static function ctors(c:TClass):Array<HaxeCtor> {
 		var ctor = c.constructor;
 		if (ctor != null && !TypeFunctions.hasClassFieldFlag(ctor, CfExtern)) {
 			var r:Array<HaxeCtor> = [];
 			for (f in ctor.overloads.concat([ctor]))
-				if (f.expr != null) r.push({origin: f, own: f, args: funArgs(f.type)});
+				if (f.expr != null) r.push({origin: f, own: f, clone: false, args: funArgs(f.type)});
 			if (r.length > 0) return r;
 		}
 		if (hasCtorModel(c)) {
 			var prev = previousCtors(c);
-			if (prev.length > 0) return [for (p in prev) {origin: p.origin, own: null, args: p.args}];
+			if (prev.length > 0) return [for (p in prev) {origin: p.origin, own: null, clone: true, args: p.args}];
 		}
-		return [{origin: null, own: null, args: []}];
+		return [{origin: null, own: null, clone: false, args: []}];
 	}
 
 	// The constructors of the nearest ancestor that has any (prev_ctor), with their arguments in terms
