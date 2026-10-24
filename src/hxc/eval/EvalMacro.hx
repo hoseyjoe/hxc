@@ -1250,7 +1250,8 @@ class EvalMacro {
 		// super and interface chain.
 		builtClasses.set(key, true);
 		var entries = collectBuildEntries(c);
-		if (entries.length == 0) return;
+		// Fields that waited for an inherited @:autoBuild that turned out to bring none still resolve below.
+		if (entries.length == 0 && !c.hxcFieldsDeferred) return;
 		// A build's failure is RAISED out of the class build before any field is added, so the class is
 		// left with none. It goes to whoever FORCED the build: the PBuildClass pass runner (which has no
 		// handler, so the compile ends with it, after everything recorded so far) or an expression that
@@ -5848,9 +5849,8 @@ class EvalMacro {
 	// haxe.macro.Type.ClassType. Refs (super/fields/statics) are lazy so a class can reference itself
 	// without infinite recursion.
 	static function encodeClassType(ec:EvalContext, c:TClass):EvalValue {
-		// Encoding a class forces its build first, a canceled one's included.
-		hxc.typing.TypeResolve.forceQueuedBuild(c);
-		hxc.typing.TypeFields.retryCanceledBuild(c);
+		// Encoding a class forces its build first; a canceled one is tried again, once.
+		if (!hxc.typing.TypeFields.retryCanceledBuild(c)) hxc.typing.TypeResolve.forceQueuedBuild(c);
 		var f:Map<Int, EvalValue> = new Map();
 		// The hidden ref handle round-trips the decl through decode.
 		stashModuleTypeRef(f, TClassDecl(c));

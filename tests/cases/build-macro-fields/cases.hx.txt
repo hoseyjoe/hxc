@@ -50,3 +50,28 @@ class E { public function new() {} }
 @:autoBuild(M.show())
 class A { public var a:Int = 1; public function new() {} }
 class P { static function main() { new B().b; new E(); } }
+
+--- a-subclass-a-building-parent-reaches-builds-after-it
+class C extends Q { public var c:Int = 3; }
+@:build(M.peek(["C"]))
+@:autoBuild(M.show())
+class G { public var g:Int = 1; public function new() {} }
+class Q extends G { public var p:Int = 2; }
+class P { static function main() { new C().c; } }
+
+--- a-build-canceled-again-with-nothing-built-between-is-a-loop
+class C extends Q { public var c:Int = 3; }
+@:build(M.peek(["C", "C"]))
+@:autoBuild(M.show())
+class G { public var g:Int = 1; public function new() {} }
+class Q extends G { public var p:Int = 2; }
+class P { static function main() { new C().c; } }
+
+--- a-grandchild-of-a-building-parent-is-a-loop
+class D extends C { public var d:Int = 4; }
+class C extends Q { public var c:Int = 3; }
+@:build(M.peek(["D"]))
+@:autoBuild(M.show())
+class G { public var g:Int = 1; public function new() {} }
+class Q extends G { public var p:Int = 2; }
+class P { static function main() { new D().d; } }

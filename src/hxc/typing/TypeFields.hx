@@ -15,6 +15,10 @@ import hxc.eval.EvalExceptions.EvalRunTimeException;
 import hxc.eval.EvalStdLib;
 import hxc.typing.TyperContext.CurrentFun;
 
+// The state of an unbuilt class that cancels a subclass's build: BuildMacro pending (its build macros
+// are running; pending is their list) or Building (building names the classes in the way).
+private typedef CancelingState = {pending:Null<Array<Void->Void>>, building:Array<TClass>};
+
 // Types class field bodies into expr. Field types are installed as TLazy so the first access to a
 // field forces its body to type, resolving an inferred (unannotated) type before any consumer in
 // another module can bind it. A final flush forces every remaining field.
@@ -76,6 +80,9 @@ class TypeFields {
 		classBuilt = new haxe.ds.ObjectMap();
 		fieldsAwaited = new haxe.ds.ObjectMap();
 		buildCanceled = new haxe.ds.ObjectMap();
+		buildsRunning = new haxe.ds.ObjectMap();
+		buildCount = 0;
+		cancelBuildCount = new haxe.ds.ObjectMap();
 		boundSignatures = new haxe.ds.ObjectMap();
 		lazyFieldTypes = new haxe.ds.ObjectMap();
 		bodyTyped = new haxe.ds.ObjectMap();
@@ -405,8 +412,14 @@ class TypeFields {
 	// done, and while it is canceled. hxc registers the declared fields as shells at module load, which the
 	// macro API hides from such a class (Haxe makes them only from the list the builds return).
 	static var fieldsAwaited:haxe.ds.ObjectMap<TClass, Bool> = new haxe.ds.ObjectMap();
-	// A canceled build, by the BuildMacro pending list it waits on and the context it builds in.
-	static var buildCanceled:haxe.ds.ObjectMap<TClass, {pending:Array<Void->Void>, ctx:Context}> = new haxe.ds.ObjectMap();
+	// A canceled build, by the state it answers its own subclasses with and the context it builds in.
+	static var buildCanceled:haxe.ds.ObjectMap<TClass, {state:CancelingState, ctx:Context}> = new haxe.ds.ObjectMap();
+	// The builds under way (Building): started, neither canceled nor finished.
+	static var buildsRunning:haxe.ds.ObjectMap<TClass, Bool> = new haxe.ds.ObjectMap();
+	// How many builds have finished, and the count each class's last Building cancel saw: a class canceled
+	// again with nothing built in between is a loop.
+	static var buildCount:Int = 0;
+	static var cancelBuildCount:haxe.ds.ObjectMap<TClass, Int> = new haxe.ds.ObjectMap();
 
 	/**
 	 * Whether the class's build has not made its fields yet (Building before its build macros ended,
@@ -418,18 +431,21 @@ class TypeFields {
 	 * A canceled build is tried again, as asking for the build of a class (cl_build) does: it runs if
 	 * nothing cancels it anymore.
 	 */
-	public static function retryCanceledBuild(c:TClass):Void {
+	public static function retryCanceledBuild(c:TClass):Bool {
 		var canceled = buildCanceled.get(c);
-		if (canceled != null) buildClass(canceled.ctx, c);
+		if (canceled == null) return false;
+		buildClass(canceled.ctx, c);
+		return true;
 	}
 
-	// A parent whose build macros are running (or whose own build waits on some) cancels the build: the
-	// BuildMacro pending list it waits on, else null.
-	static function cancelingPending(c:TClass):Null<Array<Void->Void>> {
+	// What a parent's build answers once asked for: null when it is built, else the state that cancels the
+	// subclass's build (its build macros are running, its build is under way, or it was canceled itself).
+	static function cancelingState(c:TClass):Null<CancelingState> {
 		var pending = hxc.eval.EvalMacro.buildMacroPending(c);
-		if (pending != null) return pending;
+		if (pending != null) return {pending: pending, building: []};
 		var canceled = buildCanceled.get(c);
-		return canceled == null ? null : canceled.pending;
+		if (canceled != null) return canceled.state;
+		return buildsRunning.exists(c) ? {pending: null, building: [c]} : null;
 	}
 
 	// The build: heritage resolution forces the super's and each interface's build, then the class init
@@ -445,6 +461,7 @@ class TypeFields {
 		buildQueued.set(c, true);
 		fieldsAwaited.set(c, true);
 		buildCanceled.remove(c);
+		buildsRunning.set(c, true);
 		if (traceBuilds) Sys.stderr().writeString("[build] " + Context.sTypePath(c.path) + "\n");
 		var mw = enterMacroWorld(ctx);
 		var savedPass = ctx.currentPass;
@@ -456,21 +473,37 @@ class TypeFields {
 		try {
 			TypeResolve.resolveModule(ctx, m);
 			TypeResolve.forceQueuedBuild(c);
-			// Build_canceled: a parent not built because its build macros are running (they reached this
-			// class) cancels this build, which runs again late in PBuildClass once they are done. The class
-			// has no fields until then.
-			var canceling:Null<Array<Void->Void>> = null;
+			// Build_canceled: a parent that is not built (its build macros or its build reached this class)
+			// cancels this build, which runs again late in PBuildClass: once the macros are done, or on
+			// its own. The class has no fields until then.
+			var canceling:Null<CancelingState> = null;
 			for (h in (c.superClass != null ? [c.superClass.c] : []).concat([for (i in c.interfaces) i.c])) {
 				buildClass(ctx, h);
-				canceling = cancelingPending(h);
+				canceling = cancelingState(h);
 				if (canceling != null) break;
 			}
 			if (canceling != null) {
 				if (traceBuilds) Sys.stderr().writeString("[cancel] " + Context.sTypePath(c.path) + "\n");
 				classBuilt.remove(c);
-				buildCanceled.set(c, {pending: canceling, ctx: ctx});
-				canceling.push(() -> ctx.delayLate(Context.PBuildClass, () -> runQueuedBuild(ctx, c)));
+				buildsRunning.remove(c);
+				var rebuild = () -> ctx.delayLate(Context.PBuildClass, () -> runQueuedBuild(ctx, c));
+				if (canceling.pending != null) {
+					buildCanceled.set(c, {state: canceling, ctx: ctx});
+					canceling.pending.push(rebuild);
+				} else {
+					var seen = cancelBuildCount.get(c);
+					if (seen != null && seen == buildCount)
+						throw new TypingError("Loop in class building prevent compiler termination ("
+							+ [for (b in canceling.building) Context.sTypePath(b.path)].join(",") + ")", c.pos);
+					cancelBuildCount.set(c, buildCount);
+					rebuild();
+					buildCanceled.set(c, {state: {pending: null, building: [c].concat(canceling.building)}, ctx: ctx});
+				}
 			} else if (!ctx.declAborted) {
+				// The parents are built now, their inherited @:autoBuild with them.
+				var autoBuildFrom = c.hxcAutoBuildFrom;
+				c.hxcAutoBuildFrom = null;
+				if (autoBuildFrom != null) for (h in autoBuildFrom) TypeResolve.inheritAutoBuild(ctx, c, h);
 				hxc.eval.EvalMacro.runClassBuildMacros(ctx, c);
 				fieldsAwaited.remove(c);
 				var entry = ctx.declOfType.get(Context.pathKey(c.path));
@@ -484,8 +517,13 @@ class TypeFields {
 					case _:
 				}
 			} else fieldsAwaited.remove(c);
+			if (canceling == null) {
+				buildsRunning.remove(c);
+				buildCount++;
+			}
 		} catch (e:Dynamic) {
 			fieldsAwaited.remove(c);
+			buildsRunning.remove(c);
 			ctx.currentPass = savedPass;
 			ctx.currentModule = savedModule;
 			leaveMacroWorld(mw);
