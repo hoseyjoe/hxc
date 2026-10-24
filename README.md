@@ -125,25 +125,38 @@ types; reading an element of a `Dynamic` works, assigning one is not supported y
 objects (`{x: 1}`, printed and read through `Dynamic`) and `Null<T>`, including `Null<Int>`,
 `Null<Float>` and `Null<Bool>` and defaulted arguments, work too.
 
-Haxe enums become gencs's classes (`<pack>.<Enum>` and one `<pack>.<Enum>_<Ctor>` per constructor
-with arguments), `switch` on them included, on a `Dynamic` too. Local functions and lambdas become
-gencs's closure classes (`<Class>_<field>_<line>__Fun`), method closures are `haxe.lang.Closure`, and
-function values are called through `haxe.lang.Function`. `dynamic` methods, `Int64` and `UInt64`
-arithmetic, `cs.Flags`, `Std`, `Type` and `Reflect` (enums and classes alike), `haxe.Exception` with
-its stacks, and `haxe.Serializer`/`haxe.Unserializer` work. Interface variables and `dynamic`
-methods of an interface are reached through `haxe.lang.Runtime`, as gencs reaches them, and an
-interface method implemented with another return type gets gencs's explicit implementation. The
-`@gencs` cases in the tests check that these behave as gencs's output does, and `@serial` cases that
-serialized data round-trips between the two.
+Haxe enums become gencs's classes (`<pack>.<Enum>` and one `<pack>.<Enum>_<Ctor>` per constructor),
+and `switch` on them works, also through an abstract over the enum or on a `Dynamic`. `switch` also
+works on an `Int`, `Float`, `Bool` or `String`, on a `Class` or `Enum` value against types, and on a
+`Dynamic` against constant patterns, which compare with `Runtime.eq` in case order as gencs's do.
+Local functions and lambdas become gencs's closure classes (`<Class>_<field>_<line>__Fun`), method
+closures are `haxe.lang.Closure`, and function values are called through `haxe.lang.Function`.
+`dynamic` methods, `Int64` and `UInt64` arithmetic, `cs.Flags`, `Std`, `Type` and `Reflect` (enums
+and classes alike), `haxe.Exception` with its stacks, and `haxe.Serializer`/`haxe.Unserializer`
+work. Interface variables and `dynamic` methods of an interface are reached through
+`haxe.lang.Runtime`, as gencs reaches them, and an interface method implemented with another return
+type gets gencs's explicit implementation. The `@gencs` cases in the tests check that these behave
+as gencs's output does, and `@serial` cases that serialized data round-trips between the two.
+
+The Serializer still differs from gencs where a generic class is involved, because hxc does not yet
+erase type arguments as gencs does: `Type.resolveClass` cannot find a generic class by name, so `Array`
+as a value (`Ay5:Array`) and instances of a generic class such as `Box<T>` cannot be read back, and a
+value whose instantiation is not the one the Serializer's code names (a `Map<String, Int>` to write,
+or an `Array<Null<Int>>` field to read into) fails to convert. A type parameter that holds
+`Null<Int>`, `Null<Float>` or `Null<Bool>` (`Array<Null<Int>>`, `Box<Null<Int>>`) reaches `Dynamic`,
+reflection and the Serializer as gencs's boxed value or `null`.
 
 Constructs not supported yet are compile errors in user code (`dotnet: ... not supported yet`). The
 list is not complete; among others it has assignments to `Dynamic` array elements, `return`, `break`
 and `continue` inside expressions, casts between instantiations of a generic class (such as
 `Array<Dynamic>` to `Array<Int>`), `Std.isOfType` with a generic class, inline C# (`untyped __cs__`,
-`@:classCode`, `@:functionCode`), and .NET interop beyond calling referenced assemblies (properties of
-.NET interfaces, generic .NET methods, `Nullable<T>`). The next steps for the .NET generator are the
-generic-instantiation casts and the `Array` forwarding fix (Haxe issue 8314), then .NET interop.
-Until then, standard-library code that needs them compiles to stubs.
+`@:classCode`, `@:functionCode`), generic enums whose arguments mention a class type parameter
+(`L(a:Array<T>)`), and .NET interop beyond calling referenced assemblies (properties of .NET
+interfaces, generic .NET methods, `Nullable<T>`). `haxe.ds.EnumValueMap`, and so a `Map` with enum
+keys, throws `System.NotSupportedException` when it compares two keys of a constructor with
+arguments, since its `compareArg` needs `Std.isOfType(v, Array)`. The next steps for the .NET
+generator are the generic-instantiation casts and the `Array` forwarding fix (Haxe issue 8314), then
+.NET interop. Until then, standard-library code that needs them compiles to stubs.
 
 hxc ships its own copy of the hxcs runtime classes that generated code depends on
 (`haxe.lang.HxObject`, `haxe.lang.DynamicObject`, `haxe.lang.FieldLookup`, `haxe.lang.Runtime`,
@@ -170,7 +183,8 @@ Cases tagged `@serial` are `@gencs` cases that also round-trip `haxe.Serializer`
 program writes `name<TAB>serialized` lines with `gen <file>` and reads them back with `rt <in> <file>`, and hxc's build
 reading gencs's data, gencs's build reading hxc's data and hxc's build reading its own data must all print what gencs's
 build prints when it reads its own. `serial-corpus` covers the Serializer's encodings and hxcs's quirks this way.
-Each run of a test program stops after 120 seconds (`HXC_RUN_TIMEOUT` changes the limit), which fails its case.
+Each run of a test program stops after 120 seconds (`HXC_RUN_TIMEOUT` changes the limit, and a case's
+`@run-timeout=<seconds>` tag changes it for that case), which fails its case.
 
 ## Building from source
 
