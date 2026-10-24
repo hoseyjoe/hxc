@@ -698,8 +698,8 @@ private class ReflectionEmitter {
 		var types = argTypes(m);
 		for (i in 0...types.length) {
 			var a = types[i];
-			// An optional argument of a value type is a haxe.lang.Null<T> (DotnetTypes.argSig).
-			var tmp = local(a.opt && DotnetTypes.isValueType(lower.sig(a.t)) ? g.ctx.basic.tnull(a.t) : a.t);
+			// An optional argument of a value type (or System.Enum) is a haxe.lang.Null<T> (DotnetTypes.argSig).
+			var tmp = local(a.opt && DotnetTypes.takesNullOf(lower.sig(a.t)) ? g.ctx.basic.tnull(a.t) : a.t);
 			if (a.opt) {
 				var missing = code.newLabel(), done = code.newLabel();
 				code.ldarg(3);

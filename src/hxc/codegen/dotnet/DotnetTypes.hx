@@ -101,6 +101,15 @@ class DotnetTypes {
 		return p.name == "Enum" && p.nested.length == 0 && IlPaths.strsEq(p.ns, ["System"]);
 	}
 
+	// Whether gencs wraps `s` in haxe.lang.Null<T> (is_cs_basic_type): a value type, or System.Enum, a class
+	// that gencs's @:struct extern counts as one.
+	public static function takesNullOf(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LClass(p, []): isSystemEnum(p);
+			case _: isValueType(s);
+		}
+	}
+
 	public static function isValueType(s:IlSigNorm):Bool {
 		return switch (s) {
 			case LBool | LChar | LInt8 | LUInt8 | LInt16 | LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64
@@ -316,7 +325,7 @@ class DotnetTypes {
 	// (`?x:Int` is a Null<Int> already), is a haxe.lang.Null<T>, as gencs's default arguments are.
 	public function argSig(t:T, opt:Bool):IlSigNorm {
 		var s = toSig(t);
-		return opt && isValueType(s) && !isNullOf(s) ? nullOf(s) : s;
+		return opt && takesNullOf(s) && !isNullOf(s) ? nullOf(s) : s;
 	}
 
 	public function toSig(t:T):IlSigNorm {
@@ -375,7 +384,7 @@ class DotnetTypes {
 						// gencs's haxe.lang.Null<T>, the standard library's cs.internal.Null struct, for a value
 						// type and, as gencs has it, for a type parameter, which may stand for one.
 						var s = toSig(params[0]);
-						if ((isValueType(s) || s.match(LTypeParam(_) | LMethodTypeParam(_))) && !isNullOf(s))
+						if ((takesNullOf(s) || s.match(LTypeParam(_) | LMethodTypeParam(_))) && !isNullOf(s))
 							return nullOf(s);
 						return s;
 					case "Class" | "Enum":

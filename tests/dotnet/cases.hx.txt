@@ -5330,3 +5330,77 @@ b
 err Method "get_Item" not found on type haxe.lang.StringExt
 err Cannot invoke field __get: It does not exist
 err System.NullReferenceException
+--- null-system-enum @gencs
+class H {
+	public var ne:Null<cs.system.Enum>;
+	public var pe:cs.system.Enum;
+	public function new() {}
+}
+class P {
+	static function f(?e:cs.system.Enum):Bool return e == null;
+	static function main() {
+		var h = new H();
+		Sys.println(cs.Lib.getNativeType(h).GetField("ne").FieldType.ToString());
+		Sys.println(cs.Lib.getNativeType(h).GetField("pe").FieldType.ToString());
+		Sys.println(cs.Lib.toNativeType(P).GetMethod("f").GetParameters()[0].ParameterType.ToString());
+		Sys.println(Reflect.field(h, "ne"));
+		Sys.println(h.ne == null);
+		var friday:Dynamic = cs.system.DayOfWeek.Friday;
+		h.ne = friday;
+		Sys.println(Reflect.field(h, "ne"));
+		Sys.println(h.ne);
+		var d:Dynamic = h;
+		Sys.println(d.ne);
+		h.pe = h.ne;
+		Sys.println(h.pe);
+		h.ne = null;
+		Sys.println(h.ne == null);
+		d.ne = friday;
+		Sys.println(h.ne);
+		Sys.println(f() + " " + f(friday));
+	}
+}
+===
+[run]
+haxe.lang.Null`1[System.Enum]
+System.Enum
+haxe.lang.Null`1[System.Enum]
+
+True
+Friday
+Friday
+Friday
+Friday
+True
+Friday
+true false
+--- null-system-enum-arguments @gencs
+class H {
+	public function new() {}
+	public function g(a:Int, e:cs.system.Enum = null):String return a + " " + (e == null ? "none" : Std.string(e));
+	public function k(?e:cs.system.Enum):Bool return e == null;
+}
+class P {
+	static function main() {
+		var h = new H();
+		var t = cs.Lib.getNativeType(h);
+		Sys.println(t.GetMethod("g").GetParameters()[1].ParameterType.ToString());
+		Sys.println(t.GetMethod("k").GetParameters()[0].ParameterType.ToString());
+		var friday:Dynamic = cs.system.DayOfWeek.Friday;
+		var d:Dynamic = h;
+		Sys.println(d.g(1));
+		Sys.println(d.g(2, friday));
+		Sys.println(d.k(friday));
+		Sys.println(Reflect.callMethod(h, Reflect.field(h, "g"), [3, friday]));
+		Sys.println(h.g(4) + " " + h.k());
+	}
+}
+===
+[run]
+haxe.lang.Null`1[System.Enum]
+haxe.lang.Null`1[System.Enum]
+1 none
+2 Friday
+False
+3 Friday
+4 none true
