@@ -39,6 +39,13 @@ class DotnetCtx {
 	public var diagnostics = 0;
 	// gencommon's mk_temp counter, which numbers FixOverrides's `__temp_` parameters across the program.
 	public var tempCount = 0;
+	// What ClosuresToClass made of the program: a field's body or initializer and a class's __init__
+	// with each local function replaced by a closure class, and those classes with the class whose code
+	// they come from.
+	public final closureExprs = new ObjectMap<TClassField, TExpr>();
+	public final closureInits = new ObjectMap<TClass, TExpr>();
+	public final closureOwners = new ObjectMap<TClass, TClass>();
+	final closureClasses:Array<TClass> = [];
 
 	final stdRoots:Array<String>;
 
@@ -86,13 +93,31 @@ class DotnetCtx {
 		}
 	}
 
+	// A field's body or initializer as code is generated from it, its local functions lowered.
+	public function exprOf(cf:TClassField):Null<TExpr> {
+		var e = closureExprs.get(cf);
+		return e != null ? e : cf.expr;
+	}
+
+	// A class's __init__ as code is generated from it.
+	public function initOf(c:TClass):Null<TExpr> {
+		var e = closureInits.get(c);
+		return e != null ? e : c.init;
+	}
+
+	public function addClosureClass(c:TClass, owner:TClass):Void {
+		closureClasses.push(c);
+		closureOwners.set(c, owner);
+		classes = null;
+	}
+
 	var classes:Null<Map<String, TClass>> = null;
 
 	// The Haxe class, extern or not, that a .NET path names.
 	public function classAt(p:IlPath):Null<TClass> {
 		if (classes == null) {
 			classes = new Map();
-			for (mt in ctx.types) switch (mt) {
+			for (mt in ctx.types.concat([for (c in closureClasses) TClassDecl(c)])) switch (mt) {
 				case TClassDecl(c):
 					var path = if (!TypeFunctions.hasClassFlag(c, CExtern)) DotnetNames.typePath(mt) else try types.externPath(c) catch (_:Unsupported) null;
 					if (path != null && !classes.exists(IlPaths.key(path))) classes.set(IlPaths.key(path), c);
@@ -285,6 +310,8 @@ class GenerateDotnet {
 				case _:
 			}
 		}
+		// Local functions become classes of their own, declared like any other.
+		for (c in ClosuresToClass.run(g, candidates)) candidates.push(c);
 
 		// Two classes with one CLR name, through @:native, would be two TypeDefs of that name: the second
 		// is left out. A name one of an hxgen enum's classes takes that is taken already is an error, as
@@ -406,6 +433,15 @@ class GenerateDotnet {
 	static function leaveOut(g:DotnetCtx, mt:ModuleType, pos:Position, u:Unsupported):Void {
 		var path = DotnetTypes.haxePath(mt);
 		g.types.leftOut.set(path, u.what);
+		// A closure class whose own class was left out fails with it, which was reported.
+		var owner = switch (mt) {
+			case TClassDecl(c): g.closureOwners.get(c);
+			case _: null;
+		}
+		if (owner != null && g.types.leftOut.exists(DotnetTypes.haxePath(TClassDecl(owner)))) {
+			g.records.push("skipped " + path + ": " + u.what);
+			return;
+		}
 		if (g.isStd(pos)) {
 			g.records.push("skipped " + path + ": " + u.what);
 		} else {

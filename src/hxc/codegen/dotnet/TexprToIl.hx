@@ -691,7 +691,7 @@ class TexprToIl {
 			case TNew(c, params, args):
 				calls.construct(ret, c, params, args);
 			case TFunction(_):
-				throw new Unsupported("local functions", true);
+				throw "internal error: a local function that ClosuresToClass left";
 			case TTypeExpr(_):
 				// A type as a value is its System.Type, C#'s typeof(T) as gencs writes it.
 				var t = calls.typeArg(e);

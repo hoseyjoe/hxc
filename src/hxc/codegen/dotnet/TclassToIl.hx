@@ -996,8 +996,8 @@ class TclassToIl {
 		code.op(IlOps.RET, 0, 0);
 	}
 
-	static function functionOf(cf:TClassField, what:String):TFunc {
-		return switch (cf.expr.expr) {
+	static function functionOf(g:DotnetCtx, cf:TClassField, what:String):TFunc {
+		return switch (g.exprOf(cf).expr) {
 			case TFunction(tf): tf;
 			case _: throw "internal error: method " + what + " has no function";
 		}
@@ -1022,12 +1022,12 @@ class TclassToIl {
 		var c = plan.c;
 		if (hc.own != null) {
 			if (TypeFunctions.hasMeta(":functionCode", hc.own.meta)) throw new Unsupported("@:functionCode", false, hc.own.pos);
-			var tf = functionOf(hc.own, what);
+			var tf = functionOf(g, hc.own, what);
 			lower.bindArgs(tf, 1, m.args.slice(1));
-			statement(lower, RReturn, withInits(c, tf.expr));
+			statement(lower, RReturn, withInits(g, c, tf.expr));
 			return;
 		}
-		var inits = fieldInits(c);
+		var inits = fieldInits(g, c);
 		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: c.pos});
 		if (hc.clone) {
 			var s = c.superClass;
@@ -1045,7 +1045,7 @@ class TclassToIl {
 		var owner = null;
 		for (p in HxGen.previousCtors(plan.c)) if (p.origin == hc.origin) owner = p.owner;
 		nativeBaseCtor(g, plan, code, hc.origin, owner, _ -> for (i in 0...m.args.length) code.ldarg(i + 1));
-		var inits = fieldInits(plan.c);
+		var inits = fieldInits(g, plan.c);
 		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: plan.c.pos});
 	}
 
@@ -1075,14 +1075,14 @@ class TclassToIl {
 	// Instance var initializers, as gencommon's init_funcs moves them into constructors: @:readOnly
 	// ones, which C# runs as field initializers, in declaration order, then the others in reverse
 	// declaration order.
-	static function fieldInits(c:TClass):Array<TExpr> {
+	static function fieldInits(g:DotnetCtx, c:TClass):Array<TExpr> {
 		var readOnly = [], others = [];
 		var params = TypeFunctions.extractParamTypes(c.params);
 		for (cf in c.orderedFields) {
 			if (!cf.kind.match(Var(_)) || cf.expr == null || TypeFunctions.hasClassFieldFlag(cf, CfExtern) || !TypeFunctions.isPhysicalField(cf)) continue;
 			var ethis:TExpr = {expr: TConst(TThis), type: TInst(c, params), pos: cf.pos};
 			var assign:TExpr = {
-				expr: TBinop(OpAssign, {expr: TField(ethis, FInstance(c, params, cf)), type: cf.type, pos: cf.pos}, cf.expr),
+				expr: TBinop(OpAssign, {expr: TField(ethis, FInstance(c, params, cf)), type: cf.type, pos: cf.pos}, g.exprOf(cf)),
 				type: cf.type,
 				pos: cf.expr.pos
 			};
@@ -1093,8 +1093,8 @@ class TclassToIl {
 
 	// The constructor body with the initializers: before it, or after its leading super(...) when the
 	// class descends from a native class (whose constructor C# runs first).
-	static function withInits(c:TClass, body:TExpr):TExpr {
-		var inits = fieldInits(c);
+	static function withInits(g:DotnetCtx, c:TClass, body:TExpr):TExpr {
+		var inits = fieldInits(g, c);
 		if (inits.length == 0) return body;
 		var el = switch (body.expr) {
 			case TBlock(el): el;
@@ -1108,7 +1108,7 @@ class TclassToIl {
 	// constructor, as init_funcs puts them before the super() of a cloned or empty constructor; under a
 	// .NET base, whose constructor C# runs first, the other way round.
 	static function initsAndBaseCtor(g:DotnetCtx, plan:ClassPlan, code:IlCode, lower:TexprToIl):Void {
-		var inits = plan.c == null ? [] : fieldInits(plan.c);
+		var inits = plan.c == null ? [] : fieldInits(g, plan.c);
 		var native = plan.c != null && HxGen.descendsFromNative(plan.c);
 		if (native) baseCtor(g, plan, code);
 		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: plan.c.pos});
@@ -1157,14 +1157,14 @@ class TclassToIl {
 					code.op(IlOps.RET, 1, 0);
 				case MField(cf):
 					if (TypeFunctions.hasMeta(":functionCode", cf.meta)) throw new Unsupported("@:functionCode", false, cf.pos);
-					var tf = switch (cf.expr.expr) {
+					var tf = switch (g.exprOf(cf).expr) {
 						case TFunction(tf): tf;
 						case _: throw "internal error: method " + what + " has no function";
 					}
 					g.types.inParams(plan.classParams, cf.params, () -> {
 						var body = tf.expr;
 						if (m.name == ".ctor") {
-							if (!plan.isStruct && !hasSuperCall(body)) initsAndBaseCtor(g, plan, code, lower) else body = withInits(plan.c, body);
+							if (!plan.isStruct && !hasSuperCall(body)) initsAndBaseCtor(g, plan, code, lower) else body = withInits(g, plan.c, body);
 						}
 						if (m.ownArgs != null) lower.bindOwnArgs(tf, m.args, m.ownArgs) else lower.bindArgs(tf, m.hasThis ? 1 : 0, m.args);
 						statement(lower, RReturn, body);
@@ -1180,7 +1180,7 @@ class TclassToIl {
 				case MCctor:
 					if (plan.initFlag) initGuard(g, plan, code);
 					if (plan.hxPath == fieldLookupPath) fieldTable(g, plan, code);
-					cctor(plan, lower);
+					cctor(g, plan, lower);
 					if (failures.length == 0) lower.finish();
 			});
 		} catch (u:Unsupported) {
@@ -1261,19 +1261,20 @@ class TclassToIl {
 	// gencommon's order: @:readOnly initializers, which C# runs as field initializers first, then
 	// __init__, then the other static var initializers in declaration order. FieldLookup's table is
 	// fieldTable's.
-	static function cctor(plan:ClassPlan, lower:TexprToIl):Void {
+	static function cctor(g:DotnetCtx, plan:ClassPlan, lower:TexprToIl):Void {
 		var c = plan.c;
 		var readOnly = [], others = [];
 		for (f in plan.fields) if (f.flags & FieldAttrs.STATIC != 0 && f.cf.expr != null) {
 			if (plan.hxPath == fieldLookupPath && f.cf.name == "table") continue;
 			var assign:TExpr = {
-				expr: TBinop(OpAssign, {expr: TField({expr: TTypeExpr(TClassDecl(c)), type: f.cf.type, pos: f.cf.pos}, FStatic(c, f.cf)), type: f.cf.type, pos: f.cf.pos}, f.cf.expr),
+				expr: TBinop(OpAssign, {expr: TField({expr: TTypeExpr(TClassDecl(c)), type: f.cf.type, pos: f.cf.pos}, FStatic(c, f.cf)), type: f.cf.type, pos: f.cf.pos}, g.exprOf(f.cf)),
 				type: f.cf.type,
 				pos: f.cf.pos
 			};
 			(TypeFunctions.hasMeta(":readOnly", f.cf.meta) ? readOnly : others).push(assign);
 		}
-		var exprs = readOnly.concat(c.init == null ? [] : [c.init]).concat(others);
+		var init = g.initOf(c);
+		var exprs = readOnly.concat(init == null ? [] : [init]).concat(others);
 		var block:TExpr = {expr: TBlock(exprs), type: TypeFunctions.tDynamic, pos: c.pos};
 		lower.texpr(RVoid, block);
 	}

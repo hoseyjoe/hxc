@@ -435,18 +435,7 @@ class TexprCalls {
 				tl.coerce(owner, ret);
 			case TField(_, FStatic(c, cf)) if (isNativeArrayClass(c) && cf.name == "make"):
 				// cs.NativeArray.make(a, b): C#'s `new T[]{a, b}`, as gencs writes it.
-				var elem = vectorElement(tl.sig(e.type));
-				var elemToken = g.typeTokenOf(elem);
-				code.ldcI4(args.length);
-				code.opToken(IlOps.NEWARR, elemToken, 1, 1);
-				for (i in 0...args.length) {
-					if (strip(args[i]).expr.match(TUnop(Spread, _, _))) throw new Unsupported("the spread operator", false);
-					code.op(IlOps.DUP, 1, 2);
-					code.ldcI4(i);
-					tl.texpr(RValue(elem), args[i]);
-					code.stelem(elem, () -> elemToken);
-				}
-				tl.coerce(LVector(elem), ret);
+				newVector(ret, e, args);
 			case TField(_, FStatic(c, cf)) if (tl.dyn.reflectCall(ret, e, c, cf, args)):
 				// Reflect.field and setField with a constant name, lowered as field access.
 			case TField(_, FStatic(c, cf)) if (isStringClass(c) && cf.name == "fromCharCode"):
@@ -644,11 +633,30 @@ class TexprCalls {
 	static final systemType:IlSigNorm = LClass({ns: ["System"], nested: [], name: "Type"}, []);
 	static final monitor:IlSigNorm = LClass({ns: ["System", "Threading"], nested: [], name: "Monitor"}, []);
 
+	// `new T[]{a, b}` of the call's type, a cs.NativeArray<T>.
+	function newVector(ret:Ret, e:TExpr, args:Array<TExpr>):Void {
+		var elem = vectorElement(tl.sig(e.type));
+		var elemToken = g.typeTokenOf(elem);
+		code.ldcI4(args.length);
+		code.opToken(IlOps.NEWARR, elemToken, 1, 1);
+		for (i in 0...args.length) {
+			if (strip(args[i]).expr.match(TUnop(Spread, _, _))) throw new Unsupported("the spread operator", false);
+			code.op(IlOps.DUP, 1, 2);
+			code.ldcI4(i);
+			tl.texpr(RValue(elem), args[i]);
+			code.stelem(elem, () -> elemToken);
+		}
+		tl.coerce(LVector(elem), ret);
+	}
+
 	// gencs's magic identifiers in untyped code, which hxcs's std uses: `__as__(e)` is C#'s `e as T`
 	// with T the call's type, `__is__(e, T)` C#'s `e is T`, `__typeof__(T)` `typeof(T)` and
-	// `__lock__(obj, block)` `lock (obj) block`.
+	// `__lock__(obj, block)` `lock (obj) block`. `__array__(a, b)`, which the captured_vars filter
+	// writes to box a captured variable that is written, is `new T[]{a, b}`.
 	function magicCall(ret:Ret, e:TExpr, name:String, args:Array<TExpr>):Void {
 		switch [name, args.length] {
+			case ["__array__", _]:
+				newVector(ret, e, args);
 			case ["__as__", 1]:
 				var to = tl.sig(e.type);
 				tl.texpr(RValue(LObject), args[0]);

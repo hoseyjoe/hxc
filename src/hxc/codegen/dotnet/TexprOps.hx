@@ -70,6 +70,8 @@ class TexprOps {
 				tl.texpr(RValue(s), e2);
 				arith(op, s);
 				tl.coerce(s, ret);
+			case OpAdd | OpSub | OpMult | OpDiv | OpMod if (isSingle(e1) || isSingle(e2)):
+				singleBinary(ret, e, op, e1, e2);
 			case OpAdd | OpSub | OpMult | OpDiv | OpMod | OpAnd | OpOr | OpXor | OpShl | OpShr | OpUShr:
 				var s1 = tl.operandSig(op, e1), s2 = tl.operandSig(op, e2);
 				if (is64(s1) || is64(s2)) {
@@ -93,6 +95,31 @@ class TexprOps {
 	}
 
 	static function isArith(op:Binop):Bool return op.match(OpAdd | OpSub | OpMult | OpDiv | OpMod);
+
+	// A Single operand (a Null<Single>'s value).
+	function isSingle(e:TExpr):Bool {
+		var s = try tl.sig(e.type) catch (_:Unsupported) null;
+		return s != null && tl.unNull(s).match(LFloat32);
+	}
+
+	// An arithmetic operator with a Single operand, as C# binds it: in Double with a Float operand, else
+	// in Single; the result then goes to the expression's type.
+	function singleBinary(ret:Ret, e:TExpr, op:Binop, e1:TExpr, e2:TExpr):Void {
+		var s1 = tl.unNull(tl.sig(e1.type)), s2 = tl.unNull(tl.sig(e2.type));
+		if (!(isNumeric(s1) || s1.match(LFloat32)) || !(isNumeric(s2) || s2.match(LFloat32)))
+			throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+		var t = s1.match(LFloat64) || s2.match(LFloat64) ? LFloat64 : LFloat32;
+		var add = op.match(OpAdd);
+		tl.nullOperand(RValue(s1), e1, add);
+		tl.convert(s1, t);
+		tl.nullOperand(RValue(s2), e2, add);
+		tl.convert(s2, t);
+		arith(op, t);
+		switch (ret) {
+			case RValue(null): tl.convert(t, tl.sig(e.type));
+			case _: tl.coerce(t, ret);
+		}
+	}
 
 	// Whether `s` is a .NET enum, whose values are its underlying integer on the stack.
 	function netEnum(s:IlSigNorm):Bool {
