@@ -657,8 +657,7 @@ class TexprToIl {
 	// A cast; `checked` for cast(e, T). gencs writes both as C#'s cast to the expression's type, so a cast
 	// that changes the type converts or checks through that type even when the value goes on somewhere
 	// else, as C#'s `(object)(int)d` does: to a String (Runtime.toString), between value types, from
-	// Dynamic to a value type, a type parameter or a class, and every checked cast but those of 64-bit
-	// integers.
+	// Dynamic to a value type, a type parameter or a class, and every checked cast.
 	function castExpr(ret:Ret, e:TExpr, e1:TExpr, checked:Bool):Void {
 		var from = null, to = null;
 		if (!isNullConst(e1)) {
@@ -666,12 +665,6 @@ class TexprToIl {
 			to = try sig(e.type) catch (_:Unsupported) null;
 			// A cast between instantiations is reported at the cast.
 			if (from != null && to != null) checkInstantiationCast(from, to);
-		}
-		// gencs writes no conversion for cast(x, T) when T or x's type is Int64 or UInt64: the value keeps
-		// x's type, and converts only where its destination does (`cast(-2.7, Int64)` printed is -2.7).
-		if (checked && from != null && to != null && (is64(from) || is64(to))) {
-			texpr(ret.match(RValue(null)) ? RValue(from) : ret, e1);
-			return;
 		}
 		var want = switch (ret) {
 			case RValue(w): w;

@@ -3696,3 +3696,54 @@ True
 29 28
 True
 Invalid date format : bad
+--- int64-checked-casts @gencs
+import cs.StdTypes.Int64;
+import cs.StdTypes.UInt64;
+class P {
+	static function show(v:Dynamic) Sys.println(v);
+	static inline function ishow(v:Dynamic) Sys.println(v);
+	static function main() {
+		var a:Int64 = 5000000000;
+		var f = -2.7;
+		var i = 3;
+		// A checked cast to or from a 64-bit integer converts, except as an argument inlined into a
+		// Dynamic parameter, where gencs's outer cast to Dynamic replaces it.
+		Sys.println(cast(f, Int64));
+		Sys.println(cast(a, Int));
+		ishow(cast(f, Int64));
+		ishow(cast(a, Int));
+		show(cast(f, Int64));
+		show(cast(a, Int));
+		cs.system.Console.WriteLine(cast(f, Int64));
+		var d1:Dynamic = cast(f, Int64);
+		var d2:Dynamic = cast(a, Int);
+		var d3:Dynamic = cast(i, Int64);
+		Sys.println(d1 + " " + d2 + " " + d3);
+		Sys.println(Std.isOfType(d1, Float) + " " + Std.isOfType(d2, Int) + " " + Std.isOfType(d3, Int));
+		var arr:Array<Dynamic> = [cast(f, Int64), cast(a, Int), cast(i, Int64)];
+		Sys.println(arr);
+		Sys.println(Std.string(cast(f, Int64)) + " " + Std.string(cast(a, Int)));
+		Sys.println(cast(f, Int64) + 0.5);
+		// gencs types an operator on a UInt and an Int64 or UInt64 as UInt, but not `/`.
+		var ui:UInt = 0xEE6B2800;
+		var v:UInt64 = 18446744073709551615;
+		Sys.println((a + ui) + " " + (ui + a) + " " + (a - ui) + " " + (a * ui) + " " + (a % ui) + " " + (a & ui) + " " + (a | ui) + " " + (a ^ ui));
+		Sys.println((a / ui) + " " + (v + ui) + " " + (v - ui) + " " + (a > ui));
+	}
+}
+===
+[run]
+-2.7
+5000000000
+-2.7
+5000000000
+-2
+705032704
+-2
+-2 705032704 3
+false true false
+[-2,705032704,3]
+-2 705032704
+-1.5
+410065408 410065408 1000000000 332398592 1000000000 704716800 4000315904 3295599104
+1 3999999999 294967295 true

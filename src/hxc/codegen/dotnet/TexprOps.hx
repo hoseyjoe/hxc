@@ -112,8 +112,7 @@ class TexprOps {
 	}
 
 	// `op` with an Int64 or UInt64 operand, as C# binds it (wideType): `/` and `%` of two integers are
-	// integer division and remainder whatever the expression's type, and a shift's count is an Int. The
-	// value keeps C#'s type until its destination converts it.
+	// integer division and remainder whatever the expression's type, and a shift's count is an Int.
 	function wideBinary(ret:Ret, e:TExpr, op:Binop, e1:TExpr, e2:TExpr, s1:IlSigNorm, s2:IlSigNorm):Void {
 		var bad = new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		var shift = op.match(OpShl | OpShr | OpUShr);
@@ -129,6 +128,13 @@ class TexprOps {
 			tl.nullOperand(RValue(s2), e2, add);
 			widenTo(s2, t);
 			arith(op, t);
+		}
+		// gencs's CastDetect types an operator other than `/` and the shifts on a UInt and another Int-like
+		// operand (an Int64 or UInt64 too) as UInt: `((uint)((a + ui)))`. Otherwise the value keeps C#'s type
+		// (a Float operation typed Int64 stays a Float) until its destination converts it.
+		if (!shift && !op.match(OpDiv) && (s1.match(LUInt32) || s2.match(LUInt32))) {
+			code.op(IlOps.CONV_U4, 1, 1);
+			t = LUInt32;
 		}
 		switch (ret) {
 			case RValue(null): tl.convert(t, tl.sig(e.type));
