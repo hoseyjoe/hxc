@@ -1998,6 +1998,59 @@ class P {
 3
 Base
 InvalidCastException
+--- unsafe-cast-to-class-checks @gencs
+class Base {
+	public function new() {}
+	public function toString() return "Base";
+}
+class P {
+	static function main() {
+		var i = 5, fl = 2.5, s = "x";
+		try {
+			var o:Dynamic = (cast i : Base);
+			Sys.println(o);
+		} catch (e:cs.system.InvalidCastException) {
+			Sys.println("InvalidCastException");
+		}
+		try {
+			var o:Dynamic = (cast fl : Base);
+			Sys.println(o);
+		} catch (e:cs.system.InvalidCastException) {
+			Sys.println("InvalidCastException");
+		}
+		try {
+			var o:Dynamic = (cast s : Base);
+			Sys.println(o);
+		} catch (e:cs.system.InvalidCastException) {
+			Sys.println("InvalidCastException");
+		}
+		try {
+			var b:Base = cast i;
+			Sys.println(b);
+		} catch (e:cs.system.InvalidCastException) {
+			Sys.println("InvalidCastException");
+		}
+		try {
+			var f:Dynamic = (cast (cast fl : Int) : Int->Int);
+			Sys.println(f);
+		} catch (e:cs.system.InvalidCastException) {
+			Sys.println("InvalidCastException");
+		}
+		var c:Dynamic = (cast i : cs.system.IComparable);
+		Sys.println(c);
+		var d:Dynamic = (cast s : cs.system.IComparable);
+		Sys.println(d);
+	}
+}
+===
+[run]
+InvalidCastException
+InvalidCastException
+InvalidCastException
+InvalidCastException
+InvalidCastException
+5
+x
 --- uint-mixed-with-int @gencs
 class P {
 	static var u:UInt = 3;

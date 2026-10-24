@@ -673,6 +673,15 @@ class TexprToIl {
 			texpr(RValue(want), e1);
 			return;
 		}
+		// A value type or a String cast to a class or interface, which C# can't write directly: gencs goes
+		// through object, `(Base)(object)i`, so the cast still checks wherever the value goes.
+		if (from != null && to != null && (DotnetTypes.isValueType(from) || from.match(LString)) && to.match(LClass(_, _))
+			&& !g.isGenericHaxeClass(to)) {
+			texpr(RValue(LObject), e1);
+			castTo(to);
+			coerce(to, ret);
+			return;
+		}
 		var viaOwn = from != null && to != null && !IlPaths.sigEq(from, to) && !to.match(LObject) && (checked
 			|| want != null && !IlPaths.sigEq(want, to) && (to.match(LString) && !inRuntimeClass()
 				|| DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)
