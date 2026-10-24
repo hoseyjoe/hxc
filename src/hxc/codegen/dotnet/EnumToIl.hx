@@ -173,6 +173,17 @@ class EnumToIl {
 		}
 	}
 
+	// An argument's field: named like the argument, except that one named like its class becomes
+	// Name_Name, repeated while that is another argument's name, as DotnetNames.fieldName names class
+	// members (C# has no member named like its type). The constructor's and factory's parameters keep
+	// the argument's name.
+	static function fieldName(className:String, name:String, names:Array<String>):String {
+		if (name != className) return name;
+		var n = name + "_" + name;
+		while (names.indexOf(n) >= 0) n = n + "_" + n;
+		return n;
+	}
+
 	static function method(kind:MethodKind, name:String, flags:Int, hasThis:Bool, ret:IlSigNorm, args:Array<IlSigNorm>, argNames:Array<String>,
 			e:TEnum):MethodPlan {
 		return {
@@ -280,8 +291,10 @@ class EnumToIl {
 		for (ef in ctors) {
 			var sigs = argSigs[ef.index];
 			var names = [for (a in args(ef)) a.name];
+			var className = ctorPath(e, ef).name;
 			var fields:Array<FieldPlan> = [
-				for (i in 0...sigs.length) {cf: null, name: names[i], flags: FieldAttrs.PUBLIC | FieldAttrs.INIT_ONLY, sig: sigs[i]}
+				for (i in 0...sigs.length)
+					{cf: null, name: fieldName(className, names[i], names), flags: FieldAttrs.PUBLIC | FieldAttrs.INIT_ONLY, sig: sigs[i]}
 			];
 			var ctor = method(MEnum(e, ECtor(ef)), ".ctor", MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME | MethodAttrs.RT_SPECIAL_NAME,
 				true, LVoid, sigs, names, e);

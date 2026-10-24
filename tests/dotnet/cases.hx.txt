@@ -4529,3 +4529,43 @@ Full(Full(deep))
 Empty
 True
 Dot
+--- enum-argument-fields @gencs @dump=E_C
+enum E {
+	A;
+	B(E_B:Int, s:String);
+	C(E_C:Int, E_C_E_C:Int);
+	D(E_D_E_D:Int, E_D:Int);
+}
+enum Opt<T> {
+	Some(v:T);
+	None;
+}
+class P {
+	static function main() {
+		Sys.println(Reflect.fields(B(4, "s")));
+		Sys.println(Reflect.fields(C(1, 2)));
+		Sys.println(Reflect.fields(D(1, 2)));
+		Sys.println(B(4, "s"));
+		var f:Opt<Float> = Some(2);
+		var v:Dynamic = Reflect.field(f, "v");
+		var t:cs.system.Type = v.GetType();
+		Sys.println(t.Name);
+	}
+}
+===
+[run]
+[E_B_E_B,s,_hx_index]
+[E_C_E_C_E_C_E_C,E_C_E_C,_hx_index]
+[E_D_E_D,E_D_E_D_E_D_E_D,_hx_index]
+B(4,s)
+Double
+[dump]
+type public sealed beforefieldinit E_C extends E
+  field public initonly int32 E_C_E_C_E_C_E_C
+  field public initonly int32 E_C_E_C
+  method public hidebysig specialname rtspecialname void .ctor(int32, int32)
+  method public virtual hidebysig Array`1<object> getParams()
+  method public virtual hidebysig string getTag()
+  method public virtual hidebysig int32 GetHashCode()
+  method public virtual hidebysig bool Equals(object)
+  method public virtual hidebysig string toString()
