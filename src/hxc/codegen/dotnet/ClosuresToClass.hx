@@ -40,6 +40,11 @@ class ClosuresToClass {
 	final taken = new Map<String, Bool>();
 	// The local generic functions declared so far, by variable id: their class and captured locals.
 	final generics = new Map<Int, {c:TClass, vars:Array<TVar>}>();
+	// The local generic functions whose bodies are being mapped, by variable id: how deep in local
+	// functions their body is, and the uses of them found there, placeholders until their class exists.
+	final pending = new Map<Int, {depth:Int, uses:Array<{e:TExpr, declared:T, nested:Bool}>}>();
+	// How many local functions enclose the code being mapped.
+	var depth = 0;
 
 	// The class whose code is being mapped, the field name its closures take, the closure classes it
 	// added (in the order they were made), and whether its type parameters are a split constructor's own
@@ -145,9 +150,14 @@ class ClosuresToClass {
 		return switch (e.expr) {
 			case TFunction(tf):
 				closure(e, mapBody(tf), null).expr;
+			case TLocal(v) if (pending.exists(v.id)):
+				pendingUse(v, v.type, e);
+			case TArray({expr: TLocal(v)}, _) if (pending.exists(v.id)):
+				pendingUse(v, elementType(v.type), e);
 			case TVarExpr(v, init) if (init != null && isGeneric(v) && genericFunction(init) != null):
 				declareGeneric(v, genericFunction(init), e.pos);
-			case TBinop(OpAssign, {expr: TLocal(v)}, f = {expr: TFunction(_)}) if (isGeneric(v)):
+			case TBinop(OpAssign, {expr: TLocal(v) | TArray({expr: TLocal(v)}, _)}, f = {expr: TFunction(_)}) if (isGeneric(v)):
+				// A recursive one, declared first and assigned (into the captured_vars box) after.
 				declareGeneric(v, f, e.pos);
 			case TLocal(v) if (generics.exists(v.id)):
 				useGeneric(v, v.type, e);
@@ -159,7 +169,10 @@ class ClosuresToClass {
 	}
 
 	function mapBody(tf:TFunc):TFunc {
-		return new TFunc(tf.args, tf.type, map(tf.expr));
+		depth++;
+		var body = map(tf.expr);
+		depth--;
+		return new TFunc(tf.args, tf.type, body);
 	}
 
 	static function isGeneric(v:TVar):Bool {
@@ -181,19 +194,50 @@ class ClosuresToClass {
 			case TFunction(tf): tf;
 			case _: throw "internal error: not a function";
 		}
-		var r = closure(f, mapBody(tf), v);
+		// A recursive one uses itself in its body, before its class exists.
+		var uses = [];
+		pending.set(v.id, {depth: depth + 1, uses: uses});
+		var body = mapBody(tf);
+		pending.remove(v.id);
+		var r = closure(f, body, v, (c, vars) -> for (u in uses) {
+			// Its own body has its captured locals, which become its fields; a local function inside it
+			// would have to capture them as well.
+			u.e.expr = if (u.nested && vars.length > 0) {
+				var what = TypeFunctions.mk(TConst(TString("calls of a recursive generic local function from local functions inside it")),
+					TypeFunctions.tDynamic, u.e.pos);
+				TCall(TypeFunctions.mk(TIdent("__refused__"), TypeFunctions.tDynamic, u.e.pos), [what]);
+			} else {
+				newGeneric(v, c, vars, u.declared, u.e).expr;
+			}
+		});
 		generics.set(v.id, {c: r.c, vars: r.vars});
 		return TypeFunctions.mk(TBlock([]), g.ctx.basic.tvoid, pos);
+	}
+
+	// A use of a generic local function inside its own body: a leaf, which mapping keeps as it is, filled
+	// in when its class exists.
+	function pendingUse(v:TVar, declared:T, e:TExpr):TExpr {
+		var p = pending.get(v.id);
+		var placeholder = TypeFunctions.mk(TIdent("__generic_use__"), e.type, e.pos);
+		p.uses.push({e: placeholder, declared: declared, nested: depth > p.depth});
+		return placeholder;
 	}
 
 	// A use of a local generic function: a new instance of its class, its own type parameters bound by
 	// the type the use has, Dynamic where nothing binds one.
 	function useGeneric(v:TVar, declared:T, e:TExpr):TExpr {
 		var info = generics.get(v.id);
+		return newGeneric(v, info.c, info.vars, declared, e);
+	}
+
+	// As tparam_anon_acc, its own type parameters in the bound types are Dynamic: `new C<object>()` for a
+	// recursive call.
+	function newGeneric(v:TVar, c:TClass, vars:Array<TVar>, declared:T, e:TExpr):TExpr {
 		var own = v.extra.params;
-		var bound = DotnetTypes.inferParams(own, declared, e.type);
+		var dynamics = [for (_ in own) TypeFunctions.tDynamic];
+		var bound = [for (t in DotnetTypes.inferParams(own, declared, e.type)) TypeFunctions.applyParams(own, dynamics, t)];
 		var params = [
-			for (tp in info.c.params) {
+			for (tp in c.params) {
 				var t = tp.type;
 				for (i in 0...own.length) switch (t) {
 					case TInst(p, _) if (DotnetTypes.isParam(own[i], p)): t = bound[i];
@@ -202,7 +246,7 @@ class ClosuresToClass {
 				t;
 			}
 		];
-		return TypeFunctions.mk(TNew(info.c, params, [for (cv in info.vars) local(cv, e.pos)]), e.type, e.pos);
+		return TypeFunctions.mk(TNew(c, params, [for (cv in vars) local(cv, e.pos)]), e.type, e.pos);
 	}
 
 	// The type of a boxed local's values, a NativeArray's element.
@@ -218,7 +262,8 @@ class ClosuresToClass {
 	}
 
 	// The class of the function `fexpr`, whose body `tf` is mapped already, and what replaces it.
-	function closure(fexpr:TExpr, tf:TFunc, tvar:Null<TVar>):{c:TClass, vars:Array<TVar>, expr:TExpr} {
+	// `known` sees the class and its captured locals before its body becomes the invoke method's.
+	function closure(fexpr:TExpr, tf:TFunc, tvar:Null<TVar>, ?known:(c:TClass, vars:Array<TVar>) -> Void):{c:TClass, vars:Array<TVar>, expr:TExpr} {
 		var basic = g.ctx.basic;
 		var pos = tf.expr.pos;
 		var caps = captures(fexpr, tf);
@@ -234,6 +279,7 @@ class ClosuresToClass {
 		c.superClass = {c: fn, params: []};
 		var thisParams = TypeFunctions.extractParamTypes(c.params);
 		var thisType = TInst(c, thisParams);
+		if (known != null) known(c, caps.vars);
 
 		var fieldOf = new Map<Int, TClassField>();
 		for (v in caps.vars) {

@@ -488,6 +488,7 @@ class P {
 			Sys.println(g);
 			if (i == 2) {
 				Sys.println(Type.createEmptyInstance(Abs));
+				i--;
 				continue;
 			}
 			r += i;
@@ -6034,6 +6035,98 @@ class P {
 		report(() -> m());
 		report(() -> Reflect.callMethod(C, Reflect.field(C, "sfail"), [1]));
 		report(() -> [1].map(x -> x == 1 ? throw "in map" : x));
+	}
+}
+===
+--- closure-names @gencs
+class Base {
+	public var bf:Void->String = () -> "bf";
+	public function new(x:Int) {
+		Sys.println("Base " + x);
+	}
+}
+class Sub extends Base {
+	var name = "sub";
+	var init1:Void->String = () -> "i1"; var init2:Void->String = () -> "i2";
+	public var after:Void->String;
+	public function new() {
+		var pre = () -> 5;
+		super(pre());
+		after = () -> name;
+	}
+}
+class G<T> {
+	public var v:T;
+	public var fi:Void->Null<T> = () -> null;
+	public function new(v:T) {
+		this.v = v;
+		var f = () -> this.v;
+		Sys.println(Std.string(f) + " " + Std.string(fi));
+	}
+}
+class S {
+	static var a:Void->Int = () -> 1; static var b:Void->Int = () -> 2;
+	static var c:Array<Void->Int> = [() -> 3, () -> 4];
+	static function __init__() {
+		var q = () -> 0;
+		Sys.println("init " + Std.string(q));
+	}
+	public static function show() {
+		Sys.println(Std.string(a) + " " + Std.string(b) + " " + Std.string(c[0]) + " " + Std.string(c[1]));
+	}
+}
+class P {
+	static function use(d:Dynamic) Sys.println(Std.string(d) + " | " + Type.getClassName(Type.getClass(d)));
+	static function m<T>(x:T) {
+		var f = () -> { var keep:T = x;
+			use((y:T) -> Sys.println(y)); use(x);
+			use((y:Int) -> y + 1);
+		};
+		f();
+		use(f);
+	}
+	static function walk<T>(xs:Array<T>):String {
+		var out = "";
+		function go(i:Int):Void {
+			if (i >= xs.length) return;
+			out += Std.string(xs[i]);
+			go(i + 1);
+		}
+		go(0);
+		var total = 0;
+		function g<U>(u:U):U { total++; return u; }
+		var h = () -> g(xs[0]);
+		h(); h();
+		return out + " " + total + " " + Std.string(h) + " " + Std.string(go) + " " + Std.string(g);
+	}
+	static function main() {
+		var s = new Sub();
+		Sys.println(Std.string(s.bf) + " " + Std.string(s.after) + " " + s.after());
+		Sys.println(Std.string(@:privateAccess s.init1) + " " + Std.string(@:privateAccess s.init2));
+		new G("x");
+		S.show();
+		m(3);
+		var outer = 1;
+		var l1 = (a:Int) -> (b:Int) -> (c:Int) -> outer + a + b + c;
+		Sys.println(l1(1)(2)(3));
+		Sys.println(Std.string(l1) + " " + Std.string(l1(1)) + " " + Std.string(l1(1)(2)));
+		for (i in 0...3) { var f = () -> i; Sys.println(Std.string(f) + f()); }
+		var k = 5;
+		function pair<A, B>(a:A, b:B):String return a + ":" + b + ":" + k;
+		Sys.println(pair(1, "x") + " " + pair(true, 2.5));
+		use(pair);
+		function idg<T>(x:T):T return x;
+		var e1 = idg;
+		var e2 = idg;
+		Sys.println(e1 == e2);
+		use(idg);
+		Sys.println(walk([1, 2, 3]));
+		Sys.println(walk(["a"]));
+		function rec<T>(x:T, n:Int):T {
+			return n == 0 ? x : rec(x, n - 1);
+		}
+		Sys.println(rec("r", 3));
+		use(rec);
 	}
 }
 ===

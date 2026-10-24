@@ -652,11 +652,17 @@ class TexprCalls {
 	// gencs's magic identifiers in untyped code, which hxcs's std uses: `__as__(e)` is C#'s `e as T`
 	// with T the call's type, `__is__(e, T)` C#'s `e is T`, `__typeof__(T)` `typeof(T)` and
 	// `__lock__(obj, block)` `lock (obj) block`. `__array__(a, b)`, which the captured_vars filter
-	// writes to box a captured variable that is written, is `new T[]{a, b}`.
+	// writes to box a captured variable that is written, is `new T[]{a, b}`. `__refused__(what)` is what
+	// ClosuresToClass could not lower.
 	function magicCall(ret:Ret, e:TExpr, name:String, args:Array<TExpr>):Void {
 		switch [name, args.length] {
 			case ["__array__", _]:
 				newVector(ret, e, args);
+			case ["__refused__", 1]:
+				switch (strip(args[0]).expr) {
+					case TConst(TString(what)): throw new Unsupported(what, true);
+					case _: throw new Unsupported("untyped code", false);
+				}
 			case ["__as__", 1]:
 				var to = tl.sig(e.type);
 				tl.texpr(RValue(LObject), args[0]);
