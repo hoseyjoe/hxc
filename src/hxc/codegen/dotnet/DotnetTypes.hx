@@ -386,6 +386,8 @@ class DotnetTypes {
 					case "UInt64": return LUInt64;
 					case _:
 				}
+				// cs.Flags's EnumUnderlying<T> is the .NET enum T itself, as gencs writes it.
+				if (isPath(p, ["cs", "_Flags"], "EnumUnderlying")) return toSig(params[0]);
 				if (TypeFunctions.hasMeta(":coreType", a.meta)) throw new Unsupported("the core type " + Globals.sTypePath(p), false);
 				toSig(TypeFunctions.getUnderlyingType(a, params));
 		}

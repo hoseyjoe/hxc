@@ -3747,3 +3747,175 @@ false true false
 -1.5
 410065408 410065408 1000000000 332398592 1000000000 704716800 4000315904 3295599104
 1 3999999999 294967295 true
+--- cs-flags-operators @gencs
+import cs.Flags;
+import cs.system.reflection.BindingFlags;
+import cs.system.AttributeTargets;
+class P {
+	static function main() {
+		var f = new Flags(BindingFlags.Public) | BindingFlags.Static;
+		Sys.println(f);
+		Sys.println(f.has(BindingFlags.Static) + " " + f.has(BindingFlags.Instance));
+		Sys.println(f.hasAll(new Flags(BindingFlags.Public) | BindingFlags.Static) + " " + f.hasAny(new Flags(BindingFlags.Instance) | BindingFlags.Public));
+		var g = f.remove(BindingFlags.Public);
+		Sys.println(g);
+		Sys.println(f & BindingFlags.Public);
+		var all = new Flags(AttributeTargets.Class) | AttributeTargets.Method | AttributeTargets.Field;
+		Sys.println(all);
+		Sys.println(~new Flags(AttributeTargets.All));
+		var none = new Flags<BindingFlags>();
+		Sys.println(none);
+		var fields = cs.Lib.toNativeType(Version).GetFields(new Flags(BindingFlags.Public) | BindingFlags.Static);
+		Sys.println(fields.Length);
+	}
+}
+class Version {
+	public static var a = 1;
+	public static var b = 2;
+	public var c = 3;
+}
+===
+[run]
+Static, Public
+true false
+true true
+Static
+Public
+Class, Method, Field
+-32768
+Default
+2
+--- type-fields-and-class-equality @gencs
+class Shape {
+	public var name:String;
+	var secret:Int = 1;
+	public final id:Int = 7;
+	@:isVar public var w(get, set):Float = 0;
+	public var ro(default, null):Int = 0;
+	public static var count:Int = 0;
+	static var hiddenStatic:Int = 0;
+	public static inline var K = 3;
+	function get_w() return w;
+	function set_w(v) return w = v;
+	public function new(n:String) {
+		name = n;
+		count++;
+	}
+	public function area():Float return 0;
+	function priv() return 2;
+	public static function make() return new Shape("s");
+}
+class Square extends Shape {
+	public var side:Float = 2;
+	public function new() super("sq");
+	override public function area():Float return side * side;
+	public function extra() return priv();
+}
+class P {
+	static function main() {
+		var s:Shape = new Square();
+		s.w = 1;
+		cast(s, Square).extra();
+		Shape.make();
+		Sys.println(Type.getInstanceFields(Shape).join(","));
+		Sys.println(Type.getInstanceFields(Square).join(","));
+		Sys.println(Type.getClassFields(Shape).join(","));
+		Sys.println(Type.getClassFields(Square).length);
+		Sys.println(Type.getInstanceFields(String).join(","));
+		Sys.println(Type.getClassFields(String).join(","));
+		Sys.println(Reflect.fields(Shape).join(","));
+		Sys.println(Reflect.fields("abc").length);
+		Sys.println(Reflect.fields(new cs.system.Version(1, 2)).length);
+		Sys.println(Type.getClass(s) == Square);
+		Sys.println(Type.getClass(s) != Shape);
+		Sys.println(Type.getSuperClass(Square) == Shape);
+		Sys.println(Type.getSuperClass(Shape) == null);
+		Sys.println(Type.resolveClass("Square") == Square);
+		Sys.println(Type.resolveClass("Nope") == null);
+		var c:Class<Dynamic> = Type.getClass(s);
+		Sys.println(c == Square && c != null);
+	}
+}
+===
+[run]
+get_w,set_w,area,priv,name,secret,id,w,ro
+area,extra,get_w,set_w,priv,side,name,secret,id,w,ro
+make,count,hiddenStatic,K
+0
+length,toUpperCase,toLowerCase,charAt,charCodeAt,indexOf,lastIndexOf,split,substr,substring
+fromCharCode
+make,count,hiddenStatic,K
+0
+0
+True
+True
+True
+True
+True
+True
+True
+--- reflect-api @gencs
+class C {
+	public var x:Int = 1;
+	public var s:String = "s";
+	public var p(get, set):Int;
+	var hidden:Int = 9;
+	function get_p() return x * 10;
+	function set_p(v) return x = v;
+	public static var st:Int = 4;
+	public static function sm(a:Int) return a + 1;
+	public function new() {}
+	public function m(a:Int, b:Int) return a + b + x;
+}
+class P {
+	static function main() {
+		var c = new C();
+		var o:Dynamic = {a: 1, b: "two"};
+		Sys.println(Reflect.fields(c).join(",") + " / " + Reflect.fields(o).join(","));
+		Sys.println(Reflect.hasField(c, "x") + " " + Reflect.hasField(c, "m") + " " + Reflect.hasField(c, "p") + " " + Reflect.hasField(c, "hidden") + " " + Reflect.hasField(c, "zz") + " " + Reflect.hasField(o, "a") + " " + Reflect.hasField(o, "zz"));
+		Sys.println(Reflect.getProperty(c, "p") + " " + Reflect.field(c, "p"));
+		Reflect.setProperty(c, "p", 3);
+		Reflect.setProperty(o, "a", 5);
+		Sys.println(c.x + " " + Reflect.getProperty(o, "a"));
+		Sys.println(Reflect.deleteField(o, "a") + " " + Reflect.deleteField(o, "a") + " " + Reflect.fields(o).join(",") + " " + Reflect.deleteField(c, "x"));
+		var cp = Reflect.copy(o);
+		cp.b = "changed";
+		Sys.println(o.b + " " + cp.b);
+		var cc:Dynamic = Reflect.copy((c : Dynamic));
+		Sys.println(Std.string(cc) + " " + Std.isOfType(cc, C));
+		Sys.println(Reflect.copy(null));
+		Sys.println(Reflect.isObject(c) + " " + Reflect.isObject(o) + " " + Reflect.isObject("s") + " " + Reflect.isObject(1) + " " + Reflect.isObject(C) + " " + Reflect.isObject([1]) + " " + Reflect.isObject(true));
+		var nothing:Dynamic = null;
+		Sys.println(Reflect.isObject(nothing) + " " + Reflect.isFunction(1) + " " + Reflect.isFunction(o) + " " + Reflect.isFunction(nothing) + " " + Reflect.isEnumValue(1) + " " + Reflect.isEnumValue(cs.system.DayOfWeek.Monday));
+		Sys.println(Reflect.compare(1, 2) + " " + Reflect.compare(2, 1) + " " + Reflect.compare(1, 1) + " " + Reflect.compare("a", "b") + " " + Reflect.compare("b", "a") + " " + Reflect.compare(1.5, 1) + " " + Reflect.compare(nothing, nothing) + " " + Reflect.compare(nothing, 1));
+		Sys.println(Reflect.field(C, "st") + " " + Reflect.callMethod(C, Reflect.field(C, "sm"), [4]) + " " + Reflect.callMethod(c, Reflect.field(c, "m"), [1, 2]));
+		Reflect.setField(C, "st", 8);
+		Sys.println(C.st);
+		Sys.println(Reflect.fields(C).join(","));
+		Sys.println(Reflect.field("abc", "length") + " " + Reflect.field([1, 2, 3], "length") + " " + Reflect.fields([1, 2]).join(","));
+		Sys.println(Reflect.fields("abc").length + " " + Reflect.hasField("abc", "length"));
+		Sys.println(Reflect.field(new cs.system.text.StringBuilder("abcd"), "Length"));
+		var v = new cs.system.Version(1, 2);
+		Sys.println(Reflect.fields(v).length + " " + Reflect.hasField(v, "Major") + " " + Reflect.getProperty(v, "Minor") + " " + Reflect.field(v, "Major"));
+	}
+}
+===
+[run]
+hidden,p,s,x / b,a
+true true true true false true false
+10 10
+3 5
+true false b false
+two changed
+[ p : 30, s : s, x : 3, hidden : 9 ] false
+
+true true true false true true false
+false false false false false true
+-1 1 0 -1 1 1 0 -1
+4 5 6
+8
+sm,st
+3 3 __a,length
+0 true
+4
+0 true 2 1

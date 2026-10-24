@@ -30,6 +30,12 @@ import hxc.codegen.dotnet.TexprToIl.isTypeParam;
 import hxc.codegen.dotnet.TexprToIl.needVal;
 import hxc.codegen.dotnet.TexprToIl.strip;
 
+private enum TypeOperand {
+	OStatics;
+	OValue;
+	ONull;
+}
+
 // The operators of TexprToIl: arithmetic, comparison, boolean conditions, increments and compound
 // assignment, and string concatenation. Shares its state through the TexprToIl that owns it.
 @:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.TexprDynamic)
@@ -57,6 +63,13 @@ class TexprOps {
 				pushString(e2);
 				concat();
 				tl.coerce(LString, ret);
+			case OpAnd | OpOr | OpXor if (netEnum(tl.sig(e1.type)) && IlPaths.sigEq(tl.sig(e1.type), tl.sig(e2.type))):
+				// cs.Flags's operators, C#'s on a .NET enum: the underlying integer's, typed as the enum.
+				var s = tl.sig(e1.type);
+				tl.texpr(RValue(s), e1);
+				tl.texpr(RValue(s), e2);
+				arith(op, s);
+				tl.coerce(s, ret);
 			case OpAdd | OpSub | OpMult | OpDiv | OpMod | OpAnd | OpOr | OpXor | OpShl | OpShr | OpUShr:
 				var s1 = tl.operandSig(op, e1), s2 = tl.operandSig(op, e2);
 				if (is64(s1) || is64(s2)) {
@@ -80,6 +93,14 @@ class TexprOps {
 	}
 
 	static function isArith(op:Binop):Bool return op.match(OpAdd | OpSub | OpMult | OpDiv | OpMod);
+
+	// Whether `s` is a .NET enum, whose values are its underlying integer on the stack.
+	function netEnum(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LValueType(p, []): g.externs.enumUnderlying(p) != null;
+			case _: false;
+		}
+	}
 
 	// C# promotes a UInt and an Int operand to long: their comparisons and remainder are a long's.
 	static function mixesUIntAndInt(s1:IlSigNorm, s2:IlSigNorm):Bool {
@@ -218,6 +239,7 @@ class TexprOps {
 
 	function compare(ret:Ret, op:Binop, e1:TExpr, e2:TExpr):Void {
 		var equality = op.match(OpEq | OpNotEq);
+		if (equality && typeEquality(ret, op, e1, e2)) return;
 		var isFloat = false;
 		// Two UInt operands compare unsigned; a UInt and an Int compare as longs, as in C#.
 		var unsigned = false;
@@ -236,10 +258,16 @@ class TexprOps {
 				tl.coerce(LBool, ret);
 				return;
 			}
-			if (DotnetTypes.isValueType(s) || isTypeParam(s)) throw new Unsupported("comparing a value type with null", false);
-			netOperator = equalityOperator(op, e1, e2);
-			tl.texpr(RValue(netOperator == null ? null : netOperator.args[0]), e1);
-			tl.texpr(RValue(netOperator == null ? null : netOperator.args[1]), e2);
+			if (netEnum(s)) {
+				// A .NET enum against null, as cs.Flags's `has` compares: against default(T), as gencs writes it.
+				tl.texpr(RValue(s), other);
+				tl.defaultValue(s);
+			} else {
+				if (DotnetTypes.isValueType(s) || isTypeParam(s)) throw new Unsupported("comparing a value type with null", false);
+				netOperator = equalityOperator(op, e1, e2);
+				tl.texpr(RValue(netOperator == null ? null : netOperator.args[0]), e1);
+				tl.texpr(RValue(netOperator == null ? null : netOperator.args[1]), e2);
+			}
 		} else {
 			// Null<T> operands compare their values, as HardNullableSynf unwraps them; Char and the small
 			// integers compare as Ints, as C# promotes them.
@@ -276,8 +304,10 @@ class TexprOps {
 				tl.nullOperand(RValue(t), e1);
 				tl.nullOperand(RValue(t), e2);
 			} else if (equality && (TexprToIl.clrEnum(e1.type) != null && TexprToIl.clrEnum(e1.type) == TexprToIl.clrEnum(e2.type)
-				|| TexprToIl.externEnum(e1.type) != null && TexprToIl.externEnum(e1.type) == TexprToIl.externEnum(e2.type))) {
-				// Two values of one CLR enum compare as their indices, two of a .NET enum as their values.
+				|| TexprToIl.externEnum(e1.type) != null && TexprToIl.externEnum(e1.type) == TexprToIl.externEnum(e2.type)
+				|| netEnum(s1) && IlPaths.sigEq(s1, s2))) {
+				// Two values of one CLR enum compare as their indices, two of a .NET enum (cs.Flags's
+				// EnumUnderlying<T> too) as their values.
 				tl.texpr(RValue(s1), e1);
 				tl.texpr(RValue(s2), e2);
 			} else if (equality && s1.match(LValueType(_, _)) && IlPaths.sigEq(s1, s2) && TexprToIl.externEnum(e1.type) == null) {
@@ -332,6 +362,33 @@ class TexprOps {
 			}
 		}
 		tl.coerce(LBool, ret);
+	}
+
+	// What an operand of `==` on types is: a type expression, whose type is its statics; a Class<T> or
+	// Enum<T> value; the null constant; or null for anything else.
+	static function typeOperand(e:TExpr):Null<TypeOperand> {
+		if (isNullConst(e)) return ONull;
+		return switch (TypeFunctions.follow(e.type)) {
+			case TAnon(a) if (a.status.get().match(Statics(_) | EnumStatics(_))): OStatics;
+			case TAbstract(a, [_]) if (a.path.pack.length == 0 && (a.path.name == "Class" || a.path.name == "Enum")): OValue;
+			case _: null;
+		}
+	}
+
+	// `==` or `!=` on Class or Enum values, as gencs writes it: Runtime.refEq when an operand is a type
+	// expression (DynamicOperators takes those), else Runtime.typeEq, against null too. False when an
+	// operand is not one of these.
+	function typeEquality(ret:Ret, op:Binop, e1:TExpr, e2:TExpr):Bool {
+		var k1 = typeOperand(e1), k2 = typeOperand(e2);
+		if (k1 == null || k2 == null || k1 == ONull && k2 == ONull) return false;
+		var ref = k1 == OStatics || k2 == OStatics;
+		var s = ref ? LObject : TexprCalls.systemType;
+		tl.texpr(RValue(s), e1);
+		tl.texpr(RValue(s), e2);
+		tl.dyn.runtimeCall(ref ? "refEq" : "typeEq");
+		if (op.match(OpNotEq)) not();
+		tl.coerce(LBool, ret);
+		return true;
 	}
 
 	// The .NET class whose operators C# looks up for a value of type `t`: its own, or for a Haxe class
@@ -440,7 +497,8 @@ class TexprOps {
 			case NegBits:
 				var own = tl.sig(e.type);
 				var t = tl.unNull(own);
-				if (!t.match(LInt32 | LInt64 | LUInt64)) throw new Unsupported("the ~ operator on these types", false);
+				// On a .NET enum, cs.Flags's `~`: the underlying integer's, typed as the enum.
+				if (!t.match(LInt32 | LInt64 | LUInt64) && !netEnum(t)) throw new Unsupported("the ~ operator on these types", false);
 				tl.nullOperand(RValue(t), e1, false);
 				code.op(IlOps.NOT, 1, 1);
 				tl.dyn.finish(t, own, ret);

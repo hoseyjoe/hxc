@@ -449,6 +449,20 @@ class TexprToIl {
 		code.ldloc(tmp);
 	}
 
+	// A null of type `t`, Dynamic or (cast null) a .NET enum, going where `ret` wants a value type, as
+	// gencs converts it: that type's default, as Runtime.toInt(null) and C#'s default(T) give. False,
+	// and nothing pushed, when `ret` wants no value type.
+	function nullDefault(ret:Ret, t:T):Bool {
+		var to = switch (ret) {
+			case RValue(null): sig(t);
+			case RValue(s): s;
+			case _: return false;
+		}
+		if (!DotnetTypes.isValueType(to) || isHaxeNull(to)) return false;
+		defaultValue(to);
+		return true;
+	}
+
 	// gencs gives a generic Haxe class real type arguments and converts between instantiations with
 	// __hx_cast, which copies (Haxe issue 8314); castclass would throw where it converts. Milestone 3
 	// lowers these casts as the spec's "Casts between generic instantiations" says.
@@ -538,6 +552,7 @@ class TexprToIl {
 				code.ldcI4(b ? 1 : 0);
 				coerce(LBool, ret);
 			case TConst(TNull):
+				if (TexprDynamic.isTDynamic(e.type) && nullDefault(ret, e.type)) return;
 				code.op(IlOps.LDNULL, 0, 1);
 				coerce(null, ret);
 			case TConst(TThis):
@@ -666,6 +681,7 @@ class TexprToIl {
 			// A cast between instantiations is reported at the cast.
 			if (from != null && to != null) checkInstantiationCast(from, to);
 		}
+		if (isNullConst(e1) && (TexprDynamic.isTDynamic(e.type) || externEnum(e.type) != null) && nullDefault(ret, e.type)) return;
 		var want = switch (ret) {
 			case RValue(w): w;
 			case _: null;
