@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
 # Runs the .NET generator's cases in cases.hx.txt.
 #   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>]
-# A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@stress-fieldlookup]
-# [@runtimeconfig] [+ extra hxc args]`, its source, `===`, and the expected result. Each case
-# compiles twice into a fresh directory, and its .dll must be byte-identical between the two, pass
-# ILVerify, run (unless @lib) and dump as expected. A @stress-fieldlookup case's .dll must also pass
-# HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup called from many threads at once). A
-# @runtimeconfig case is not run; its <name>.runtimeconfig.json is the result instead, so a case can
-# build for a .NET version this machine does not have.
+# A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
+# [@runtimeconfig] [@run-timeout=seconds] [+ extra hxc args]`, its source, `===`, and the expected
+# result. Each case compiles twice into a fresh directory, and its .dll must be byte-identical
+# between the two, pass ILVerify, run (unless @lib) and dump as expected. A @stress-fieldlookup
+# case's .dll must also pass HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup called from many
+# threads at once). A @runtimeconfig case is not run; its <name>.runtimeconfig.json is the result
+# instead, so a case can build for a .NET version this machine does not have.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
 # and a case whose expectation has no [run] section takes the gencs output as that expectation.
-# @gencs compares runs, so it cannot go with @lib.
+# @gencs compares runs, so it cannot go with @lib (nor can @serial).
+# A @serial case is a @gencs case whose program takes `gen <file>` and `rt <in> <file>`: gen writes
+# `name<TAB>serialized` lines to <file> and prints them, rt unserializes each line of <in>, serializes
+# it again, writes the lines to <file> and prints them. Both builds run gen (the [run] comparison
+# above); gencs's rt of its own file is the reference, shown under [rt]. hxc's rt of gencs's file,
+# gencs's rt of hxc's file and hxc's rt of its own file must print the same, or the result gets an
+# [rt hxc<-gencs], [rt gencs<-hxc] or [rt hxc<-hxc] section. With no [rt] in the expectation,
+# gencs's is the expectation, as for [run].
+# Every run of a test program (hxc's or gencs's build) stops after $HXC_RUN_TIMEOUT seconds, 120 by
+# default, or after @run-timeout's seconds for that case; its output then ends with
+# `[timeout after Ns]` (a gencs run that times out fails the case), and the other cases go on.
+# Compiles and builds have no such limit.
 # Case directories go under $HXC_TEST_TMP, by default tests/dotnet/tmp (gitignored), so one
 # antivirus exclusion covers the assemblies they write.
 set -u
@@ -49,6 +60,27 @@ if ! log="$(dotnet build "$checkdir" -c Release -o "$checkdir/bin/out" -nologo -
 fi
 check() { dotnet "$checkdir/bin/out/HxcCheck.dll" "$@"; }
 
+runlimit="${HXC_RUN_TIMEOUT:-120}"
+# A case's run time limit: @run-timeout's, or $runlimit.
+case_limit() {
+	local t limit="$runlimit"
+	for t in $1; do case "$t" in @run-timeout=*) limit="${t#@run-timeout=}" ;; esac; done
+	printf '%s' "$limit"
+}
+# Runs a test program, `dotnet <dll> [args]` in the current directory, for at most $1 seconds and
+# prints its output; `[exit N]` follows if it fails, `[timeout after Ns]` if it runs out of time.
+run_program() {
+	local limit="$1" out code=0
+	shift
+	out="$(timeout -k 10 "$limit" dotnet "$@" 2>&1)" || code=$?
+	case $code in
+		0) ;;
+		124 | 137) out="${out}"$'\n'"[timeout after ${limit}s]" ;;
+		*) out="${out}"$'\n'"[exit $code]" ;;
+	esac
+	printf '%s' "$out"
+}
+
 # A native Windows path for a directory, when cygpath exists.
 native() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 
@@ -80,7 +112,7 @@ gencs_prepare() {
 	local -a todo=()
 	for i in "${!c_name[@]}"; do
 		has=0
-		for t in ${c_tags[$i]}; do [ "$t" = "@gencs" ] && has=1; done
+		for t in ${c_tags[$i]}; do [ "$t" = "@gencs" ] || [ "$t" = "@serial" ] && has=1; done
 		for t in ${c_tags[$i]}; do [ "$t" = "@lib" ] && has=0; done
 		[ $has = 1 ] && todo+=("$i")
 	done
@@ -136,35 +168,54 @@ EOF
 	blog="$(cd "$gencsroot" && MSBUILDDISABLENODEREUSE=1 dotnet build batch.proj -m -nologo -v q 2>&1)" || true
 
 	for i in "${todo[@]}"; do
-		local d="$gencsroot/${c_name[$i]}" dll code=0 out
+		local d="$gencsroot/${c_name[$i]}" dll out serial=0 limit
 		[ -f "$d/problem" ] && continue
 		module="P"
-		for t in ${c_tags[$i]}; do case "$t" in @module=*) module="${t#@module=}" ;; esac; done
+		for t in ${c_tags[$i]}; do
+			case "$t" in
+				@module=*) module="${t#@module=}" ;;
+				@serial) serial=1 ;;
+			esac
+		done
+		limit="$(case_limit "${c_tags[$i]}")"
 		dll="g/bin/${module##*.}.dll"
 		if [ ! -f "$d/$dll" ]; then
 			printf 'gencs output did not build:\n%s\n' "$(printf '%s\n' "$blog" | grep -F "/${c_name[$i]}/" | sort -u | head -n 20)" > "$d/problem"
 			continue
 		fi
-		out="$(cd "$d" && dotnet "$dll" 2>&1)" || code=$?
-		[ $code != 0 ] && out="${out}"$'\n'"[exit $code]"
+		local args=() rtout=""
+		# A @serial case: gen writes gen.txt, then rt of gen.txt (gencs reading itself) is the reference.
+		[ $serial = 1 ] && args=(gen gen.txt)
+		out="$(cd "$d" && run_program "$limit" "$dll" "${args[@]}")"
+		[ $serial = 1 ] && rtout="$(cd "$d" && run_program "$limit" "$dll" rt gen.txt rt.txt)"
+		case "$out$rtout" in
+			*"[timeout after ${limit}s]"*)
+				printf "gencs's build ran out of time; the end of its output:\n%s\n" "$(printf '%s\n%s\n' "$out" "$rtout" | tail -n 5)" > "$d/problem"
+				continue
+				;;
+		esac
 		printf '%s' "$out" > "$d/out"
+		[ $serial = 1 ] && printf '%s' "$rtout" > "$d/rt.out"
 	done
 }
 
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 stress=0 config=0 t
+	local lib=0 module="P" dump="" gencs=0 serial=0 stress=0 config=0 limit t
 	for t in $tags; do
 		case "$t" in
 			@lib) lib=1 ;;
 			@module=*) module="${t#@module=}" ;;
 			@dump=*) dump="${t#@dump=}" ;;
 			@gencs) gencs=1 ;;
+			@serial) serial=1; gencs=1 ;;
+			@run-timeout=*) ;;
 			@stress-fieldlookup) stress=1 ;;
 			@runtimeconfig) config=1 ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
 		esac
 	done
+	limit="$(case_limit "$tags")"
 	total=$((total + 1))
 	if [ $gencs = 1 ] && [ $lib = 1 ]; then
 		echo "FAIL $name"
@@ -202,9 +253,9 @@ run_case() {
 		if [ $config = 1 ]; then
 			result="${result:+$result$'\n'}[runtimeconfig]"$'\n'"$(cat "$casedir"/a/P/*.runtimeconfig.json 2>&1)"
 		elif [ $lib = 0 ]; then
-			local rout code=0
-			rout="$(cd "$casedir" && dotnet "a/P/$(basename "$dll")" 2>&1)" || code=$?
-			[ $code != 0 ] && rout="${rout}"$'\n'"[exit $code]"
+			local rout hdll="a/P/$(basename "$dll")" args=()
+			[ $serial = 1 ] && args=(gen h.gen.txt)
+			rout="$(cd "$casedir" && run_program "$limit" "$hdll" "${args[@]}")"
 			[ -n "$rout" ] && result="${result:+$result$'\n'}[run]"$'\n'"$rout"
 			if [ $gencs = 1 ] && [ -f "$gencsroot/$name/out" ]; then
 				local gdir="$gencsroot/$name" gout
@@ -214,6 +265,25 @@ run_case() {
 				elif ! printf '%s\n' "$expected" | grep -qx '\[run\]'; then
 					# No [run] expectation: gencs's output is it.
 					[ -n "$gout" ] && expected="${expected}[run]"$'\n'"$gout"$'\n'
+				fi
+			fi
+			if [ $serial = 1 ] && [ -f "$gencsroot/$name/rt.out" ]; then
+				# gencs reading its own data is the reference; every other reader must print the same.
+				local gdir="$gencsroot/$name" ref section out
+				ref="$(normalize "$(cat "$gdir/rt.out")" "$gdir")"
+				result="${result:+$result$'\n'}[rt]"$'\n'"$ref"
+				for section in "hxc<-gencs" "gencs<-hxc" "hxc<-hxc"; do
+					case "$section" in
+						"hxc<-gencs") out="$(cd "$casedir" && run_program "$limit" "$hdll" rt "$(native "$gdir/gen.txt")" h.rt.g.txt)" ;;
+						"gencs<-hxc") out="$(cd "$gdir" && run_program "$limit" "g/bin/${module##*.}.dll" rt "$(native "$casedir/h.gen.txt")" g.rt.h.txt)" ;;
+						"hxc<-hxc") out="$(cd "$casedir" && run_program "$limit" "$hdll" rt h.gen.txt h.rt.h.txt)" ;;
+					esac
+					out="$(normalize "$out")"
+					[ "$out" != "$ref" ] && result="$result"$'\n'"[rt $section]"$'\n'"$out"
+				done
+				if ! printf '%s\n' "$expected" | grep -qx '\[rt\]'; then
+					# No [rt] expectation: gencs's is it.
+					expected="${expected}[rt]"$'\n'"$ref"$'\n'
 				fi
 			fi
 		fi
