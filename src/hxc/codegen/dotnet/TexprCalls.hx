@@ -173,13 +173,28 @@ class TexprCalls {
 
 	function fieldRead(ret:Ret, e:TExpr, obj:TExpr, fa:TFieldAccess):Void {
 		switch (fa) {
+			case FClosure(null, cf):
+				// A method of an anonymous structure is one of its fields.
+				if (!TexprDynamic.isDynamic(obj.type)) throw new Unsupported("method closures", true);
+				tl.dyn.fieldGet(ret, e, obj, cf.name, e.type, true);
+			case FStatic(c, cf) if (!isExtern(c) && cf.kind.match(Method(_))):
+				// A static method as a value: `new Closure(typeof(C), "name", hash)`.
+				checkMethodValue(cf);
+				g.types.checkKept(TClassDecl(c));
+				var plan = g.ownerOf.get(cf);
+				if (plan == null) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
+				pushClosure(null, staticOwner(plan), cf.name);
+				tl.coerce(closureSig(), ret);
 			case FStatic(c, cf) if (!isExtern(c)):
-				if (!cf.kind.match(Var(_))) throw new Unsupported("method closures", true);
 				var f = tl.staticField(c, cf);
 				if (!needVal(ret)) return;
 				tl.volatilePrefix(cf);
 				code.opToken(IlOps.LDSFLD, f.token, 0, 1);
 				tl.coerce(f.sig, ret);
+			case FInstance(c, _, cf) | FClosure({c: c}, cf) if (isStringClass(c) && cf.kind.match(Method(_))):
+				// hxcs's Runtime calls a String's methods by their Haxe names.
+				pushClosure(obj, LString, cf.name);
+				tl.coerce(closureSig(), ret);
 			case FInstance(c, _, cf) if (isStringClass(c)):
 				if (cf.name != "length") throw new Unsupported("the String field " + cf.name, false);
 				tl.texpr(RValue(LString), obj);
@@ -187,8 +202,12 @@ class TexprCalls {
 				tl.coerce(LInt32, ret);
 			case FInstance(_, _, cf) if (cf.name == "Length" && isNativeArray(obj.type)):
 				nativeLength(ret, obj);
+			case FStatic(c, cf) | FInstance(c, _, cf) | FClosure({c: c}, cf) if (isExtern(c) && cf.kind.match(Method(_))):
+				// A .NET method as a value, which Runtime.callField reaches by reflection.
+				var isStatic = fa.match(FStatic(_, _));
+				pushClosure(isStatic ? null : obj, parentOf(c, instantiation(c, fa)), ExternMembers.memberName(cf));
+				tl.coerce(closureSig(), ret);
 			case FStatic(c, cf) | FInstance(c, _, cf) if (isExtern(c)):
-				if (!cf.kind.match(Var(_))) throw new Unsupported("method closures", true);
 				var isStatic = fa.match(FStatic(_, _));
 				var inst = instantiation(c, fa);
 				var parent = parentOf(c, inst);
@@ -210,8 +229,17 @@ class TexprCalls {
 					case _:
 						throw new Unsupported("reading a write-only .NET property", false);
 				}
+			case FInstance(_, _, cf) | FClosure(_, cf) if (cf.kind.match(Method(_)) && isDynamicArray(obj.type)):
+				// gencs reads a method of an Array<Dynamic>, the non-generic Array, through Runtime.getField.
+				tl.dyn.fieldGet(ret, e, obj, cf.name, e.type, true);
+			case FInstance(c, _, cf) | FClosure({c: c}, cf) if (cf.kind.match(Method(_))):
+				// An instance method as a value: `new Closure(obj, "name", hash)`, the receiver evaluated now,
+				// the method found by name when the closure is called.
+				checkMethodValue(cf);
+				g.types.checkKept(TClassDecl(c));
+				pushClosure(obj, LObject, cf.name);
+				tl.coerce(closureSig(), ret);
 			case FInstance(c, cparams, cf):
-				if (!cf.kind.match(Var(_))) throw new Unsupported("method closures", true);
 				var f = instanceField(c, cparams, cf);
 				receiver(obj, f.owner);
 				tl.volatilePrefix(cf);
@@ -243,7 +271,12 @@ class TexprCalls {
 				// A constructor without arguments is the base class's static field holding its one value.
 				g.types.checkKept(TEnumDecl(en));
 				var plan = g.enumPlans.get(en);
-				if (!plan.isSingleton(ef)) throw new Unsupported("enum constructors as function values", true);
+				if (!plan.isSingleton(ef)) {
+					// One with arguments, as a value: a closure of the base class's factory.
+					pushClosure(null, plan.base.thisSig, ef.name);
+					tl.coerce(closureSig(), ret);
+					return;
+				}
 				if (!needVal(ret)) return;
 				code.opToken(IlOps.LDSFLD, plan.singleton(ef), 0, 1);
 				tl.coerce(plan.base.thisSig, ret);
@@ -426,6 +459,9 @@ class TexprCalls {
 				var token = g.mb.memberRef(g.typeTokenOf(LString), ExternMembers.memberName(cf), g.sigs.method(false, retSig, argSigs, 0));
 				code.opToken(IlOps.CALL, token, argSigs.length, retSig.match(LVoid) ? 0 : 1);
 				tl.coerce(retSig, ret);
+			case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (!cf.kind.match(Method(_))):
+				// A variable of a function type.
+				invokeFunction(ret, e, callee, args);
 			case TField(_, FStatic(c, cf)) if (!isExtern(c)):
 				g.types.checkKept(TClassDecl(c));
 				var target = pickOverload(c, [], cf, args, true);
@@ -441,7 +477,6 @@ class TexprCalls {
 				superCtorCall(args);
 				tl.coerce(LVoid, ret);
 			case TField(obj, FInstance(c, params, cf)):
-				if (!cf.kind.match(Method(_))) throw new Unsupported("calls of function values", true);
 				var m = haxeMethod(c, params, cf, args, callee.type);
 				// super.m() calls the base class's method itself.
 				var isSuper = strip(obj).expr.match(TConst(TSuper));
@@ -458,8 +493,97 @@ class TexprCalls {
 			case TIdent(name):
 				magicCall(ret, e, name, args);
 			case _:
-				throw new Unsupported("calls of function values", true);
+				invokeFunction(ret, e, callee, args);
 		}
+	}
+
+	// A call of a function value, a haxe.lang.Function, as gencs's closuresToClass writes it. Each
+	// argument is a pair: the value as a double and Runtime.undefined when its type is like a Float (not
+	// an Int64), else 0.0 and the value boxed. `__hx_invoke<N>_f` when the call's type is like a Float,
+	// else `_o`, the result then converted to the call's type; six arguments or more go boxed to
+	// `__hx_invokeDynamic(object[])`. A callee that is not typed as a function is cast to one and always
+	// gets `_o`.
+	public function invokeFunction(ret:Ret, e:TExpr, callee:TExpr, args:Array<TExpr>):Void {
+		var fc = runtimeClass("cs.internal.Function");
+		var fnSig = tl.sig(TInst(fc, []));
+		var typed = IlPaths.sigEq(tl.sig(callee.type), fnSig);
+		if (typed) {
+			tl.texpr(RValue(fnSig), callee);
+		} else {
+			tl.texpr(RValue(LObject), callee);
+			tl.castTo(fnSig);
+		}
+		var own = tl.sig(e.type);
+		if (args.length >= 6) {
+			tl.dyn.pushObjects(args);
+			code.opToken(IlOps.CALLVIRT, functionMethod(fc, "__hx_invokeDynamic"), 2, 1);
+			tl.dyn.finish(LObject, own, ret);
+			return;
+		}
+		for (a in args) {
+			if (strip(a).expr.match(TUnop(Spread, _, _))) throw new Unsupported("the spread operator", false);
+			if (TexprDynamic.likeFloatReal(a.type) && !TexprDynamic.likeI64Real(a.type)) {
+				tl.texpr(RValue(LFloat64), a);
+				pushUndefined();
+			} else {
+				code.opR8(IlOps.LDC_R8, 0.0, 0, 1);
+				tl.texpr(RValue(LObject), a);
+			}
+		}
+		var isFloat = typed && TexprDynamic.likeFloatReal(e.type) && !TexprDynamic.likeI64Real(e.type);
+		code.opToken(IlOps.CALLVIRT, functionMethod(fc, "__hx_invoke" + args.length + (isFloat ? "_f" : "_o")), 1 + 2 * args.length, 1);
+		tl.dyn.finish(isFloat ? LFloat64 : LObject, own, ret);
+	}
+
+	// Pushes a haxe.lang.Closure of the method `name` of `receiver`, evaluated now; of the type `owner`'s
+	// static method, `typeof(owner)`, without one. Calling it calls the method by name through
+	// Runtime.callField.
+	public function pushClosure(receiver:Null<TExpr>, owner:IlSigNorm, name:String):Void {
+		var c = runtimeClass("cs.internal.Closure");
+		var plan = g.planOf.get(c);
+		var ctor = null;
+		if (plan != null) for (m in plan.methods) if (m.name == ".ctor" && m.args.length == 3) ctor = m;
+		if (ctor == null) throw "internal error: haxe.lang.Closure has no constructor";
+		if (receiver != null) tl.texpr(RValue(LObject), receiver) else pushTypeOf(owner);
+		code.opToken(IlOps.LDSTR, g.mb.userString(name), 0, 1);
+		code.ldcI4(FieldHashes.use(name));
+		code.opToken(IlOps.NEWOBJ, ctor.token, 3, 1);
+	}
+
+	function closureSig():IlSigNorm return tl.sig(TInst(runtimeClass("cs.internal.Closure"), []));
+
+	// A class of hxc's copy of hxcs's runtime that the code needs.
+	function runtimeClass(hxPath:String):TClass {
+		var c = g.runtimeClass(hxPath);
+		if (c == null) throw new Unsupported("function values without " + hxPath, false);
+		g.types.checkKept(TClassDecl(c));
+		return c;
+	}
+
+	// The token of haxe.lang.Function's virtual method `name`.
+	function functionMethod(fc:TClass, name:String):Int {
+		var cf = fc.fields.get(name);
+		if (cf == null) throw "internal error: haxe.lang.Function has no " + name;
+		return haxeMethod(fc, [], cf, [], cf.type).token;
+	}
+
+	// Runtime.undefined, the Dynamic half of an argument passed as a double.
+	function pushUndefined():Void {
+		var rt = runtimeClass("cs.internal.Runtime");
+		var cf = rt.statics.get("undefined");
+		if (cf == null) throw new Unsupported("haxe.lang.Runtime.undefined", false);
+		code.opToken(IlOps.LDSFLD, tl.staticField(rt, cf).token, 0, 1);
+	}
+
+	// A dynamic method read as a value is its field, not a closure.
+	static function checkMethodValue(cf:TClassField):Void {
+		if (cf.kind.match(Method(MethDynamic))) throw new Unsupported("dynamic methods", true);
+	}
+
+	// An Array<Dynamic>, which hxcs declares as the non-generic Array.
+	static function isDynamicArray(t:T):Bool {
+		var a = arrayOf(t);
+		return a != null && TexprDynamic.isTDynamic(a.params[0]);
 	}
 
 	// A constructor with arguments: its factory, each argument converted to its type in the call's

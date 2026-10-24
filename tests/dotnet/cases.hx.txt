@@ -5404,3 +5404,113 @@ haxe.lang.Null`1[System.Enum]
 False
 3 Friday
 4 none true
+--- method-closures @gencs
+interface I {
+	function hello(n:Int):String;
+}
+class Base implements I {
+	public var tag:String;
+	public function new(t) tag = t;
+	public function hello(n:Int):String return tag + n;
+	public function area(w:Float, h:Float):Float return w * h;
+}
+class Sub extends Base {
+	override public function hello(n:Int):String return "sub" + n;
+	function baseHello(n:Int) return super.hello(n);
+	public function superHello():Int->String return baseHello;
+}
+class P {
+	static function twice(x:Int):Int return x * 2;
+	static function opt(a:Int, ?b:Int, c = 5):String return a + "," + b + "," + c;
+	static function main() {
+		var b = new Base("b");
+		var f = b.hello;
+		Sys.println(f(1));
+		b.tag = "B";
+		Sys.println(f(1));
+		var g = twice;
+		Sys.println(g(21));
+		var i:I = new Sub("s");
+		var h = i.hello;
+		Sys.println(h(2));
+		var bs:Base = new Sub("t");
+		var hb = bs.hello;
+		Sys.println(hb(3));
+		Sys.println((cast bs : Sub).superHello()(4));
+		var ar = b.area;
+		Sys.println(ar(2, 3.5));
+		var o = opt;
+		Sys.println(o(1));
+		Sys.println(o(1, 2));
+		Sys.println(o(1, 2, 3));
+		var dd:Dynamic = twice;
+		Sys.println(dd(4));
+		var d1:Dynamic = Reflect.field(b, "hello");
+		Sys.println(d1(5));
+		Sys.println(Reflect.callMethod(b, Reflect.field(b, "hello"), [7]));
+		Sys.println(Reflect.callMethod(null, twice, [8]));
+		var mx = Math.max;
+		Sys.println(mx(1, 2));
+		var pi = Std.parseInt;
+		Sys.println(pi("42"));
+		var up = "abc".toUpperCase;
+		Sys.println(up());
+		var sb = new StringBuf();
+		var add = sb.add;
+		add("z");
+		Sys.println(sb.toString());
+		Sys.println(Std.string(f) + " " + Std.string(g));
+	}
+}
+===
+[run]
+b1
+B1
+42
+sub2
+sub3
+t4
+7
+1,null,5
+1,2,5
+1,2,3
+8
+B5
+B7
+16
+2
+42
+ABC
+z
+haxe.lang.Closure haxe.lang.Closure
+--- function-fields @gencs
+class C {
+	public static var sf:Int->Int;
+	public static var none:Int->Int;
+	public var f:String->String;
+	public function new() {}
+}
+class P {
+	static function inc(x:Int) return x + 1;
+	static function bang(s:String) return s + "!";
+	static function main() {
+		C.sf = inc;
+		Sys.println(C.sf(2));
+		var c = new C();
+		c.f = bang;
+		Sys.println(c.f("hi"));
+		var g = c.f;
+		Sys.println(g("yo"));
+		try {
+			C.none(1);
+		} catch (e:cs.system.NullReferenceException) {
+			Sys.println("null function");
+		}
+	}
+}
+===
+[run]
+3
+hi!
+yo!
+null function

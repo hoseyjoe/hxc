@@ -630,14 +630,7 @@ private class ReflectionEmitter {
 			case Var(_) | Method(MethDynamic):
 				push(field(e));
 			case Method(_):
-				var closure = g.runtimeClass("cs.internal.Closure");
-				if (closure == null) throw new Unsupported("reflection without haxe.lang.Closure", false, pos);
-				var t = TInst(closure, []);
-				pushBoxed(mk(TNew(closure, [], [
-					mk(TCast(ethis(), null), TypeFunctions.tDynamic),
-					mk(TConst(TString(cf.name)), g.ctx.basic.tstring),
-					mk(TConst(TInt(hashOf(cf))), g.ctx.basic.tint)
-				]), t));
+				lower.calls.pushClosure(ethis(), LObject, cf.name);
 		}
 		ret(1);
 	}
