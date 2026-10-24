@@ -6256,3 +6256,127 @@ bb
 k=7
 6
 [4,5]
+--- dynamic-method-init-order @gencs
+class A {
+	public var i = 1;
+	public function new() Sys.println("A.new " + d1(0));
+	public dynamic function d1(x:Int):Int return x + i;
+}
+class B2 extends A {
+	public var z = 9;
+	override public dynamic function d1(x:Int):Int return x * 100 + z;
+}
+class B3 extends A {
+	public var z = 7;
+	public function new(q:Int) {
+		Sys.println("pre " + q);
+		super();
+		Sys.println("post " + d1(1) + " " + d3());
+	}
+	public dynamic function d3():String return "d3" + z;
+	override public dynamic function d1(x:Int):Int return x * 1000 + z;
+}
+class B4 extends A {
+	public var z = 3;
+	public function new() {
+		super();
+		Sys.println("after " + d1(1) + " " + d5(2));
+	}
+	public dynamic function d5(x:Int):Int return x + z * 10;
+	override public dynamic function d1(x:Int):Int return x * 100 + z;
+}
+class C5 extends B4 {
+	override public dynamic function d1(x:Int):Int return x * 7;
+}
+class G<T> {
+	var v:T;
+	public function new(v:T) this.v = v;
+	public dynamic function get():T return v;
+	public dynamic function lam():Void->T return () -> v;
+}
+class P {
+	static function main() {
+		Sys.println(new B2().d1(1));
+		Sys.println(new B3(4).d1(2));
+		Sys.println(new B4().d1(2));
+		var c = new C5();
+		Sys.println(c.d1(3));
+		var f = c.d1;
+		Sys.println(f(4));
+		c.d1 = x -> x - 1;
+		Sys.println(c.d1(5));
+		Sys.println(Reflect.fields(c));
+		Sys.println(Type.getInstanceFields(C5));
+		var g = new G("s");
+		Sys.println(g.get() + g.lam()());
+		Sys.println(Std.string(g.get) + " " + Std.string(g.lam) + " " + Std.string(g.lam()));
+		Sys.println(Type.getClassName(Type.getClass(g.lam())));
+	}
+}
+===
+[run]
+A.new 1
+109
+pre 4
+A.new 1
+post 2 d37
+3
+A.new 1
+after 103 32
+203
+A.new 1
+after 103 32
+21
+28
+4
+[d5,z,d1,i]
+[z,d5,i,d1]
+ss
+G___hx_ctor__G_35__Fun`1[System.String] G___hx_ctor__G_36__Fun`1[System.String] G___hx_ctor__G_36__Fun_0`1[System.String]
+G___hx_ctor__G_36__Fun_0
+--- dynamic-methods-that-are-errors
+@:nativeGen class Nat {
+	public var k = 5;
+	public function new() {}
+	public dynamic function nd(x:Int):Int return x * k;
+}
+@:struct class S {
+	public var a:Int;
+	public function new(a:Int) this.a = a;
+	public dynamic function d() return 1;
+}
+interface I {
+	dynamic function f():Int;
+}
+class C implements I {
+	public function new() {}
+	public dynamic function f():Int return 4;
+}
+class Base {
+	public function new() {}
+	public function m() return 1;
+}
+class Sub extends Base {
+	public dynamic function d() return super.m();
+}
+class P {
+	static function main() {
+		Sys.println(new Nat().nd(4));
+		Sys.println(new S(1).d());
+		var i:I = new C();
+		Sys.println(i.f());
+		i.f = () -> 9;
+		Sys.println(new Sub().d());
+		Sys.println(Type.getInstanceFields(I));
+	}
+}
+===
+[compile]
+P.hx:9: characters 2-38 : dotnet: dynamic methods in structs are not supported yet
+P.hx:12: characters 2-27 : dotnet: dynamic methods in interfaces are not supported yet
+P.hx:14: lines 14-17 : dotnet: I (left out: dynamic methods in interfaces) is not supported yet
+P.hx:28: characters 15-25 : dotnet: S (left out: dynamic methods in structs) is not supported yet
+P.hx:29: characters 13-20 : dotnet: C (left out: I (left out: dynamic methods in interfaces)) is not supported yet
+P.hx:33: characters 38-39 : dotnet: I (left out: dynamic methods in interfaces) is not supported yet
+P.hx:4: characters 51-52 : dotnet: dynamic methods that use this outside gencs's class model are not supported yet
+P.hx:23: characters 37-42 : dotnet: super.method() calls in dynamic methods are not supported yet

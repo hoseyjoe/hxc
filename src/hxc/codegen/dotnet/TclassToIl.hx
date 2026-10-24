@@ -202,34 +202,36 @@ class TclassToIl {
 		if (model && c.superClass == null && DotnetTypes.haxePath(TClassDecl(c)) != DotnetCtx.hxObjectPath)
 			superSig = LClass(g.types.stdClassPath(DotnetCtx.hxObjectPath, "haxe.lang.HxObject", false), []);
 		var interfaces = interfaceClosure(g, c);
-		if (isInterface) for (cf in c.orderedFields) if (cf.kind.match(Var(_))) throw at(new Unsupported("interface variables", true), cf.pos);
+		if (isInterface) for (cf in c.orderedFields) switch (cf.kind) {
+			case Var(_): throw at(new Unsupported("interface variables", true), cf.pos);
+			// A field, which a CLR interface cannot have either.
+			case Method(MethDynamic): throw at(new Unsupported("dynamic methods in interfaces", true), cf.pos);
+			case Method(_):
+		}
 		var implementing = isInterface ? new ObjectMap() : interfaceImpls(g, c, interfaces);
 
 		var fields:Array<FieldPlan> = [];
 		function addFields(list:Array<TClassField>, isStatic:Bool) {
 			for (cf in list) {
 				if (TypeFunctions.hasClassFieldFlag(cf, CfExtern) || !TypeFunctions.isPhysicalField(cf)) continue;
-				try switch (cf.kind) {
-					case Var(_):
-						// C# has no field initializers in structs, and gencs moves none into their constructors.
-						if (isStruct && !isStatic && cf.expr != null) throw new Unsupported("instance variable initializers in structs", true);
-						fields.push({
-							cf: cf,
-							name: DotnetNames.fieldName(c, cf.name),
-							flags: FieldAttrs.PUBLIC | (isStatic ? FieldAttrs.STATIC : 0),
-							sig: g.types.toSig(cf.type)
-						});
-					case Method(MethDynamic):
-						// A field of type haxe.lang.Function, which an override sets again (fieldInits).
-						if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) continue;
-						if (isStruct && !isStatic) throw new Unsupported("dynamic methods in structs", true);
-						fields.push({
-							cf: cf,
-							name: DotnetNames.fieldName(c, cf.name),
-							flags: FieldAttrs.PUBLIC | (isStatic ? FieldAttrs.STATIC : 0),
-							sig: g.types.toSig(cf.type)
-						});
-					case Method(_):
+				try {
+					switch (cf.kind) {
+						case Var(_):
+							// C# has no field initializers in structs, and gencs moves none into their constructors.
+							if (isStruct && !isStatic && cf.expr != null) throw new Unsupported("instance variable initializers in structs", true);
+						case Method(MethDynamic):
+							// A field of type haxe.lang.Function, which an override sets again (fieldInits).
+							if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) continue;
+							if (isStruct && !isStatic) throw new Unsupported("dynamic methods in structs", true);
+						case Method(_):
+							continue;
+					}
+					fields.push({
+						cf: cf,
+						name: DotnetNames.fieldName(c, cf.name),
+						flags: FieldAttrs.PUBLIC | (isStatic ? FieldAttrs.STATIC : 0),
+						sig: g.types.toSig(cf.type)
+					});
 				} catch (u:Unsupported) throw at(u, cf.pos);
 			}
 		}
@@ -503,6 +505,9 @@ class TclassToIl {
 					case Var(_):
 						if (isExternInterface) throw new Unsupported("properties of .NET interfaces", true);
 						// A Haxe interface with variables is left out, and this class with it.
+						continue;
+					case Method(MethDynamic):
+						// Likewise one with dynamic methods.
 						continue;
 					case Method(MethMacro):
 						continue;

@@ -235,9 +235,7 @@ class ClosuresToClass {
 			// Its own body has its captured locals, which become its fields; a local function inside it
 			// would have to capture them as well.
 			u.e.expr = if (u.nested && vars.length > 0) {
-				var what = TypeFunctions.mk(TConst(TString("calls of a recursive generic local function from local functions inside it")),
-					TypeFunctions.tDynamic, u.e.pos);
-				TCall(TypeFunctions.mk(TIdent("__refused__"), TypeFunctions.tDynamic, u.e.pos), [what]);
+				refused("calls of a recursive generic local function from local functions inside it", u.e).expr;
 			} else {
 				newGeneric(v, c, vars, u.declared, u.e).expr;
 			}
