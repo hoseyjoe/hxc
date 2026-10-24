@@ -4569,3 +4569,229 @@ type public sealed beforefieldinit E_C extends E
   method public virtual hidebysig int32 GetHashCode()
   method public virtual hidebysig bool Equals(object)
   method public virtual hidebysig string toString()
+--- enum-switch @gencs
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+enum E {
+	A;
+	B(x:Int, s:String);
+	C(f:Float);
+	D(e:E);
+}
+class P {
+	static function name(c:Color):String {
+		return switch (c) {
+			case Red: "r";
+			case Green: "g";
+			case Blue: "b";
+		}
+	}
+	static function desc(e:E):String {
+		return switch (e) {
+			case A: "a";
+			case B(x, s) if (x > 10): "big " + s;
+			case B(x, "q"): "q" + x;
+			case B(1 | 2, s): "small " + s;
+			case B(x, s): "b" + x + s;
+			case D(D(inner)): "dd " + inner;
+			case D(B(_, s)): "db " + s;
+			case D(_): "d";
+			case _: "other";
+		}
+	}
+	static function main() {
+		Sys.println(name(Red) + name(Green) + name(Blue));
+		Sys.println(desc(A));
+		Sys.println(desc(B(11, "x")));
+		Sys.println(desc(B(1, "q")));
+		Sys.println(desc(B(2, "w")));
+		Sys.println(desc(B(5, "v")));
+		Sys.println(desc(D(D(A))));
+		Sys.println(desc(D(B(0, "k"))));
+		Sys.println(desc(D(C(2))));
+		Sys.println(desc(C(0.5)));
+		var e = B(3, "t");
+		switch (e) {
+			case B(x, _):
+				Sys.println(x * 2);
+			default:
+		}
+		Sys.println(e.match(B(3, _)));
+		Sys.println(e.match(B(4, _)));
+		var n:Null<Color> = null;
+		Sys.println(switch (n) {
+			case null: "null";
+			case Red: "red";
+			case _: "other";
+		});
+		n = Red;
+		Sys.println(switch (n) {
+			case null: "null";
+			case Red: "red";
+			case _: "other";
+		});
+		Sys.println(Type.enumIndex(e) + Type.enumIndex(Blue));
+	}
+}
+===
+[run]
+rgb
+a
+big x
+q1
+small w
+b5v
+dd A
+db k
+d
+other
+6
+True
+False
+null
+red
+3
+--- enum-equality @gencs
+enum Color {
+	Red;
+	Green;
+}
+enum Num {
+	I(i:Int);
+	F(f:Float);
+	S(s:String, ?n:Int);
+	Nest(n:Num);
+}
+enum Box<T> {
+	Full(v:T);
+	Empty;
+}
+class P {
+	static function main() {
+		var c = Green;
+		Sys.println(c == Green);
+		Sys.println(c != Red);
+		var none:Color = null;
+		Sys.println(none == null);
+		Sys.println(none == Red);
+		var a = I(1), b = I(1);
+		Sys.println(Type.enumEq(a, b));
+		Sys.println(Type.enumEq(a, I(2)));
+		Sys.println(Type.enumEq(a, F(1)));
+		Sys.println(Type.enumEq(F(1), F(1.0)));
+		Sys.println(Type.enumEq(S("x"), S("x", null)));
+		Sys.println(Type.enumEq(S("x", 3), S("x", 3)));
+		Sys.println(Type.enumEq(Nest(Nest(I(5))), Nest(Nest(I(5)))));
+		Sys.println(Type.enumEq(Nest(I(5)), Nest(I(6))));
+		Sys.println(Type.enumEq(Full(Red), Full(Red)));
+		var fl:Box<Float> = Full(1);
+		Sys.println(Type.enumEq(fl, Full(1.0)));
+		var dy:Box<Dynamic> = Full(1);
+		Sys.println(Type.enumEq(dy, Full(1.0)));
+		Sys.println(Type.enumEq(Full([1]), Full([1])));
+		Sys.println(Type.enumEq(Empty, Empty));
+		Sys.println(Type.enumEq(null, a));
+		var da:Dynamic = a;
+		var db:Dynamic = b;
+		Sys.println(da == db);
+		Sys.println(da == a);
+		var r:Dynamic = Red;
+		Sys.println(r == Red);
+		Sys.println(a.equals(b));
+		var h1 = I(7), h2 = I(7);
+		var o1:Dynamic = h1, o2:Dynamic = h2;
+		Sys.println(o1.GetHashCode() == o2.GetHashCode());
+		Sys.println(o1.Equals(o2));
+	}
+}
+===
+[run]
+True
+True
+True
+False
+True
+False
+False
+True
+True
+True
+True
+False
+True
+True
+False
+False
+True
+False
+False
+True
+True
+True
+True
+True
+--- enum-generic-params @gencs
+enum Opt<T> {
+	Some(v:T);
+	None;
+}
+enum Tree<T> {
+	Leaf(v:T);
+	Node(l:Tree<T>, r:Tree<T>);
+}
+class P {
+	static function sum(t:Tree<Int>):Int {
+		return switch (t) {
+			case Leaf(v): v;
+			case Node(l, r): sum(l) + sum(r);
+		}
+	}
+	static function get<T>(o:Opt<T>, def:T):T {
+		return switch (o) {
+			case Some(v): v;
+			case None: def;
+		}
+	}
+	static function main() {
+		Sys.println(sum(Node(Leaf(1), Node(Leaf(2), Leaf(3)))));
+		var o = Some([1, 2]);
+		switch (o) {
+			case Some(a):
+				a.push(3);
+			case None:
+		}
+		switch (o) {
+			case Some(a):
+				Sys.println(a.length + " " + a);
+			case None:
+		}
+		var s:Opt<String> = Some("hi");
+		switch (s) {
+			case Some(str):
+				Sys.println(str.length);
+			case None:
+		}
+		var f:Opt<Float> = Some(2);
+		switch (f) {
+			case Some(v):
+				Sys.println(v / 4);
+			case None:
+		}
+		Sys.println(get(Some(5), 0) + get(None, 10));
+		Sys.println(get(None, "d") + get(Some("e"), "x"));
+		var t:Tree<String> = Node(Leaf("a"), Leaf(null));
+		Sys.println(t);
+	}
+}
+===
+[run]
+6
+3 [1,2,3]
+2
+0.5
+15
+de
+Node(Leaf(a),Leaf(null))

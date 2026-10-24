@@ -136,7 +136,7 @@ class EnumToIl {
 	}
 
 	// The enum a constructor belongs to, which its type returns.
-	static function enumOf(ef:TEnumField):TEnum {
+	public static function enumOf(ef:TEnumField):TEnum {
 		var t = switch (TypeFunctions.follow(ef.type)) {
 			case TFun(sig): TypeFunctions.follow(sig.ret);
 			case t: t;
@@ -397,22 +397,48 @@ class EnumToIl {
 				code.opToken(IlOps.LDSTR, g.mb.userString(ef.name), 0, 1);
 				pushParams(g, plan, ef, code, lower);
 				code.opToken(IlOps.CALL, hxEnumMethod(g, "paramsToString"), 2, 1);
-			case EHashCode(_) | EEquals(_):
-				// Their bodies, which compare the arguments, come with enum matching; until then they throw
-				// rather than compare by reference.
-				var ex = LClass({ns: ["System"], nested: [], name: "NotSupportedException"}, []);
-				var what = plan.base.hxPath + "." + label(member);
-				code.opToken(IlOps.LDSTR, g.mb.userString("hxc dotnet: " + what + " is not supported yet"), 0, 1);
-				code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(ex), ".ctor", g.sigs.method(true, LVoid, [LString], 0)), 1, 1);
-				code.op(IlOps.THROW, 1, 0);
-				return;
+			case EHashCode(ef):
+				// haxe.lang.Enum.paramsGetHashCode(<index>, new object[]{...}).
+				code.ldcI4(ef.index);
+				pushParams(g, plan, ef, code, lower);
+				code.opToken(IlOps.CALL, hxEnumMethod(g, "paramsGetHashCode"), 2, 1);
+			case EEquals(ef):
+				// The same object, or one of this constructor's class whose arguments are each Type.enumEq<object>
+				// to this one's, as Dynamics.
+				var objectToken = g.typeTokenOf(LObject);
+				var refEq = g.mb.memberRef(objectToken, "ReferenceEquals", g.sigs.method(false, LBool, [LObject, LObject], 0));
+				var enumEq = typeEnumEq(g);
+				var other = code.addLocal(plan.ctors[ef.index].thisSig);
+				var notSame = code.newLabel(), differ = code.newLabel();
+				code.ldarg(0);
+				code.ldarg(1);
+				code.opToken(IlOps.CALL, refEq, 2, 1);
+				code.branch(IlOps.BRFALSE, notSame);
+				code.ldcI4(1);
+				code.op(IlOps.RET, 1, 0);
+				code.mark(notSame);
+				code.ldarg(1);
+				code.opToken(IlOps.ISINST, plan.ctorToken(ef), 1, 1);
+				code.stloc(other);
+				code.ldloc(other);
+				code.branch(IlOps.BRFALSE, differ);
+				for (i in 0...plan.argSigs[ef.index].length) {
+					code.ldarg(0);
+					pushParam(plan, ef, i, code, lower);
+					code.ldloc(other);
+					pushParam(plan, ef, i, code, lower);
+					code.opToken(IlOps.CALL, enumEq, 2, 1);
+					code.branch(IlOps.BRFALSE, differ);
+				}
+				code.ldcI4(1);
+				code.op(IlOps.RET, 1, 0);
+				code.mark(differ);
+				code.ldcI4(0);
 		}
 		code.op(IlOps.RET, m.ret.match(LVoid) ? 0 : 1, 0);
 	}
 
-	// `new object[]{this.a, ...}`, each argument field as a Dynamic: a value type boxed, a
-	// haxe.lang.Null<T> through toDynamic().
-	@:access(hxc.codegen.dotnet.TexprToIl)
+	// `new object[]{this.a, ...}`, each argument field as a Dynamic (pushParam).
 	static function pushParams(g:DotnetCtx, plan:EnumPlan, ef:TEnumField, code:IlCode, lower:TexprToIl):Void {
 		var sigs = plan.argSigs[ef.index];
 		var objectToken = g.typeTokenOf(LObject);
@@ -422,10 +448,26 @@ class EnumToIl {
 			code.op(IlOps.DUP, 1, 2);
 			code.ldcI4(i);
 			code.ldarg(0);
-			code.opToken(IlOps.LDFLD, plan.param(ef, i), 1, 1);
-			lower.convert(sigs[i], LObject);
+			pushParam(plan, ef, i, code, lower);
 			code.stelem(LObject, () -> objectToken);
 		}
+	}
+
+	// Argument `i` of the constructor class's object on the stack as a Dynamic: a value type boxed, a
+	// haxe.lang.Null<T> through toDynamic().
+	@:access(hxc.codegen.dotnet.TexprToIl)
+	static function pushParam(plan:EnumPlan, ef:TEnumField, i:Int, code:IlCode, lower:TexprToIl):Void {
+		code.opToken(IlOps.LDFLD, plan.param(ef, i), 1, 1);
+		lower.convert(plan.argSigs[ef.index][i], LObject);
+	}
+
+	// Type.enumEq<object>, which the generated Equals compares each argument with.
+	static function typeEnumEq(g:DotnetCtx):Int {
+		var type = g.runtimeClass("Type");
+		var cf = type == null ? null : type.statics.get("enumEq");
+		var token = cf == null ? null : g.methodTokens.get(cf);
+		if (token == null) throw new Unsupported("enum equality without Type.enumEq", false);
+		return g.mb.methodSpec(token, g.sigs.methodSpec([LObject]));
 	}
 
 	// The constructor of the Array instantiation `array` that takes a native array, as array literals use.

@@ -715,6 +715,21 @@ class TexprToIl {
 				// A CLR enum's value is its index.
 				texpr(RValue(sig(e1.type)), e1);
 				coerce(LInt32, ret);
+			case TEnumIndex(e1) if (EnumToIl.enumOfType(e1.type) != null):
+				// An enum class's value is a haxe.lang.Enum, whose _hx_index is its constructor's index.
+				texpr(RValue(sig(e1.type)), e1);
+				code.opToken(IlOps.LDFLD, g.enumPlans.get(EnumToIl.enumOfType(e1.type)).hxIndex, 1, 1);
+				coerce(LInt32, ret);
+			case TEnumParameter(e1, ef, i) if (EnumToIl.isHxGenEnum(EnumToIl.enumOf(ef))):
+				// `(e as <Enum>_<Ctor>).<arg>`, converted from the argument's erased type to the expression's,
+				// as gencs reads an Opt<Int>'s Some(v) with Runtime.toInt.
+				texpr(RValue(sig(e1.type)), e1);
+				var plan = g.enumPlans.get(EnumToIl.enumOf(ef));
+				code.opToken(IlOps.ISINST, plan.ctorToken(ef), 1, 1);
+				code.opToken(IlOps.LDFLD, plan.param(ef, i), 1, 1);
+				var t = sig(e.type);
+				convert(plan.argSigs[ef.index][i], t);
+				coerce(t, ret);
 			case TEnumParameter(_, _, _) | TEnumIndex(_):
 				throw new Unsupported("enum values", true);
 			case TIdent(_):

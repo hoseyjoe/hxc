@@ -694,8 +694,13 @@ class TexprDynamic {
 			tl.coerce(LBool, ret);
 			return;
 		}
-		// A generic class is tested through gencs's companion interface, plan 3c.
-		if (TypeFunctions.tParams(mt).length > 0) throw new Unsupported("Std.isOfType with a generic type", false);
+		// A generic class is tested through gencs's companion interface, plan 3c; an enum class, whose type
+		// parameters are erased, as itself.
+		var erased = switch (mt) {
+			case TEnumDecl(en): EnumToIl.isHxGenEnum(en);
+			case _: false;
+		}
+		if (TypeFunctions.tParams(mt).length > 0 && !erased) throw new Unsupported("Std.isOfType with a generic type", false);
 		var tests:Array<IlSigNorm> = [], call:Null<String> = null;
 		if (!tl.inRuntimeClass()) switch (path) {
 			case "Float": tests = [LFloat64, LInt32, LUInt32];
