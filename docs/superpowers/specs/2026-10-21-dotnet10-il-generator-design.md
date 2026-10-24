@@ -327,12 +327,12 @@ wrong-typed write through `Dynamic`, nested arrays, and two threads casting one 
 - Internal module layout under `src/hxc/codegen/` (e.g. a `dotnet/` folder next to `jvm/`), and how
   much of the JVM backend's lowering is shared or copied.
 - IL lowering strategy for Haxe's expression-oriented constructs.
-- An IL size pass once milestone 3 compiles the runtime. Milestone 2 always emits long-form
-  branches, never fuses a comparison into its branch (`bne.un`, `ble`, …), and lowers `switch` to a
-  chain of comparisons. The JIT folds those back, but IL size decides what it inlines (a callee of
-  16 bytes or less always is), so measure the server app's method sizes and shorten branches, fuse
-  comparisons or emit `switch` tables only where small methods are pushed over. No benchmark gates
-  it (see Non-goals).
+- An IL size pass after milestone 4, when the server app first builds and its method sizes can be
+  measured. Milestone 2 always emits long-form branches, never fuses a comparison into its branch
+  (`bne.un`, `ble`, …), and lowers `switch` to a chain of comparisons. The JIT folds those back, but
+  IL size decides what it inlines (a callee of 16 bytes or less always is), so shorten branches,
+  fuse comparisons or emit `switch` tables only where small methods are pushed over. No benchmark
+  gates it (see Non-goals).
 - How the differential tests plug into hxc's existing harness (`src/hxia/harness`,
   `tests/divergences.json`).
 - PDB extras (embedded source, Source Link).
