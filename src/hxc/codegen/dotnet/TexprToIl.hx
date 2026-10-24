@@ -302,7 +302,7 @@ class TexprToIl {
 		} else if (fromValue && !toValue) {
 			// A struct boxes into an instantiation of a generic Haxe interface only when it implements it.
 			if (!isTypeParam(from) && g.isGenericHaxeClass(to) && !g.isUpcast(from, to)) throw instantiationCast(to);
-			code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
+			if (isTypeParam(from)) boxTypeParam(from) else code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 			// A boxed type parameter is an object, which may not be the reference type wanted.
 			if (isTypeParam(from) && !to.match(LObject)) castTo(to);
 		} else if (!fromValue && toValue) {
@@ -355,6 +355,13 @@ class TexprToIl {
 			}
 			castTo(to);
 		}
+	}
+
+	// The type parameter `s`'s value on the stack as an object. gencs erases a Null<Int> type argument
+	// to object, so what it boxes is the value or null; here the type argument stays haxe.lang.Null<Int>,
+	// and Runtime.__hx_boxTypeParam unwraps it. haxe.lang.Runtime's own code boxes, as its C# does.
+	function boxTypeParam(s:IlSigNorm):Void {
+		if (inRuntimeClass()) code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1) else dyn.runtimeCall("__hx_boxTypeParam", null, [s]);
 	}
 
 	// True when `a` is a .NET enum whose values are stored as `b`.

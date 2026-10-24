@@ -6373,7 +6373,7 @@ class P {
 started
 [timeout after 3s]
 # The Serializer corpus (docs/superpowers/plans/2026-10-23-dotnet-closures-enums-std/serial/P.hx,
-# whose corpus_typed entries, and the two in LATER, wait for plan 3c): gencs's output, with
+# whose corpus_typed entries, and the one in LATER, wait for plan 3c): gencs's output, with
 # -D net-ver=40 as the server app builds, without the entries that depend on the time zone (ZONED), which
 # serial-dates checks against gencs on this machine.
 --- serial-corpus @serial + -D net-ver=40
@@ -6613,10 +6613,9 @@ class P {
 
 	static var ZONED = ["date2", "dategap", "in.datestr"];
 
-	// Entries hxc gets wrong until plan 3c, which adds them back with -D corpus_typed: it does not erase
-	// Null<Int> type arguments to object yet (arraynullinthole), and Type.resolveClass cannot find a
-	// generic class by name without gencs's companion interfaces (classArray read back).
-	static var LATER:Array<String> = #if corpus_typed [] #else ["arraynullinthole", "classArray"] #end;
+	// Entries hxc gets wrong until plan 3c, which adds them back with -D corpus_typed: Type.resolveClass
+	// cannot find a generic class by name without gencs's companion interfaces (classArray read back).
+	static var LATER:Array<String> = #if corpus_typed [] #else ["classArray"] #end;
 
 	static function wanted(name:String):Bool {
 		if (LATER.indexOf(name) >= 0)
@@ -6811,6 +6810,8 @@ arraynested	aai1hai2ai3hhh
 arraynested+cache+idx	aai1hai2ai3hhh
 arrayinthole	azzzi1h
 arrayinthole+cache+idx	azzzi1h
+arraynullinthole	au3i1h
+arraynullinthole+cache+idx	au3i1h
 stringmap1	by1:ai1h
 stringmap1+cache+idx	by1:ai1h
 stringmap3	by1:ai1y1:by3:twoy1:cnh
@@ -7015,6 +7016,8 @@ arraynested	aai1hai2ai3hhh
 arraynested+cache+idx	aai1hai2ai3hhh
 arrayinthole	azzzi1h
 arrayinthole+cache+idx	azzzi1h
+arraynullinthole	au3i1h
+arraynullinthole+cache+idx	au3i1h
 stringmap1	by1:ai1h
 stringmap1+cache+idx	by1:ai1h
 stringmap3	by1:ai1y1:by3:twoy1:cnh
@@ -7341,10 +7344,9 @@ class P {
 
 	static var ZONED = ["date2", "dategap", "in.datestr"];
 
-	// Entries hxc gets wrong until plan 3c, which adds them back with -D corpus_typed: it does not erase
-	// Null<Int> type arguments to object yet (arraynullinthole), and Type.resolveClass cannot find a
-	// generic class by name without gencs's companion interfaces (classArray read back).
-	static var LATER:Array<String> = #if corpus_typed [] #else ["arraynullinthole", "classArray"] #end;
+	// Entries hxc gets wrong until plan 3c, which adds them back with -D corpus_typed: Type.resolveClass
+	// cannot find a generic class by name without gencs's companion interfaces (classArray read back).
+	static var LATER:Array<String> = #if corpus_typed [] #else ["classArray"] #end;
 
 	static function wanted(name:String):Bool {
 		if (LATER.indexOf(name) >= 0)
@@ -7921,3 +7923,140 @@ class P {
 0
 247 -247
 247 253 750 1 2 251 2000 -50 false false
+--- null-type-arguments @gencs
+import haxe.Serializer;
+import haxe.Unserializer;
+
+class Box<T> {
+	public var v:T;
+
+	public function new(v:T) this.v = v;
+
+	public function get():T return v;
+
+	public function isNull():Bool return v == null;
+
+	public function asDynamic():Dynamic return v;
+
+	public function show():String return "<" + v + ">";
+}
+
+class P {
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+
+	static function main() {
+		var a:Array<Null<Int>> = [1, null, 3];
+		var d:Dynamic = a;
+		t(() -> d[0] + 1);
+		t(() -> d[1] == null);
+		t(() -> d[0] == null);
+		t(() -> d[2]);
+		t(() -> Std.isOfType(d[0], Int));
+		t(() -> Std.isOfType(d[1], Int));
+		t(() -> Type.typeof(d[0]));
+		t(() -> Type.typeof(d[1]));
+		t(() -> { var x:Int = d[2]; x * 2; });
+		t(() -> { var x:Null<Int> = d[1]; x == null; });
+		t(() -> { var x:Float = d[0]; x / 4; });
+		t(() -> Std.string(d));
+		t(() -> d.length);
+		var f:Array<Null<Float>> = [1.5, null];
+		var df:Dynamic = f;
+		t(() -> df[0] * 2);
+		t(() -> df[1] == null);
+		t(() -> Std.isOfType(df[0], Float));
+		t(() -> Type.typeof(df[0]));
+		t(() -> { var x:Float = df[0]; x + 1; });
+		var b:Array<Null<Bool>> = [true, null, false];
+		var db:Dynamic = b;
+		t(() -> db[0] == true);
+		t(() -> db[1] == null);
+		t(() -> Std.isOfType(db[2], Bool));
+		t(() -> Type.typeof(db[2]));
+		t(() -> { var x:Bool = db[0]; !x; });
+		var it:Dynamic = a.iterator();
+		t(() -> { it.next(); it.next() == null; });
+
+		var bn = new Box<Null<Int>>(null);
+		var b4 = new Box<Null<Int>>(4);
+		var dn:Dynamic = bn, d4:Dynamic = b4;
+		t(() -> dn.v == null);
+		t(() -> d4.v + 1);
+		t(() -> dn.get() == null);
+		t(() -> d4.get() * 3);
+		t(() -> Reflect.field(bn, "v") == null);
+		t(() -> Reflect.field(b4, "v"));
+		t(() -> Type.typeof(Reflect.field(b4, "v")));
+		t(() -> Std.isOfType(d4.v, Int));
+		t(() -> Reflect.callMethod(b4, Reflect.field(b4, "get"), []));
+		t(() -> bn.isNull() + " " + b4.isNull());
+		t(() -> bn.asDynamic() == null);
+		t(() -> Type.typeof(b4.asDynamic()));
+		t(() -> bn.show() + b4.show());
+		t(() -> { var x:Int = d4.v; x; });
+		Reflect.setField(bn, "v", 7);
+		t(() -> bn.v + 1);
+		d4.v = null;
+		t(() -> b4.v == null);
+
+		t(() -> Serializer.run(a));
+		t(() -> Serializer.run(f));
+		t(() -> Serializer.run(b));
+		t(() -> Serializer.run(new Box<Null<Int>>(4)));
+		t(() -> Serializer.run(new Box<Null<Int>>(null)));
+		t(() -> Unserializer.run(Serializer.run(a)));
+		t(() -> { var x:Array<Dynamic> = Unserializer.run(Serializer.run(a)); x[0] + x[2]; });
+		// Reading a Box back needs Type.resolveClass of a generic class, which waits for plan 3c's
+		// companion interfaces (as serial-corpus's classArray does).
+	}
+}
+===
+--- serial-null-type-arguments @serial
+// Arrays whose element type is Null<Int>, Null<Float> or Null<Bool> through haxe.Serializer, read
+// back by the other build (gencs erases those type arguments to object; hxc keeps haxe.lang.Null<T>).
+import haxe.Serializer;
+import haxe.Unserializer;
+
+class P {
+	static function values():Array<{name:String, v:Dynamic}> {
+		var ints:Array<Null<Int>> = [1, null, 2];
+		var holes:Array<Null<Int>> = [];
+		holes[2] = 5;
+		var floats:Array<Null<Float>> = [1.5, null, 3];
+		var bools:Array<Null<Bool>> = [true, null, false];
+		var nested:Array<Array<Null<Int>>> = [ints, [null]];
+		return [
+			{name: "ints", v: ints}, {name: "holes", v: holes}, {name: "floats", v: floats},
+			{name: "bools", v: bools}, {name: "nested", v: nested}, {name: "anon", v: {a: ints}},
+		];
+	}
+
+	static function serialize(v:Dynamic):String {
+		var s = new Serializer();
+		s.serialize(v);
+		return s.toString();
+	}
+
+	static function main() {
+		var args = Sys.args();
+		var out = new StringBuf();
+		if (args[0] == "gen") {
+			for (e in values()) {
+				out.add(e.name + "\t" + serialize(e.v) + "\n");
+			}
+			cs.system.io.File.WriteAllText(args[1], out.toString());
+		} else if (args[0] == "rt") {
+			for (line in cs.system.io.File.ReadAllText(args[1]).split("\n")) {
+				if (line == "")
+					continue;
+				var i = line.indexOf("\t");
+				out.add(line.substr(0, i) + "\t" + serialize(Unserializer.run(line.substr(i + 1))) + "\n");
+			}
+			cs.system.io.File.WriteAllText(args[2], out.toString());
+		}
+		Sys.print(out.toString());
+	}
+}
+===

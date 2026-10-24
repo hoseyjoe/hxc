@@ -689,10 +689,29 @@ import cs.system.Object;
 			return cast(toDouble(obj) : Single);
 		else if (to == tLong)
 			return cast(cast toDouble(obj) : cs.StdTypes.Int64);
+		else if (__hx_isHaxeNull(to))
+			// hxc: gencs erases a Null<Int> type argument to object, so its genericCast never reaches a
+			// haxe.lang.Null<T>; here a type parameter can be one, and a boxed value becomes it.
+			return cast mkNullable(obj, to);
 		else
 			return cast obj;
 	}
 	#end
+
+	// hxc: a value of a type parameter as Dynamic, `(object)v` in C#. gencs erases a Null<Int> type
+	// argument to object, so its type parameters never hold a haxe.lang.Null; here one can, and Dynamic
+	// gets what gencs's object holds: the value, or null when it has none.
+	public static function __hx_boxTypeParam<T>(v:T):Dynamic {
+		var o:Dynamic = v;
+		if (o != null && __hx_isHaxeNull(Lib.getNativeType(o)))
+			return o.toDynamic();
+		return o;
+	}
+
+	// hxc: true when `t` is an instantiation of haxe.lang.Null<T>.
+	static function __hx_isHaxeNull(t:Type):Bool {
+		return t.IsValueType && t.IsGenericType && t.GetGenericTypeDefinition().FullName == "haxe.lang.Null`1";
+	}
 
 	// hxc: C#'s cast of an object to a type parameter, `(T)obj`, an unbox.any. Type.createEmptyInstance
 	// writes it in C# in hxcs; outside this class a cast from Dynamic to a type parameter is genericCast.
