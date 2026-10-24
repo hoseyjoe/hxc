@@ -1864,12 +1864,12 @@ class P {
 		var d:Dynamic = null;
 		var y:Int = try {
 			Sys.println("b");
-			d[0];
+			d[0] = 1;
 		} catch (e:cs.system.Exception) 0;
 		var c = Math.random() > 2;
 		var z:Int = if (c) {
 			Sys.println("a");
-			d[0];
+			d[0] = 1;
 		} else 1;
 		try {
 			var f = function() {};
@@ -1888,8 +1888,8 @@ class P {
 ===
 [compile]
 P.hx:16: characters 15-66 : dotnet: `try` in an operand after a member of a struct field is not supported yet
-P.hx:20: characters 4-8 : dotnet: array access is not supported yet
-P.hx:25: characters 4-8 : dotnet: array access is not supported yet
+P.hx:20: characters 4-12 : dotnet: this kind of assignment is not supported yet
+P.hx:25: characters 4-12 : dotnet: this kind of assignment is not supported yet
 P.hx:28: characters 12-25 : dotnet: local functions are not supported yet
 P.hx:37: characters 10-18 : dotnet: `return` inside expressions is not supported yet
 --- throw-and-return-as-values
@@ -4795,3 +4795,37 @@ class P {
 15
 de
 Node(Leaf(a),Leaf(null))
+--- dynamic-array-read @gencs
+class P {
+	static function main() {
+		var u:Dynamic = [1, 2, 3];
+		var i:Dynamic = 1;
+		Sys.println(u[0]);
+		Sys.println(u[i]);
+		var x:Int = u[0];
+		Sys.println(x + 1);
+		var f:Float = u[1];
+		Sys.println(f / 4);
+		var s:String = (["a", "b"] : Dynamic)[1];
+		Sys.println(s);
+		var n:Dynamic = [[1, 2], [3]];
+		Sys.println(n[1][0]);
+		var str:Dynamic = "abc";
+		try Sys.println(str[0]) catch (e:Dynamic) Sys.println("err " + e);
+		var o:Dynamic = {};
+		try Sys.println(o[0]) catch (e:Dynamic) Sys.println("err " + e);
+		var nul:Dynamic = null;
+		try Sys.println(nul[0]) catch (e:Dynamic) Sys.println("err " + Type.getClassName(Type.getClass(e)));
+	}
+}
+===
+[run]
+1
+2
+2
+0.5
+b
+3
+err Method "get_Item" not found on type haxe.lang.StringExt
+err Cannot invoke field __get: It does not exist
+err System.NullReferenceException

@@ -894,8 +894,9 @@ class TexprCalls {
 		return vectorElement(vec);
 	}
 
-	// a[i]: ldelem on a native array, Array's __get on an Array.
-	function arrayRead(ret:Ret, e1:TExpr, e2:TExpr):Void {
+	// a[i]: ldelem on a native array, Array's __get on an Array, and on a Dynamic gencs's
+	// Runtime.callField(a, "__get", hash, new object[]{i}).
+	function arrayRead(ret:Ret, e:TExpr, e1:TExpr, e2:TExpr):Void {
 		if (tl.sig(e1.type).match(LString)) {
 			// s[i] on a String is C#'s indexer, a Char16.
 			tl.texpr(RValue(LString), e1);
@@ -910,7 +911,11 @@ class TexprCalls {
 			tl.coerce(elem, ret);
 			return;
 		}
-		if (arrayOf(e1.type) == null) throw new Unsupported("array access", false);
+		if (arrayOf(e1.type) == null) {
+			if (!TexprDynamic.isDynamic(e1.type)) throw new Unsupported("array access", false);
+			tl.dyn.fieldCall(ret, e, e1, "__get", [e2]);
+			return;
+		}
 		var m = arrayAccessor(e1.type, "__get");
 		receiver(e1, m.owner);
 		tl.nullOperand(RValue(m.args[0]), e2, false);

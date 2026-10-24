@@ -699,7 +699,7 @@ class TexprToIl {
 				calls.pushTypeOf(t);
 				coerce(TexprCalls.systemType, ret);
 			case TArray(e1, e2):
-				calls.arrayRead(ret, e1, e2);
+				calls.arrayRead(ret, e, e1, e2);
 			case TObjectDecl(fields):
 				dyn.objectDecl(ret, fields);
 			case TArrayDecl(el):
