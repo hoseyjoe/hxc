@@ -5514,3 +5514,140 @@ class P {
 hi!
 yo!
 null function
+--- function-value-int-results @gencs
+class P {
+	static function t(d:Dynamic):String return (cast d : cs.system.Object).GetType().Name;
+	static inline function sink(d:Dynamic):String return t(d);
+	static function id<T>(x:T):T return x;
+	static function seven():Int return 7;
+	static function main() {
+		var c = seven;
+		Sys.println("cast: " + t(cast c()) + " " + t((cast c() : Dynamic)) + " " + t(cast (c())));
+		Sys.println("inline: " + sink(c()));
+		var m = new Map<String, Dynamic>();
+		m.set("k", c());
+		Sys.println("map: " + t(m.get("k")));
+		var d:Dynamic = c();
+		Sys.println("typed: " + t(c()) + " " + t(d) + " " + t(id(c())));
+		var arr:Array<Dynamic> = [];
+		arr.push(c());
+		var l = new List<Dynamic>();
+		l.add(c());
+		var o = {a: c()};
+		Sys.println("kept: " + t(arr[0]) + " " + t(l.first()) + " " + t(Reflect.field(o, "a")));
+		var fd:Dynamic = c;
+		Sys.println("dynamic: " + t(fd()) + " " + t(cast fd()));
+		var x:Float = c();
+		var i:Int = cast c();
+		Sys.println("numbers: " + t(x) + " " + t(i) + " " + (c() + 1));
+	}
+}
+===
+[run]
+cast: Double Double Double
+inline: Double
+map: Double
+typed: Int32 Int32 Int32
+kept: Int32 Int32 Double
+dynamic: Int32 Int32
+numbers: Double Int32 8
+--- function-value-shapes @gencs
+enum Opt { Some(v:Int); Two(a:String, b:Int); None; }
+class G<T> {
+	public var a:Array<T> = [];
+	public var cb:T->T;
+	public function new() {}
+	public function f() return a.push;
+	public static function st(x:Int) return x;
+}
+class P {
+	static function many(a:Int, b:Int, c:Int, d:Int, e:Int, f:Int, g:String) return a + f + g;
+	static function kinds(a:Null<Int>, b:Null<Float>, c:Bool, d:Single, e:UInt):Null<Int> return a + Std.int(b) + (c ? 1 : 0) + Std.int(d) + e;
+	static function i64(x:haxe.Int64):haxe.Int64 return x + 1;
+	static function fl(x:Float):Float return x / 2;
+	static function un(x:UInt):UInt return x + 1;
+	static function bo(x:Bool):Bool return !x;
+	static function idT<T>(x:T):T return x;
+	static function main() {
+		var ad:Array<Dynamic> = [1];
+		var p1 = ad.push;
+		p1("x");
+		Sys.println(ad);
+		var ai = [1];
+		var p5 = ai.push;
+		Sys.println(p5(4));
+		Sys.println(ai);
+		var gi = new G<Int>();
+		var pf = gi.f();
+		pf(9);
+		Sys.println(gi.a);
+		gi.cb = G.st;
+		Sys.println(gi.cb(3));
+		var mk = Some;
+		Sys.println(mk(3));
+		var t = Two;
+		Sys.println(t("a", 2));
+		Sys.println(Std.string(mk));
+		var wl = cs.system.Console.WriteLine;
+		var gs = G.st;
+		Sys.println(gs(5));
+		var m = many;
+		Sys.println(m(1, 2, 3, 4, 5, 6, "z"));
+		var md:Dynamic = many;
+		Sys.println(md(1, 2, 3, 4, 5, 7, "y"));
+		var k = kinds;
+		var n:Null<Int> = 3;
+		var flt:Null<Float> = 2.5;
+		Sys.println(k(n, flt, true, 1.5, 3));
+		var r:Int = k(n, flt, false, 1.5, 3);
+		Sys.println(r);
+		var i = i64;
+		Sys.println(i(haxe.Int64.make(0, 5)));
+		var f = fl;
+		var x:Float = f(3);
+		Sys.println(x);
+		var u = un;
+		Sys.println(u(7));
+		var b = bo;
+		Sys.println(b(true));
+		var id:Int->Int = idT;
+		Sys.println(id(11));
+		var f1 = gs;
+		Sys.println(f1 == gs);
+		Sys.println(Reflect.compareMethods(gs, G.st));
+		Sys.println(G.st == G.st);
+		var up = "abc".toUpperCase;
+		var ups:Dynamic = up;
+		Sys.println(ups());
+		var sb = new StringBuf();
+		var add:Dynamic = sb.add;
+		add(1);
+		add("q");
+		Sys.println(sb.toString());
+	}
+}
+===
+[run]
+[1,x]
+2
+[1,4]
+[9]
+3
+Some(3)
+Two(a,2)
+haxe.lang.Closure
+5
+7z
+8y
+10
+9
+6
+1.5
+8
+False
+11
+True
+True
+False
+ABC
+1q

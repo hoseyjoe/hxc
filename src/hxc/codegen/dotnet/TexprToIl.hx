@@ -787,10 +787,14 @@ class TexprToIl {
 			coerce(to, ret);
 			return;
 		}
+		// An unsafe cast to Dynamic of a function value's call boxes its `_f` result as it comes
+		// (TexprCalls.invokeFunction).
+		if (!checked && to != null && to.match(LObject) && strip(e1).expr.match(TCall(_, _))) calls.rawCall = strip(e1);
 		texpr(switch (ret) {
 			case RValue(null): RValue(sig(e.type));
 			case r: r;
 		}, e1);
+		calls.rawCall = null;
 	}
 
 	// Statements, then the last expression where `ret` wants it. In user code a failing statement is

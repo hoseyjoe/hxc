@@ -36,6 +36,9 @@ class TexprCalls {
 	final tl:TexprToIl;
 	final g:DotnetCtx;
 	final code:IlCode;
+	// A call of a function value that an unsafe cast to Dynamic wraps (TexprToIl.castExpr): its `_f`
+	// result goes boxed as the double, without the conversion to the call's type.
+	var rawCall:Null<TExpr> = null;
 
 	public function new(tl:TexprToIl) {
 		this.tl = tl;
@@ -502,8 +505,11 @@ class TexprCalls {
 	// an Int64), else 0.0 and the value boxed. `__hx_invoke<N>_f` when the call's type is like a Float,
 	// else `_o`, the result then converted to the call's type; six arguments or more go boxed to
 	// `__hx_invokeDynamic(object[])`. A callee that is not typed as a function is cast to one and always
-	// gets `_o`.
+	// gets `_o`. As NOTES §3.6 found, an Int result reaching Dynamic through an unsafe cast (an explicit
+	// `cast`, or the inliner's for an argument of a Dynamic parameter, as in Sys.println) stays a Double.
 	public function invokeFunction(ret:Ret, e:TExpr, callee:TExpr, args:Array<TExpr>):Void {
+		var raw = rawCall == e;
+		rawCall = null;
 		var fc = runtimeClass("cs.internal.Function");
 		var fnSig = tl.sig(TInst(fc, []));
 		var typed = IlPaths.sigEq(tl.sig(callee.type), fnSig);
@@ -532,7 +538,9 @@ class TexprCalls {
 		}
 		var isFloat = typed && TexprDynamic.likeFloatReal(e.type) && !TexprDynamic.likeI64Real(e.type);
 		code.opToken(IlOps.CALLVIRT, functionMethod(fc, "__hx_invoke" + args.length + (isFloat ? "_f" : "_o")), 1 + 2 * args.length, 1);
-		tl.dyn.finish(isFloat ? LFloat64 : LObject, own, ret);
+		// gencs's cast of the result to the call's type disappears under an unsafe cast, which then boxes
+		// the double: `(object)f.__hx_invoke0_f()`.
+		if (raw && isFloat) tl.coerce(LFloat64, ret) else tl.dyn.finish(isFloat ? LFloat64 : LObject, own, ret);
 	}
 
 	// Pushes a haxe.lang.Closure of the method `name` of `receiver`, evaluated now; of the type `owner`'s
