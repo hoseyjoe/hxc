@@ -1088,7 +1088,7 @@ class TclassToIl {
 			code.op(IlOps.DUP, 1, 2);
 			code.ldcI4(i);
 			code.ldcI4(entries[i].id);
-			code.opToken(IlOps.STELEM, g.typeTokenOf(LInt32), 3, 0);
+			code.stelem(LInt32, () -> g.typeTokenOf(LInt32));
 		}
 		code.ldcI4(entries.length);
 		code.opToken(IlOps.NEWARR, g.typeTokenOf(LString), 1, 1);

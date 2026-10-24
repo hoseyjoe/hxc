@@ -831,7 +831,7 @@ class TexprToIl {
 				var elem = calls.pushArrayAndIndex(e1, e2);
 				texpr(RValue(elem), rhs);
 				var tmp = needVal(ret) ? ops.keepTop(elem) : -1;
-				code.opToken(IlOps.STELEM, g.typeTokenOf(elem), 3, 0);
+				code.stelem(elem, () -> g.typeTokenOf(elem));
 				if (tmp >= 0) {
 					code.ldloc(tmp);
 					coerce(elem, ret);
@@ -952,11 +952,11 @@ class TexprToIl {
 					},
 					load: () -> {
 						reload();
-						if (native) code.opToken(IlOps.LDELEM, g.typeTokenOf(elem), 2, 1) else code.opToken(IlOps.CALLVIRT, get.token, 2, 1);
+						if (native) code.ldelem(elem, () -> g.typeTokenOf(elem)) else code.opToken(IlOps.CALLVIRT, get.token, 2, 1);
 					},
 					store: () -> {
 						if (native) {
-							code.opToken(IlOps.STELEM, g.typeTokenOf(elem), 3, 0);
+							code.stelem(elem, () -> g.typeTokenOf(elem));
 						} else {
 							code.opToken(IlOps.CALLVIRT, set.token, 3, 1);
 							code.op(IlOps.POP, 1, 0);

@@ -1237,6 +1237,50 @@ class P {
 	}
 }
 ===
+--- native-array-element-types @gencs
+import cs.NativeArray;
+import cs.StdTypes;
+class Foo {
+	public var a = 1;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var a = new NativeArray<Char16>(2);
+		a[0] = cast 65;
+		var c:Char16 = a[0];
+		a[1] = c;
+		Sys.println(Std.string(cast(a[1], Int)));
+		var bo = new NativeArray<Bool>(2);
+		bo[0] = true;
+		Sys.println(bo[0] + " " + bo[1] + " " + (bo[0] && !bo[1]));
+		var i8 = new NativeArray<Int8>(1);
+		i8[0] = cast -5;
+		var u8 = new NativeArray<UInt8>(1);
+		u8[0] = cast 250;
+		var i16 = new NativeArray<Int16>(1);
+		i16[0] = cast -300;
+		i16[0] = i16[0];
+		var u16 = new NativeArray<UInt16>(1);
+		u16[0] = cast 65000;
+		var f32 = new NativeArray<Single>(1);
+		f32[0] = 1.5;
+		var ui = new NativeArray<UInt>(1);
+		ui[0] = 7;
+		ui[0]++;
+		var ints = NativeArray.make(1, 2, 3);
+		ints[2] *= 5;
+		var fs = NativeArray.make(0.5, 1.5);
+		fs[1] -= 1;
+		var bs = NativeArray.make(true, false);
+		Sys.println(i8[0] + " " + u8[0] + " " + i16[0] + " " + u16[0] + " " + f32[0] + " " + ui[0]);
+		Sys.println(ints[2] + " " + fs[1] + " " + bs[1] + " " + bs.length);
+		var f = new Foo();
+		Sys.println(Type.getClassName(Type.getClass(f)));
+		Sys.println(Type.getClassName(String));
+	}
+}
+===
 --- type-mapping @lib @module=pack.Sig @dump=pack.Sig
 package pack;
 class Sig {

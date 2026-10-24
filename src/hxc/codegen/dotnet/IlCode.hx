@@ -246,6 +246,40 @@ class IlCode {
 		this.code.f32(v);
 	}
 
+	// ldelem for an array of `elem`: the typed short form C# emits for a primitive (ILVerify rejects the
+	// token form for Char and Boolean), the token form otherwise; `token` is called only then.
+	public function ldelem(elem:hxc.codegen.dotnet.IlData.IlSigNorm, token:() -> Int):Void {
+		var short = switch (elem) {
+			case LInt8: 0x90;
+			case LBool | LUInt8: 0x91;
+			case LInt16: 0x92;
+			case LChar | LUInt16: 0x93;
+			case LInt32: 0x94;
+			case LUInt32: 0x95;
+			case LInt64 | LUInt64: 0x96;
+			case LIntPtr | LUIntPtr: 0x97;
+			case LFloat32: 0x98;
+			case LFloat64: 0x99;
+			case _: -1;
+		}
+		if (short >= 0) op(short, 2, 1) else opToken(IlOps.LDELEM, token(), 2, 1);
+	}
+
+	// stelem for an array of `elem`, as ldelem.
+	public function stelem(elem:hxc.codegen.dotnet.IlData.IlSigNorm, token:() -> Int):Void {
+		var short = switch (elem) {
+			case LIntPtr | LUIntPtr: 0x9B;
+			case LBool | LInt8 | LUInt8: 0x9C;
+			case LChar | LInt16 | LUInt16: 0x9D;
+			case LInt32 | LUInt32: 0x9E;
+			case LInt64 | LUInt64: 0x9F;
+			case LFloat32: 0xA0;
+			case LFloat64: 0xA1;
+			case _: -1;
+		}
+		if (short >= 0) op(short, 3, 0) else opToken(IlOps.STELEM, token(), 3, 0);
+	}
+
 	public function opToken(code:Int, token:Int, pops:Int, pushes:Int):Void {
 		if (depth < 0) return;
 		stack(pops, pushes);

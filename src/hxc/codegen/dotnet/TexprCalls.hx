@@ -400,7 +400,7 @@ class TexprCalls {
 					code.op(IlOps.DUP, 1, 2);
 					code.ldcI4(i);
 					tl.texpr(RValue(elem), args[i]);
-					code.opToken(IlOps.STELEM, elemToken, 3, 0);
+					code.stelem(elem, () -> elemToken);
 				}
 				tl.coerce(LVector(elem), ret);
 			case TField(_, FStatic(c, cf)) if (tl.dyn.reflectCall(ret, e, c, cf, args)):
@@ -838,7 +838,7 @@ class TexprCalls {
 		}
 		if (isNativeArray(e1.type)) {
 			var elem = pushArrayAndIndex(e1, e2);
-			code.opToken(IlOps.LDELEM, g.typeTokenOf(elem), 2, 1);
+			code.ldelem(elem, () -> g.typeTokenOf(elem));
 			tl.coerce(elem, ret);
 			return;
 		}
@@ -868,7 +868,7 @@ class TexprCalls {
 			code.op(IlOps.DUP, 1, 2);
 			code.ldcI4(i);
 			tl.texpr(RValue(elem), el[i]);
-			code.opToken(IlOps.STELEM, elemToken, 3, 0);
+			code.stelem(elem, () -> elemToken);
 		}
 		code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(owner), ".ctor", g.sigs.method(true, LVoid, ctor.args, 0)), 1, 1);
 		tl.coerce(owner, ret);
