@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Runs the .NET generator's cases in cases.hx.txt.
 #   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>]
-# A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [+ extra hxc args]`, its source, `===`,
-# and the expected result. Each case compiles twice into a fresh directory, and its .dll must be
-# byte-identical between the two, pass ILVerify, run (unless @lib) and dump as expected.
+# A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@stress-fieldlookup]
+# [+ extra hxc args]`, its source, `===`, and the expected result. Each case compiles twice into a
+# fresh directory, and its .dll must be byte-identical between the two, pass ILVerify, run (unless
+# @lib) and dump as expected. A @stress-fieldlookup case's .dll must also pass HxcCheck's
+# stress-fieldlookup (haxe.lang.FieldLookup called from many threads at once).
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
 # and a case whose expectation has no [run] section takes the gencs output as that expectation.
+# @gencs compares runs, so it cannot go with @lib.
 # Case directories go under $HXC_TEST_TMP, by default tests/dotnet/tmp (gitignored), so one
 # antivirus exclusion covers the assemblies they write.
 set -u
@@ -76,6 +79,7 @@ gencs_prepare() {
 	for i in "${!c_name[@]}"; do
 		has=0
 		for t in ${c_tags[$i]}; do [ "$t" = "@gencs" ] && has=1; done
+		for t in ${c_tags[$i]}; do [ "$t" = "@lib" ] && has=0; done
 		[ $has = 1 ] && todo+=("$i")
 	done
 	[ ${#todo[@]} = 0 ] && return 0
@@ -146,17 +150,24 @@ EOF
 
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 t
+	local lib=0 module="P" dump="" gencs=0 stress=0 t
 	for t in $tags; do
 		case "$t" in
 			@lib) lib=1 ;;
 			@module=*) module="${t#@module=}" ;;
 			@dump=*) dump="${t#@dump=}" ;;
 			@gencs) gencs=1 ;;
+			@stress-fieldlookup) stress=1 ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
 		esac
 	done
 	total=$((total + 1))
+	if [ $gencs = 1 ] && [ $lib = 1 ]; then
+		echo "FAIL $name"
+		echo "@gencs compares the runs of hxc's and gencs's output, and a @lib case does not run"
+		failed=$((failed + 1))
+		return
+	fi
 	casedir="$(mktemp -d "$tmproot/case.XXXXXX")"
 	local file
 	file="$(source_file "$module")"
@@ -199,6 +210,10 @@ run_case() {
 					[ -n "$gout" ] && expected="${expected}[run]"$'\n'"$gout"$'\n'
 				fi
 			fi
+		fi
+		if [ $stress = 1 ]; then
+			local sout
+			if ! sout="$(check stress-fieldlookup "$(native "$dll")" 2>&1)"; then problem="${problem}stress-fieldlookup failed:"$'\n'"${sout}"$'\n'; fi
 		fi
 		if [ -n "$dump" ]; then
 			local dout

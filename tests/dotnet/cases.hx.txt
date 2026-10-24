@@ -13,7 +13,7 @@ class P {}
 ===
 [dump]
 assembly My.App 1.0.0.0
---- hello @gencs
+--- hello @gencs @stress-fieldlookup
 class P {
 	static function main() {
 		Sys.println("Hello, world");
@@ -2296,6 +2296,31 @@ class P {
 		trail = "";
 		new D();
 		Sys.println(trail);
+	}
+}
+===
+--- generic-constructorless-chains @gencs
+class A<T> {
+	public var v:T;
+	public var log = "A";
+	public function new(x:T, ?n:Int) { v = x; log += " ctor " + n; }
+}
+class B<T> extends A<T> { public var bb = "B"; }
+class C extends B<String> { public var cc = 1.5; }
+class N extends cs.system.Random { public var q = 3; }
+class M extends N { public var r = 4; }
+class P {
+	static function main() {
+		var c = new C("x", 4);
+		Sys.println(c.v + " " + c.log + " " + c.bb + " " + c.cc);
+		var c2 = new C("y");
+		Sys.println(c2.v + " " + c2.log);
+		var m = new M();
+		Sys.println(m.q + " " + m.r);
+		Sys.println(Reflect.fields(c).join(","));
+		Sys.println(Reflect.fields(m).join(","));
+		var e = Type.createEmptyInstance(C);
+		Sys.println(e.v + " " + e.log + " " + e.cc);
 	}
 }
 ===
