@@ -47,7 +47,8 @@ class ExternMembers {
 	}
 
 	public static function isValueTypeClass(cls:IlClass):Bool {
-		return isSystem(cls.csuper, "ValueType") || isSystem(cls.csuper, "Enum");
+		// System.Enum itself extends System.ValueType but is a class.
+		return isSystem(cls.csuper, "ValueType") && !DotnetTypes.isSystemEnum(cls.cpath) || isSystem(cls.csuper, "Enum");
 	}
 
 	// Replaces the class type parameters of `s` with `args`.

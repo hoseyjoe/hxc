@@ -695,9 +695,10 @@ class TexprDynamic {
 			return;
 		}
 		// A generic class is tested through gencs's companion interface, plan 3c; an enum class, whose type
-		// parameters are erased, as itself.
+		// parameters are erased, as itself; Class and Enum as System.Type, what their values are.
 		var erased = switch (mt) {
 			case TEnumDecl(en): EnumToIl.isHxGenEnum(en);
+			case TAbstractDecl(_): path == "Class" || path == "Enum";
 			case _: false;
 		}
 		if (TypeFunctions.tParams(mt).length > 0 && !erased) throw new Unsupported("Std.isOfType with a generic type", false);

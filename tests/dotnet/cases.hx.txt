@@ -4795,6 +4795,507 @@ class P {
 15
 de
 Node(Leaf(a),Leaf(null))
+--- enum-type-api @gencs @module=pk.Api @dump=pk.Color,pk.Kind_Val
+package pk;
+
+enum Kind {
+	Leaf;
+	Node(l:Kind, r:Kind);
+	Val(i:Int, ?tag:String);
+}
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+@:native("my.pack.Renamed") enum Renamed {
+	RA;
+	RB(i:Int);
+}
+class Api {
+	static function main() {
+		var k = Node(Leaf, Val(3, "t"));
+		var d:Dynamic = k;
+		Sys.println(Type.getEnumName(Kind));
+		Sys.println(Type.getEnumName(Renamed));
+		Sys.println(Type.getEnumName(Type.getEnum(k)));
+		Sys.println(Type.getEnumName(Type.getEnum(Blue)));
+		Sys.println(Type.enumIndex(k) + " " + Type.enumIndex(Blue) + " " + Type.enumIndex(d));
+		Sys.println(Type.enumConstructor(k) + " " + Type.enumConstructor(Leaf));
+		Sys.println(Type.enumParameters(k).length);
+		Sys.println(Type.enumParameters(Val(5)));
+		Sys.println(Type.enumParameters(Red));
+		Sys.println(Type.getEnumConstructs(Kind));
+		Sys.println(Type.getEnumConstructs(Color));
+		Sys.println(Type.allEnums(Color));
+		Sys.println(Type.allEnums(Kind));
+		Sys.println(Type.createEnum(Color, "Green") == Green);
+		Sys.println(Type.createEnum(Kind, "Val", [7, "x"]));
+		Sys.println(Type.createEnumIndex(Kind, 1, [Leaf, Leaf]));
+		Sys.println(Type.createEnumIndex(Color, 2));
+		Sys.println(Type.createEnum(Renamed, "RB", [1]));
+		Sys.println(Type.resolveEnum("pk.Kind") == Kind);
+		Sys.println(Type.resolveEnum("my.pack.Renamed") == Renamed);
+		Sys.println(Type.resolveEnum("pk.Nope") == null);
+		Sys.println(Type.resolveEnum("pk.Api") == null);
+		Sys.println(Type.typeof(k));
+		Sys.println(Type.typeof(Red));
+		Sys.println(Type.typeof(Kind));
+		switch (Type.typeof(d)) {
+			case TEnum(e):
+				Sys.println("enum " + Type.getEnumName(e));
+			default:
+				Sys.println("?");
+		}
+		Sys.println(Std.isOfType(k, Kind));
+		Sys.println(Std.isOfType(Red, Color));
+		Sys.println(Std.isOfType(Red, Kind));
+		Sys.println(Std.isOfType(d, Kind));
+		Sys.println(Std.isOfType(d, Color));
+		Sys.println(Type.getClassName(Type.getClass(k)));
+		Sys.println(Type.getClassName(Type.getClass(Red)));
+	}
+}
+===
+[run]
+pk.Kind
+my.pack.Renamed
+pk.Kind
+pk.Color
+1 2 1
+Node Leaf
+2
+[5,null]
+[]
+[Leaf,Node,Val]
+[Red,Green,Blue]
+[Red,Green,Blue]
+[Leaf]
+True
+Val(7,x)
+Node(Leaf,Leaf)
+Blue
+RB(1)
+True
+True
+True
+True
+TEnum(pk.Kind)
+TEnum(pk.Color)
+TObject
+enum pk.Kind
+True
+True
+False
+True
+False
+pk.Kind_Node
+pk.Color_Red
+[dump]
+type public beforefieldinit pk.Color extends haxe.lang.Enum
+  field public static initonly pk.Color Red
+  field public static initonly pk.Color Green
+  field public static initonly pk.Color Blue
+  field family static initonly string[] __hx_constructs
+  method family hidebysig specialname rtspecialname void .ctor(int32)
+  method private static hidebysig specialname rtspecialname void .cctor()
+type public sealed beforefieldinit pk.Kind_Val extends pk.Kind
+  field public initonly int32 i
+  field public initonly string tag
+  method public hidebysig specialname rtspecialname void .ctor(int32, string)
+  method public virtual hidebysig Array`1<object> getParams()
+  method public virtual hidebysig string getTag()
+  method public virtual hidebysig int32 GetHashCode()
+  method public virtual hidebysig bool Equals(object)
+  method public virtual hidebysig string toString()
+--- enum-reflect @gencs
+enum Ev {
+	Plain;
+	Msg(event:String, object:Int, ?n:Int);
+}
+class P {
+	static function main() {
+		var m = Msg("e", 1);
+		Sys.println(Reflect.isEnumValue(m));
+		Sys.println(Reflect.isEnumValue(Plain));
+		Sys.println(Reflect.isEnumValue(Ev));
+		Sys.println(Reflect.isEnumValue("Plain"));
+		Sys.println(Reflect.isObject(m));
+		Sys.println(Reflect.fields(m));
+		Sys.println(Reflect.fields(Plain));
+		Sys.println(Reflect.field(m, "event"));
+		Sys.println(Reflect.field(m, "object"));
+		Sys.println(Reflect.field(m, "n"));
+		Sys.println(Reflect.field(m, "_hx_index"));
+		Sys.println(Reflect.hasField(m, "event"));
+		Sys.println(Reflect.field(Ev, "Plain") == Plain);
+		Sys.println(Reflect.isFunction(Reflect.field(Ev, "Msg")));
+		Sys.println(Reflect.callMethod(Ev, Reflect.field(Ev, "Msg"), ["x", 2, 3]));
+		var d:Dynamic = m;
+		Sys.println(d.event + d.object);
+		Sys.println(d.getTag());
+		Sys.println(d.getParams());
+		Sys.println(d.toString());
+		Sys.println(Std.string(Reflect.compare(Plain, Plain)));
+		Sys.println(Type.getClassFields(cast Ev));
+		Sys.println(Reflect.fields(Ev));
+		Sys.println(Type.getInstanceFields(Type.getClass(m)));
+		Sys.println(Type.getClassName(Type.getSuperClass(cast Ev)));
+		Sys.println(Type.getSuperClass(Type.getClass(Plain)) == cast Ev);
+	}
+}
+===
+[run]
+True
+True
+False
+False
+False
+[event,object,n,_hx_index]
+[_hx_index]
+e
+1
+
+1
+True
+True
+True
+Msg(x,2,3)
+e1
+Msg
+[e,1,null]
+Msg(e,1,null)
+0
+[Msg,Plain]
+[Msg,Plain]
+[getParams,getTag,toString,event,object,n,_hx_index]
+haxe.lang.Enum
+True
+--- enum-serialize @gencs @module=pk.Ser
+package pk;
+
+import haxe.Serializer;
+import haxe.Unserializer;
+
+enum Kind {
+	Leaf;
+	Node(l:Kind, r:Kind);
+	Val(i:Int, ?tag:String);
+}
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+enum Opt<T> {
+	Some(v:T);
+	None;
+}
+enum Num {
+	I(i:Int);
+	F(f:Float);
+	N(?n:Int);
+}
+class Ser {
+	static function show(v:Dynamic):Void {
+		var plain = Serializer.run(v);
+		var s = new Serializer();
+		s.useEnumIndex = true;
+		s.serialize(v);
+		var indexed = s.toString();
+		var c = new Serializer();
+		c.useCache = true;
+		c.serialize(v);
+		var back:Dynamic = Unserializer.run(plain);
+		var back2:Dynamic = Unserializer.run(indexed);
+		Sys.println(plain + " | " + indexed + " | " + c.toString() + " | " + Std.string(back) + " " + Type.enumEq(back, v) + " "
+			+ Std.string(back2));
+	}
+	static function main() {
+		show(Red);
+		show(Node(Leaf, Val(3, "t")));
+		show(Val(1));
+		show(Some("s"));
+		show(None);
+		show(Some(Blue));
+		show(I(-5));
+		show(F(2.5));
+		show(F(3));
+		show(N());
+		show(N(4));
+		var arr:Array<Dynamic> = [Red, Red, Green];
+		Sys.println(Serializer.run(arr));
+		var k = Val(9, "u");
+		var c = new Serializer();
+		c.useCache = true;
+		c.serialize([k, k, Leaf, Leaf]);
+		Sys.println(c.toString());
+		var u:Dynamic = Unserializer.run(c.toString());
+		Sys.println(u[0] == u[1]);
+		Sys.println(u[2] == Leaf);
+		var col:Color = Unserializer.run("wy8:pk.Colory4:Blue:0");
+		Sys.println(col == Blue);
+		Sys.println(Std.string(Unserializer.run("wy7:pk.Kindy3:Val:2i8n")));
+		Sys.println(Std.string(Unserializer.run("jy7:pk.Kind:1:2jR0:0:0jR0:2:2i5n")));
+	}
+}
+===
+[run]
+wy8:pk.Colory3:Red:0 | jy8:pk.Color:0:0 | wy8:pk.Colory3:Red:0 | Red true Red
+wy7:pk.Kindy4:Node:2wR0y4:Leaf:0wR0y3:Val:2i3y1:t | jy7:pk.Kind:1:2jR0:0:0jR0:2:2i3y1:t | wy7:pk.Kindy4:Node:2wR0y4:Leaf:0wR0y3:Val:2i3y1:t | Node(Leaf,Val(3,t)) true Node(Leaf,Val(3,t))
+wy7:pk.Kindy3:Val:2i1n | jy7:pk.Kind:2:2i1n | wy7:pk.Kindy3:Val:2i1n | Val(1,null) true Val(1,null)
+wy6:pk.Opty4:Some:1y1:s | jy6:pk.Opt:0:1y1:s | wy6:pk.Opty4:Some:1y1:s | Some(s) true Some(s)
+wy6:pk.Opty4:None:0 | jy6:pk.Opt:1:0 | wy6:pk.Opty4:None:0 | None true None
+wy6:pk.Opty4:Some:1wy8:pk.Colory4:Blue:0 | jy6:pk.Opt:0:1jy8:pk.Color:2:0 | wy6:pk.Opty4:Some:1wy8:pk.Colory4:Blue:0 | Some(Blue) true Some(Blue)
+wy6:pk.Numy1:I:1i-5 | jy6:pk.Num:0:1i-5 | wy6:pk.Numy1:I:1i-5 | I(-5) true I(-5)
+wy6:pk.Numy1:F:1d2.5 | jy6:pk.Num:1:1d2.5 | wy6:pk.Numy1:F:1d2.5 | F(2.5) true F(2.5)
+wy6:pk.Numy1:F:1i3 | jy6:pk.Num:1:1i3 | wy6:pk.Numy1:F:1i3 | F(3) true F(3)
+wy6:pk.Numy1:N:1n | jy6:pk.Num:2:1n | wy6:pk.Numy1:N:1n | N(null) true N(null)
+wy6:pk.Numy1:N:1i4 | jy6:pk.Num:2:1i4 | wy6:pk.Numy1:N:1i4 | N(4) true N(4)
+awy8:pk.Colory3:Red:0wR0R1:0wR0y5:Green:0h
+awy7:pk.Kindy3:Val:2i9y1:ur1wR0y4:Leaf:0r2h
+True
+True
+True
+Val(8,null)
+Node(Leaf,Val(5,null))
+--- type-typeof @gencs
+enum E {
+	A;
+	B(x:Int);
+}
+class C {
+	public function new() {}
+	public function m() {}
+}
+class G<T> {
+	public function new() {}
+}
+class P {
+	static function f() {}
+	static function main() {
+		var vals:Array<Dynamic> = [null, 0, -5, 1.5, 2.0, 1e10, -0.0, Math.NaN, 2147483647.0, 2147483648.0, -2147483648.0, -2147483649.0, true, "s", {a: 1}, {}, new C(), new G<Int>(), C, E, A, B(1), new haxe.ds.StringMap<Int>(), new cs.system.Version(1, 2), cs.system.DayOfWeek.Monday, (1 : cs.StdTypes.Int64), (1 : UInt), (65 : cs.StdTypes.Char16), (1 : cs.StdTypes.UInt8), (1.5 : Single), cs.system.Decimal.One, Int, String];
+		for (v in vals) Sys.println(Std.string(v) + " => " + Std.string(Type.typeof(v)));
+		var ints:Array<Int> = [1];
+		Sys.println(Type.typeof(ints));
+		var d:Dynamic = 3;
+		d += 0.5;
+		Sys.println(Type.typeof(d));
+		d -= 0.5;
+		Sys.println(Type.typeof(d) + " " + Std.string(d));
+		Sys.println(Type.typeof(1) == TInt);
+		Sys.println(Type.enumEq(Type.typeof(new C()), TClass(C)));
+		Sys.println(Type.enumEq(Type.typeof(new C()), TClass(G)));
+		switch (Type.typeof(new C())) {
+			case TClass(c): Sys.println(Type.getClassName(c));
+			default: Sys.println("no");
+		}
+		switch (Type.typeof(B(2))) {
+			case TEnum(e): Sys.println(Type.getEnumName(e));
+			default: Sys.println("no");
+		}
+		var nums:Array<Dynamic> = [1, 1.0, 2.5, -0.0, 1e10, 2147483648.0, Math.NaN, Math.POSITIVE_INFINITY, Math.NEGATIVE_INFINITY, d];
+		Sys.println(haxe.Serializer.run(nums));
+	}
+}
+===
+[run]
+null => TNull
+0 => TInt
+-5 => TInt
+1.5 => TFloat
+2 => TInt
+10000000000 => TFloat
+-0 => TInt
+NaN => TFloat
+2147483647 => TInt
+2147483648 => TFloat
+-2147483648 => TInt
+-2147483649 => TFloat
+true => TBool
+s => TClass(System.String)
+[ a : 1 ] => TObject
+[] => TObject
+C => TClass(C)
+G`1[System.Int32] => TClass(G`1[System.Int32])
+C => TObject
+E => TObject
+A => TEnum(E)
+B(1) => TEnum(E)
+haxe.ds.StringMap`1[System.Int32] => TClass(haxe.ds.StringMap`1[System.Int32])
+1.2 => TClass(System.Version)
+Monday => TEnum(System.DayOfWeek)
+1 => TClass(System.Int64)
+1 => TClass(System.UInt32)
+A => TClass(System.Char)
+1 => TClass(System.Byte)
+1.5 => TClass(System.Single)
+1 => TClass(System.Decimal)
+System.Int32 => TObject
+System.String => TObject
+TClass(Array`1[System.Int32])
+TFloat
+TInt 3
+True
+True
+False
+C
+E
+ai1i1d2.5zd10000000000d2147483648kpmi3h
+--- exception-stack-and-details @gencs
+import haxe.CallStack;
+class P {
+	// Long enough that the JIT does not inline it, so its frame shows in both builds.
+	static function thrower(n:Int):Int {
+		var acc = 0;
+		for (i in 0...n) {
+			acc += i * 31 + (acc >> 3);
+			if (acc > 1000000) acc = acc % 977;
+		}
+		if (n > 0) throw new haxe.Exception("boom " + n + " " + acc);
+		return acc;
+	}
+	static function main() {
+		try thrower(3) catch (e:haxe.Exception) {
+			Sys.println(e.details());
+			Sys.println("--");
+			for (item in e.stack) Sys.println(Std.string(item));
+			Sys.println("--");
+			Sys.println(CallStack.toString(e.stack));
+			Sys.println("--");
+			switch (e.stack[0]) {
+				case FilePos(Method(cls, meth), file, line, _): Sys.println(cls + "." + meth + " " + file + " " + line);
+				case _: Sys.println("other");
+			}
+		}
+		try throw "v" catch (e:haxe.Exception) Sys.println(e.details());
+		Sys.println("--");
+		Sys.println(CallStack.toString(CallStack.callStack()));
+		Sys.println(CallStack.exceptionStack().length);
+		var inner = new haxe.Exception("inner");
+		var outer = new haxe.Exception("outer", inner);
+		Sys.println(outer.details());
+		Sys.println(outer.previous == inner);
+	}
+}
+===
+[run]
+Exception: boom 3 96
+Called from P.thrower (null line 0)
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+--
+FilePos(Method(P,thrower),null,0,null)
+FilePos(Method(P,main),null,0,null)
+FilePos(Method(P,Main),null,0,null)
+--
+
+Called from P.thrower (null line 0)
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+--
+P.thrower null 0
+Exception: v
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+--
+
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+0
+Exception: inner
+
+Next Exception: outer
+Called from P.main (null line 0)
+Called from P.Main (null line 0)
+True
+--- haxe-exceptions @gencs
+import haxe.exceptions.*;
+class MyErr extends haxe.Exception {
+	public var code:Int;
+	public function new(code:Int, ?prev:haxe.Exception) {
+		super("my " + code, prev);
+		this.code = code;
+	}
+	override function toString() return "MyErr(" + message + ")";
+}
+class P {
+	static function name(v:Dynamic) return Type.getClassName(Type.getClass(v));
+	static function main() {
+		try throw "str" catch (e:String) Sys.println("String " + e);
+		try throw 42 catch (e:Int) Sys.println("Int " + e);
+		try throw 7 catch (e:Float) Sys.println("Int as Float " + e);
+		try throw true catch (e:Bool) Sys.println("Bool " + e);
+		try throw "dyn" catch (e:Dynamic) Sys.println("Dynamic " + e + " " + name(e));
+		try throw null catch (e:Dynamic) Sys.println("null " + (e == null));
+		try throw null catch (e:haxe.Exception) Sys.println("null as Exception " + e.message + " " + (e.unwrap() == null) + " " + name(e));
+		try throw new MyErr(3) catch (e:MyErr) Sys.println("MyErr " + e.code + " " + e.message + " " + e);
+		try throw new MyErr(4) catch (e:haxe.Exception) Sys.println("as Exception " + Std.string(e) + " " + Std.isOfType(e, MyErr));
+		try throw new MyErr(5, new haxe.Exception("root")) catch (e:Dynamic) Sys.println("as Dynamic " + Std.string(e) + " <- " + (e : haxe.Exception).previous.message);
+		try throw "val" catch (e:haxe.Exception) Sys.println("wrapped " + e.message + " " + name(e) + " " + Std.string((cast e : haxe.ValueException).value));
+		try throw {x: 2} catch (e:haxe.ValueException) Sys.println("ValueException " + Std.string(e.value) + " " + e.message);
+		try throw 1.5 catch (e:haxe.Exception) Sys.println(e.toString() + " " + Std.isOfType(e.unwrap(), Float));
+		try throw new cs.system.ArgumentException("native") catch (e:haxe.Exception) Sys.println("native as Exception " + e.message + " " + name(e) + " " + name(e.native) + " " + (e.unwrap() == e.native));
+		try throw new cs.system.ArgumentException("arg") catch (e:Dynamic) Sys.println("native as Dynamic " + name(e));
+		try throw new MyErr(6) catch (e:cs.system.Exception) Sys.println("haxe as native " + e.Message);
+		try throw "x" catch (e:cs.system.Exception) Sys.println("value as native " + e.Message + " " + name(e));
+		try throw new cs.system.InvalidOperationException("io") catch (e:String) Sys.println("no") catch (e:haxe.Exception) Sys.println("second catch " + e.message);
+		var a:Array<Int> = null;
+		try a.push(1) catch (e:haxe.Exception) Sys.println("npe " + name(e.native));
+		try {
+			var d:Dynamic = {};
+			d.foo();
+		} catch (e:Dynamic) Sys.println("missing method: " + e);
+		try {
+			try throw new MyErr(7) catch (e:haxe.Exception) {
+				Sys.println("inner");
+				throw e;
+			}
+		} catch (e:MyErr) Sys.println("rethrown " + e.code);
+		try {
+			try throw "first" catch (e:String) throw e + "+second";
+		} catch (e:String) Sys.println(e);
+		try throw new NotImplementedException() catch (e:haxe.Exception) Sys.println(name(e) + ": " + e.message);
+		try throw new ArgumentException("arg1", "bad arg") catch (e:ArgumentException) Sys.println(e.argument + " " + e.message);
+		try throw new PosException("pos") catch (e:PosException) Sys.println(e.message + " / " + e.posInfos.methodName + " / " + e);
+		var caught = haxe.Exception.caught("s");
+		Sys.println(name(caught) + " " + caught.message);
+		Sys.println(name(haxe.Exception.thrown("t")) + " " + name(haxe.Exception.thrown(new MyErr(8))) + " " + name(haxe.Exception.thrown(new cs.system.ArgumentException("a"))));
+		var e = new haxe.Exception("plain");
+		Sys.println(Std.string(e) + " " + (e.native == e) + " " + (e.unwrap() == e) + " " + (e.previous == null));
+	}
+}
+===
+[run]
+String str
+Int 42
+Int as Float 7
+Bool true
+Dynamic dyn String
+null true
+null as Exception null true haxe.ValueException
+MyErr 3 my 3 MyErr(my 3)
+as Exception MyErr(my 4) true
+as Dynamic MyErr(my 5) <- root
+wrapped val haxe.ValueException val
+ValueException [ x : 2 ] [ x : 2 ]
+1.5 true
+native as Exception native haxe.Exception System.ArgumentException true
+native as Dynamic System.ArgumentException
+haxe as native my 6
+value as native x haxe.ValueException
+second catch io
+npe System.NullReferenceException
+missing method: Cannot invoke field foo: It does not exist
+inner
+rethrown 7
+first+second
+haxe.exceptions.NotImplementedException: Not implemented
+arg1 bad arg
+pos / main / pos in P.main at P.hx:48
+haxe.ValueException s
+haxe.ValueException MyErr System.ArgumentException
+plain true true true
 --- dynamic-array-read @gencs
 class P {
 	static function main() {

@@ -97,6 +97,10 @@ class DotnetTypes {
 		return p.name == name && IlPaths.strsEq(p.pack, pack);
 	}
 
+	public static function isSystemEnum(p:IlPath):Bool {
+		return p.name == "Enum" && p.nested.length == 0 && IlPaths.strsEq(p.ns, ["System"]);
+	}
+
 	public static function isValueType(s:IlSigNorm):Bool {
 		return switch (s) {
 			case LBool | LChar | LInt8 | LUInt8 | LInt16 | LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64
@@ -347,7 +351,8 @@ class DotnetTypes {
 					if (prim != null) return prim;
 					var args = [for (a in params) toSig(a)];
 					defined(p);
-					TypeFunctions.hasMeta(":struct", c.meta) ? LValueType(p, args) : LClass(p, args);
+					// System.Enum extends System.ValueType, so it is a @:struct extern, but the CLR has it a class.
+					TypeFunctions.hasMeta(":struct", c.meta) && !isSystemEnum(p) ? LValueType(p, args) : LClass(p, args);
 				} else {
 					checkKept(TClassDecl(c));
 					var p = DotnetNames.typePath(TClassDecl(c));
