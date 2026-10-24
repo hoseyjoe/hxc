@@ -449,9 +449,9 @@ class TexprToIl {
 		code.ldloc(tmp);
 	}
 
-	// A null of type `t`, Dynamic or (cast null) a .NET enum, going where `ret` wants a value type, as
-	// gencs converts it: that type's default, as Runtime.toInt(null) and C#'s default(T) give. False,
-	// and nothing pushed, when `ret` wants no value type.
+	// A null typed Dynamic going where `ret` wants a value type, as gencs converts it: that type's
+	// default, as Runtime.toInt(null) and the like give. False, and nothing pushed, when `ret` wants no
+	// value type.
 	function nullDefault(ret:Ret, t:T):Bool {
 		var to = switch (ret) {
 			case RValue(null): sig(t);
@@ -681,7 +681,15 @@ class TexprToIl {
 			// A cast between instantiations is reported at the cast.
 			if (from != null && to != null) checkInstantiationCast(from, to);
 		}
-		if (isNullConst(e1) && (TexprDynamic.isTDynamic(e.type) || externEnum(e.type) != null) && nullDefault(ret, e.type)) return;
+		if (isNullConst(e1) && externEnum(e.type) != null) {
+			// cast null to a .NET enum is C#'s default(T), as gencs writes it, boxed where it goes as an object.
+			if (!needVal(ret)) return;
+			var s = sig(e.type);
+			defaultValue(s);
+			coerce(s, ret);
+			return;
+		}
+		if (isNullConst(e1) && TexprDynamic.isTDynamic(e.type) && nullDefault(ret, e.type)) return;
 		var want = switch (ret) {
 			case RValue(w): w;
 			case _: null;

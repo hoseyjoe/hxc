@@ -3919,3 +3919,33 @@ sm,st
 0 true
 4
 0 true 2 1
+--- enum-null-defaults @gencs
+import cs.Flags;
+import cs.system.reflection.BindingFlags;
+class P {
+	static function show(d:Dynamic) Sys.println(d);
+	static function main() {
+		var x:Dynamic = (cast null : BindingFlags);
+		Sys.println(x);
+		Sys.println(new Flags<BindingFlags>());
+		show(new Flags<BindingFlags>());
+		var a:Array<Dynamic> = [(cast null : BindingFlags)];
+		Sys.println(a);
+		var b:BindingFlags = cast null;
+		Sys.println(b);
+		Sys.println(Reflect.compare((null:Dynamic), 1) + " " + Reflect.compare(1, (null:Dynamic)));
+		var i:Int = (null:Dynamic);
+		var f:Float = (null:Dynamic);
+		var t:Bool = (null:Dynamic);
+		Sys.println(i + " " + f + " " + t);
+	}
+}
+===
+[run]
+Default
+Default
+Default
+[Default]
+Default
+-1 1
+0 0 false
