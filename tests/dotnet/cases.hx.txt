@@ -8174,3 +8174,34 @@ class P {
 	}
 }
 ===
+--- try-in-captured-initializer @gencs
+// The desktop app's Transfer: a try in the initializer of a captured variable that is written.
+class P {
+	static function tr(f:Void->Int, fail:String->Void):Void->Int {
+		var copy = try f() catch (e:Dynamic) { fail(Std.string(e)); return null; };
+		var g = () -> copy++;
+		return () -> copy + g();
+	}
+
+	static function tr2(f:Void->String):String {
+		var s = try f() catch (e:String) "caught " + e;
+		var add = (x:String) -> s += x;
+		add("!");
+		return s;
+	}
+
+	static function main() {
+		Sys.println(tr(() -> 4, s -> Sys.println("fail " + s))());
+		Sys.println(tr(() -> throw "x", s -> Sys.println("fail " + s)) == null);
+		Sys.println(tr2(() -> "ok"));
+		Sys.println(tr2(() -> throw "bad"));
+		var a = [() -> 1];
+		var r = [for (x in a) () -> x()];
+		Sys.println(r[0]());
+		var n = 0;
+		var h = () -> n++;
+		var m = [while (n < 3) h()];
+		Sys.println(m);
+	}
+}
+===

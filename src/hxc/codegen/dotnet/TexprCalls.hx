@@ -642,10 +642,11 @@ class TexprCalls {
 		var elem = vectorElement(tl.sig(e.type));
 		var elemToken = g.typeTokenOf(elem);
 		for (a in args) if (strip(a).expr.match(TUnop(Spread, _, _))) throw new Unsupported("the spread operator", false);
-		// When an element holds a loop, whose head needs an empty stack, the elements are evaluated first,
-		// in order, into locals, as gencs's C# evaluates a block it hoists out of the initializer.
+		// When an element holds a loop or a try, which need an empty stack, the elements are evaluated
+		// first, in order, into locals, as gencs's C# evaluates a block it hoists out of the initializer
+		// (`__temp_stmt1`).
 		var temps:Null<Array<Int>> = null;
-		if (Lambda.exists(args, hasLoop)) temps = [
+		if (Lambda.exists(args, needsEmptyStack)) temps = [
 			for (a in args) {
 				tl.texpr(RValue(elem), a);
 				var t = code.addLocal(elem);
@@ -664,12 +665,13 @@ class TexprCalls {
 		tl.coerce(LVector(elem), ret);
 	}
 
-	// Whether `e` holds a loop; a local function's body is its own method.
-	static function hasLoop(e:TExpr):Bool {
+	// Whether `e` holds something that starts on an empty stack: a loop's head or a try block. A local
+	// function's body is its own method.
+	static function needsEmptyStack(e:TExpr):Bool {
 		return switch (e.expr) {
-			case TWhile(_, _, _) | TFor(_, _, _): true;
+			case TWhile(_, _, _) | TFor(_, _, _) | TTry(_, _): true;
 			case TFunction(_): false;
-			case _: TexprTools.checkExpr(hasLoop, e);
+			case _: TexprTools.checkExpr(needsEmptyStack, e);
 		}
 	}
 
