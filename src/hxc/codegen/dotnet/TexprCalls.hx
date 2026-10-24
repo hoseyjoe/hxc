@@ -188,7 +188,7 @@ class TexprCalls {
 				// A static method as a value: `new Closure(typeof(C), "name", hash)`.
 				g.types.checkKept(TClassDecl(c));
 				var plan = g.ownerOf.get(cf);
-				if (plan == null) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
+				if (plan == null) throw Unsupported.bug("a closure of " + Globals.sTypePath(c.path) + "." + cf.name + " without a method (an hxc bug)");
 				pushClosure(null, staticOwner(plan), cf.name);
 				tl.coerce(closureSig(), ret);
 			case FStatic(c, cf) if (!isExtern(c)):
