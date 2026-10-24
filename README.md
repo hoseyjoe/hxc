@@ -121,9 +121,9 @@ the shape Haxe's own `--cs` generator gives them: they extend `haxe.lang.HxObjec
 methods can be reached by reflection (`Reflect.field`, `Reflect.setField`, `Reflect.callMethod`,
 `Reflect.hasField` and the `Dynamic` field operations behind them). `Dynamic` works for field access,
 calls, arithmetic, comparison, equality, string concatenation and conversion to and from the basic
-types; array access on a `Dynamic` is not supported yet. Anonymous objects (`{x: 1}`, printed and
-read through `Dynamic`) and `Null<T>`, including `Null<Int>`, `Null<Float>` and `Null<Bool>` and
-defaulted arguments, work too.
+types; reading an element of a `Dynamic` works, assigning one is not supported yet. Anonymous
+objects (`{x: 1}`, printed and read through `Dynamic`) and `Null<T>`, including `Null<Int>`,
+`Null<Float>` and `Null<Bool>` and defaulted arguments, work too.
 
 Haxe enums become gencs's classes (`<pack>.<Enum>` and one `<pack>.<Enum>_<Ctor>` per constructor
 with arguments), `switch` on them included, on a `Dynamic` too. Local functions and lambdas become

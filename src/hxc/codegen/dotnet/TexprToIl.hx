@@ -1129,9 +1129,14 @@ class TexprToIl {
 
 	static function isNumeric(s:IlSigNorm):Bool return s.match(LInt32 | LUInt32 | LFloat64 | LInt64 | LUInt64);
 
-	// The type an operand is computed in: a Null<T> operand's T, read from its value.
+	// The type an operand is computed in: a Null<T> operand's T, read from its value. Char and the
+	// small integers, which untyped code leaves as they are (hxcs's Bytes.compare subtracts two UInt8s),
+	// are computed as Ints, as C# promotes them.
 	function operandSig(op:Binop, e:TExpr):IlSigNorm {
-		var s = unNull(sig(e.type));
+		var s = switch (unNull(sig(e.type))) {
+			case LChar | LInt8 | LUInt8 | LInt16 | LUInt16: LInt32;
+			case s: s;
+		}
 		if (!isNumeric(s)) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		return s;
 	}

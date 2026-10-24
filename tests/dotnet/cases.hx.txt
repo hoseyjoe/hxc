@@ -7884,3 +7884,40 @@ True
 changed
 [get_depth,set_depth,get_isOff,validate]
 []
+# Untyped arithmetic on byte elements (hxcs's haxe.io.Bytes.compare: `untyped b1[i] - b2[i]` on a
+# NativeArray<UInt8>): C# promotes the bytes to int.
+--- byte-arithmetic @gencs
+import haxe.io.Bytes;
+class P {
+	static function main() {
+		var a = Bytes.ofString("abd");
+		var b = Bytes.ofString("abc");
+		var c = Bytes.ofString("ab");
+		Sys.println(a.compare(b) + " " + b.compare(a) + " " + a.compare(a) + " " + a.compare(c) + " " + c.compare(b));
+		Sys.println(Bytes.ofString("").compare(Bytes.ofString("")));
+		var hi = Bytes.alloc(1);
+		hi.set(0, 250);
+		var lo = Bytes.alloc(1);
+		lo.set(0, 3);
+		Sys.println(hi.compare(lo) + " " + lo.compare(hi));
+		var b1:cs.NativeArray<cs.types.UInt8> = hi.getData();
+		var b2:cs.NativeArray<cs.types.UInt8> = lo.getData();
+		var sub:Int = untyped b1[0] - b2[0];
+		var add:Int = untyped b1[0] + b2[0];
+		var mul:Int = untyped b1[0] * b2[0];
+		var rem:Int = untyped b1[0] % b2[0];
+		var and:Int = untyped b1[0] & b2[0];
+		var or:Int = untyped b1[0] | b2[0];
+		var shl:Int = untyped b1[0] << b2[0];
+		var mixed:Int = untyped b1[0] - 300;
+		var lt:Bool = untyped b1[0] < b2[0];
+		var eq:Bool = untyped b1[0] == b2[0];
+		Sys.println([sub, add, mul, rem, and, or, shl, mixed].join(" ") + " " + lt + " " + eq);
+	}
+}
+===
+[run]
+1 -1 0 1 -1
+0
+247 -247
+247 253 750 1 2 251 2000 -50 false false
