@@ -532,6 +532,9 @@ class TclassToIl {
 				if (DotnetNames.fieldName(cur, cf.name) != name) throw other;
 				for (f in [cf].concat(cf.overloads)) {
 					if (!sameSig(methodSig(g, cur, params, f), want)) continue;
+					// An override that took its slot's signature (OInline) no longer has the one the interface wants.
+					if (!sameSig(slotSig(g, cur, params, f), want))
+						throw new Unsupported("interface methods implemented by overrides that change the signature", true, f.pos);
 					if (cur == c) own.set(f, true);
 					else if (isFinalMethod(cur, f)) throw new Unsupported("interface methods implemented by a final inherited method", true);
 					return;

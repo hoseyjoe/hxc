@@ -4307,7 +4307,10 @@ class Keeper {
 	public function call(d:Dog):String return feed(d, 1);
 	public function pet():Animal return new Animal("pet");
 }
-class Vet extends Keeper {
+interface Feeds {
+	function feed(a:Animal, times:Int):String;
+}
+class Vet extends Keeper implements Feeds {
 	public function new() super();
 	override public function feed(a:Animal, times:Int):String return "vet " + a.name + " " + times;
 	override public function pet():Dog return new Dog();
@@ -4332,6 +4335,8 @@ class P {
 		var k:Keeper = v;
 		Sys.println(k.feed(new Dog(), 3));
 		Sys.println(v.pet().name + " " + k.pet().name);
+		var j:Feeds = v;
+		Sys.println(j.feed(new Dog(), 4));
 		params(DynTree, "compare");
 		params(DynTree, "pick");
 		params(Vet, "feed");
@@ -4346,7 +4351,44 @@ vet dog 1
 vet cat 2
 vet dog 3
 dog dog
+vet dog 4
 compare: Int32(Object __temp_a1, Object __temp_b2) override
 pick: Object(Object a, Object __temp_b3) override
 feed: String(Dog __temp_a4, Int32 times) override / String(Animal a, Int32 times)
 feed,feed,pet,call
+--- override-signature-refusals
+abstract class AB<T> {
+	public function new() {}
+	abstract public function g(a:T):Int;
+}
+abstract class AB2<T> extends AB<T> {
+	abstract override public function g(a:Dynamic):Int;
+}
+class M extends cs.system.MarshalByRefObject {
+	public function new() super();
+	@:overload override public function InitializeLifetimeService():String return "x";
+}
+interface I {
+	function compare(a:Dynamic, b:Dynamic):Int;
+}
+class Tree<K> {
+	public function new() {}
+	public function compare(a:K, b:K):Int return 0;
+}
+class DynTree<K> extends Tree<K> implements I {
+	public function new() super();
+	override public function compare(a:Dynamic, b:Dynamic):Int return 1;
+}
+class P {
+	static function main() {
+		Sys.println(new DynTree<Int>().compare(1, 2));
+		Sys.println(new M().InitializeLifetimeService());
+	}
+}
+===
+[compile]
+P.hx:6: characters 2-53 : dotnet: abstract overrides that change the signature are not supported yet
+P.hx:10: characters 13-83 : dotnet: overrides that change the signature are not supported yet
+P.hx:21: characters 2-69 : dotnet: interface methods implemented by overrides that change the signature are not supported yet
+P.hx:25: characters 15-47 : dotnet: DynTree (left out: interface methods implemented by overrides that change the signature) is not supported yet
+P.hx:26: characters 15-50 : dotnet: M (left out: overrides that change the signature) is not supported yet

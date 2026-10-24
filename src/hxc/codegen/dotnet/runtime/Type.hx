@@ -174,7 +174,7 @@ enum ValueType {
 			return untyped "";
 			#else
 			// hxc: C#'s `(T)(object)""` and `(T)res` below, an unbox.any.
-			return Runtime.unboxAny("");
+			return Runtime.__hx_unboxAny("");
 			#end
 
 		var res = try cs.system.Activator.CreateInstance(t,
@@ -183,7 +183,7 @@ enum ValueType {
 		#if erase_generics
 		return res;
 		#else
-		return Runtime.unboxAny(res);
+		return Runtime.__hx_unboxAny(res);
 		#end
 	}
 
