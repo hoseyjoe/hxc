@@ -13,11 +13,19 @@ class Unsupported {
 	public var what:String;
 	public var pos:Null<Position>;
 	public var plural:Bool;
+	// A bug in hxc rather than a missing feature: reported as "dotnet: <what>", in std code as well.
+	public var isBug = false;
 
 	public function new(what:String, plural:Bool, ?pos:Position) {
 		this.what = what;
 		this.plural = plural;
 		this.pos = pos;
+	}
+
+	public static function bug(what:String):Unsupported {
+		var u = new Unsupported(what, false);
+		u.isBug = true;
+		return u;
 	}
 
 	public function verb():String return plural ? "are" : "is";

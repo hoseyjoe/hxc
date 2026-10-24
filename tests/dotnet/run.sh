@@ -130,7 +130,8 @@ gencs_prepare() {
 </Project>
 EOF
 	local blog
-	blog="$(cd "$gencsroot" && dotnet build batch.proj -m -nologo -v q 2>&1)" || true
+	# No node reuse: an idle MSBuild node left over from an earlier build once hung this one.
+	blog="$(cd "$gencsroot" && MSBUILDDISABLENODEREUSE=1 dotnet build batch.proj -m -nologo -v q 2>&1)" || true
 
 	for i in "${todo[@]}"; do
 		local d="$gencsroot/${c_name[$i]}" dll code=0 out

@@ -89,10 +89,15 @@ class TexprFlow {
 	}
 
 	// A chain of comparisons in case order, then the default.
+	// At the end of a method with a value, a switch without a default covers every value its subject
+	// can have, or the typer would want a return after it (the analyzer drops the @:exhaustive of a
+	// `return switch` when it moves the return into the cases). A value none of the cases matches
+	// reaches the end of gencs's C# method, which returns the default value; here it returns it
+	// itself, and the end of the switch is reachable only from the cases.
 	function switchExpr(ret:Ret, e:TExpr, subject:TExpr, cases:Array<TSwitchCase>, def:Null<TExpr>):Void {
 		if (def == null && needVal(ret)) throw new Unsupported("switch expressions without a default", true);
 		var r = valueRet(ret, e);
-		if (def == null && isExhaustive(subject)) tl.exhaustiveSwitch = true;
+		var returnsDefault = def == null && ret.match(RReturn) && !tl.ret.match(LVoid);
 		// A switch on enumIndex(x) of a .NET enum is one on x, against the constructors' values.
 		var ext = TexprToIl.externEnumIndex(subject);
 		if (ext != null) subject = ext.value;
@@ -131,7 +136,7 @@ class TexprFlow {
 			}
 		}
 		var end = code.newLabel();
-		var defLabel = def == null ? end : code.newLabel();
+		var defLabel = def == null && !returnsDefault ? end : code.newLabel();
 		code.branch(IlOps.BR, defLabel);
 		for (i in 0...cases.length) {
 			code.markIfUsed(bodies[i]);
@@ -141,16 +146,14 @@ class TexprFlow {
 		if (def != null) {
 			code.mark(defLabel);
 			tl.texpr(r, def);
+		} else if (returnsDefault) {
+			code.markIfUsed(defLabel);
+			if (code.reachable()) {
+				tl.pushDefault(tl.ret);
+				exitMethod(true);
+			}
 		}
 		code.markIfUsed(end);
-	}
-
-	static function isExhaustive(e:TExpr):Bool {
-		return switch (e.expr) {
-			case TMeta({name: ":exhaustive"}, _): true;
-			case TParenthesis(e1) | TMeta(_, e1): isExhaustive(e1);
-			case _: false;
-		}
 	}
 
 	// `return`: a `ret`, or inside a try a store to the return local and a `leave` to the label after
@@ -198,7 +201,8 @@ class TexprFlow {
 			case RValue(s): s;
 			case _: null;
 		}
-		var inner = t == null ? RVoid : r;
+		// At the end of the method (RReturn), so are the ends of the body and the catches.
+		var inner = t == null && !r.match(RReturn) ? RVoid : r;
 		var classes = [for (c in catches) catchClass(c.v)];
 		var result = t == null ? -1 : code.addLocal(t);
 		var end = code.newLabel();

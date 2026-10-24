@@ -121,7 +121,7 @@ class IlCode {
 	final labelDepth:Array<Int> = [];
 	final tries:Array<TryBlock> = [];
 	final clauses:Array<Array<Int>> = [];
-	final what:String;
+	public final what:String;
 	final code = new IlBytes();
 
 	public final locals:Array<hxc.codegen.dotnet.IlData.IlSigNorm> = [];

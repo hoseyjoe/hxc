@@ -280,6 +280,63 @@ class P {
 [run]
 onefewmany
 2
+--- falls-off-end-switch-all-return @gencs + -D analyzer-optimize
+// The analyzer moves each `return switch` below into its cases and drops the switch's @:exhaustive;
+// a value no case matches gets gencs's `return default` after the switch.
+enum abstract Kind(Int) {
+	var A = 1;
+	var B = 2;
+	var C = 3;
+	public function toString():String {
+		return switch (cast this : Kind) {
+			case A: "A";
+			case B: "B";
+			case C: "C";
+		};
+	}
+	public static function describe(k:Kind, ?prefix:String):String {
+		var p = prefix == null ? "kind " : prefix;
+		return switch (k) {
+			case A: '${p}a';
+			case B: '${p}b';
+			case C: '${p}c';
+		}
+	}
+	public static function weight(k:Kind):Int {
+		return switch (k) {
+			case A: 10;
+			case B: 20;
+			case C: 30;
+		}
+	}
+	public static function guarded(k:Kind):String {
+		try {
+			return switch (k) {
+				case A: "ga";
+				case B: "gb";
+				case C: throw "gc";
+			}
+		} catch (e:String) {
+			return "caught " + e;
+		}
+	}
+}
+class P {
+	static function main() {
+		Sys.println("before");
+		var k = B;
+		Sys.println(k.toString());
+		Sys.println(Kind.describe(C) + " " + Kind.describe(A, "-"));
+		Sys.println(Kind.weight(A));
+		Sys.println(Kind.guarded(A) + " " + Kind.guarded(C));
+		var odd:Kind = cast 7;
+		Sys.println(odd.toString() == null);
+		Sys.println(Kind.weight(odd));
+		Sys.println(Kind.guarded(odd) == null);
+		Sys.println("after");
+	}
+}
+===
 --- strings @gencs
 class P {
 	static var s = "héllo";

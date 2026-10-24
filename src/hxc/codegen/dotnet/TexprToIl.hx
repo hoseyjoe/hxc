@@ -19,7 +19,8 @@ import hxc.codegen.dotnet.TexprCalls.isNativeArray;
 import hxc.codegen.dotnet.TexprCalls.vectorElement;
 
 // Where an expression's value goes: onto the stack as a slot of the given type (null: its own),
-// nowhere, or out of the function (a function body, whose value is not used).
+// nowhere, or out of the function (a function body, whose value is not used, and the expressions
+// that end it: the last of a block, the branches of an if, switch or try).
 enum Ret {
 	RValue(t:Null<IlSigNorm>);
 	RVoid;
@@ -84,8 +85,6 @@ class TexprToIl {
 	// Set in a static __hx_ctor_* method: `this` is its first argument, and super(...) calls the base
 	// class's static constructor.
 	public var splitCtor = false;
-	// Set once an @:exhaustive switch without a default is lowered: the code after it is reachable.
-	var exhaustiveSwitch = false;
 
 	public function new(g:DotnetCtx, code:IlCode, ret:IlSigNorm) {
 		this.g = g;
@@ -200,18 +199,17 @@ class TexprToIl {
 		}
 	}
 
-	// The end of the body: a void method returns. A method with a value can reach its end only after a
-	// switch over every constructor of an enum, which has no default; as gencs does, it returns the
-	// default value there.
+	// The end of the body: a void method returns. The typer has checked that a method with a value
+	// never reaches its end, so reaching it here is a reachability rule TexprFlow lacks.
 	public function finish():Void {
 		if (!code.reachable()) return;
-		if (!ret.match(LVoid)) {
-			if (!exhaustiveSwitch) throw "internal error: a non-void method falls off its end";
-			if (DotnetTypes.isValueType(ret) || isTypeParam(ret)) defaultValue(ret) else code.op(IlOps.LDNULL, 0, 1);
-			code.op(IlOps.RET, 1, 0);
-			return;
-		}
+		if (!ret.match(LVoid)) throw Unsupported.bug(code.what + " falls off its end without a return (an hxc reachability bug)");
 		code.op(IlOps.RET, 0, 0);
+	}
+
+	// The default value of `s`: C#'s default(T).
+	function pushDefault(s:IlSigNorm):Void {
+		if (DotnetTypes.isValueType(s) || isTypeParam(s)) defaultValue(s) else code.op(IlOps.LDNULL, 0, 1);
 	}
 
 	static inline function needVal(ret:Ret):Bool return ret.match(RValue(_));
@@ -633,8 +631,9 @@ class TexprToIl {
 				dyn.objectDecl(ret, fields);
 			case TArrayDecl(el):
 				calls.arrayLiteral(ret, e, el);
-			case TFor(_, _, _):
-				throw new Unsupported("for loops", true);
+			case TFor(v, e1, e2):
+				// The ForRemap filter removes these first; as in the JVM generator, lowered as it would.
+				texpr(ret, hxc.optimization.AnalyzerTexpr.TexprFilter.forRemap(g.ctx.basic, v, e1, e2, e.pos));
 			case TTry(body, catches):
 				flow.tryExpr(ret, e, body, catches);
 			case TThrow(e1):
@@ -706,7 +705,7 @@ class TexprToIl {
 		}
 		for (i in 0...el.length) {
 			var s = el[i];
-			var r = i == el.length - 1 ? (ret.match(RReturn) ? RVoid : ret) : RVoid;
+			var r = i == el.length - 1 ? ret : RVoid;
 			// The statement giving the block's value fails with the statement around the block: the code
 			// after it expects the value on the stack.
 			if (onError == null || needVal(r)) {

@@ -1030,7 +1030,7 @@ class TclassToIl {
 			});
 		} catch (u:Unsupported) {
 			if (u.pos == null) u.pos = m.pos;
-			if (plan.isStd) stub = u else failures.push(u);
+			if (plan.isStd && !u.isBug) stub = u else failures.push(u);
 		}
 		if (failures.length > 0) {
 			for (u in failures) g.report(u);

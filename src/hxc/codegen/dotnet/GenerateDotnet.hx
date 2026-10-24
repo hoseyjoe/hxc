@@ -60,7 +60,8 @@ class DotnetCtx {
 	}
 
 	public function report(u:Unsupported):Void {
-		ctx.addDiagnostic("dotnet: " + u.what + " " + u.verb() + " not supported yet", u.pos == null ? Position.nullPos : u.pos);
+		var msg = u.isBug ? u.what : u.what + " " + u.verb() + " not supported yet";
+		ctx.addDiagnostic("dotnet: " + msg, u.pos == null ? Position.nullPos : u.pos);
 		diagnostics++;
 	}
 
