@@ -11,14 +11,17 @@
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
 # and a case whose expectation has no [run] section takes the gencs output as that expectation.
-# @gencs compares runs, so it cannot go with @lib (nor can @serial).
+# @gencs compares runs, so it cannot go with @lib or @runtimeconfig (nor can @serial). A @gencs case
+# is expected to compile: unless its expectation has a [compile] section, hxc failing or writing no
+# .dll fails the case.
 # A @serial case is a @gencs case whose program takes `gen <file>` and `rt <in> <file>`: gen writes
 # `name<TAB>serialized` lines to <file> and prints them, rt unserializes each line of <in>, serializes
 # it again, writes the lines to <file> and prints them. Both builds run gen (the [run] comparison
 # above); gencs's rt of its own file is the reference, shown under [rt]. hxc's rt of gencs's file,
 # gencs's rt of hxc's file and hxc's rt of its own file must print the same, or the result gets an
 # [rt hxc<-gencs], [rt gencs<-hxc] or [rt hxc<-hxc] section. With no [rt] in the expectation,
-# gencs's is the expectation, as for [run].
+# gencs's is the expectation, as for [run]. A gencs gen that prints nothing or writes an empty file
+# fails the case, since every comparison would then pass with nothing in it.
 # Every run of a test program (hxc's or gencs's build) stops after $HXC_RUN_TIMEOUT seconds, 120 by
 # default, or after @run-timeout's seconds for that case; its output then ends with
 # `[timeout after Ns]` (a gencs run that times out fails the case), and the other cases go on.
@@ -113,7 +116,7 @@ gencs_prepare() {
 	for i in "${!c_name[@]}"; do
 		has=0
 		for t in ${c_tags[$i]}; do [ "$t" = "@gencs" ] || [ "$t" = "@serial" ] && has=1; done
-		for t in ${c_tags[$i]}; do [ "$t" = "@lib" ] && has=0; done
+		for t in ${c_tags[$i]}; do [ "$t" = "@lib" ] || [ "$t" = "@runtimeconfig" ] && has=0; done
 		[ $has = 1 ] && todo+=("$i")
 	done
 	[ ${#todo[@]} = 0 ] && return 0
@@ -194,6 +197,10 @@ EOF
 				continue
 				;;
 		esac
+		if [ $serial = 1 ] && { [ -z "$out" ] || [ ! -s "$d/gen.txt" ]; }; then
+			printf "gencs's gen printed nothing or wrote no gen.txt, which leaves nothing to compare\n" > "$d/problem"
+			continue
+		fi
 		printf '%s' "$out" > "$d/out"
 		[ $serial = 1 ] && printf '%s' "$rtout" > "$d/rt.out"
 	done
@@ -223,6 +230,12 @@ run_case() {
 		failed=$((failed + 1))
 		return
 	fi
+	if [ $gencs = 1 ] && [ $config = 1 ]; then
+		echo "FAIL $name"
+		echo "@gencs compares the runs of hxc's and gencs's output, and a @runtimeconfig case does not run"
+		failed=$((failed + 1))
+		return
+	fi
 	casedir="$(mktemp -d "$tmproot/case.XXXXXX")"
 	local file
 	file="$(source_file "$module")"
@@ -234,14 +247,22 @@ run_case() {
 	# --cs adds -lib hxcs, and haxelib would find the checkout's own .haxelib above the case directory;
 	# --haxelib-global, which only counts after the library, keeps the global hxcs.
 	set -f
-	local cout
-	cout="$("$compiler" --cwd "$(native "$casedir")" -cp . "${main[@]}" --cs a/P --haxelib-global -D dotnet $extra 2>&1)"
+	local cout ccode=0
+	cout="$("$compiler" --cwd "$(native "$casedir")" -cp . "${main[@]}" --cs a/P --haxelib-global -D dotnet $extra 2>&1)" || ccode=$?
 	"$compiler" --cwd "$(native "$casedir")" -cp . "${main[@]}" --cs b/P --haxelib-global -D dotnet $extra > /dev/null 2>&1
 	set +f
 
 	local result="" problem="" dll="" f
 	[ -n "$cout" ] && result="[compile]"$'\n'"$cout"
 	for f in "$casedir"/a/P/*.dll; do [ -f "$f" ] && dll="$f" && break; done
+	# A @gencs case that is not expected to fail compiling must give an assembly to compare.
+	if [ $gencs = 1 ] && ! printf '%s\n' "$expected" | grep -qx '\[compile\]'; then
+		if [ $ccode != 0 ]; then
+			problem="${problem}hxc failed (exit $ccode)"$'\n'
+		elif [ -z "$dll" ]; then
+			problem="${problem}hxc wrote no .dll"$'\n'
+		fi
+	fi
 	if [ -n "$dll" ]; then
 		for f in "$casedir"/a/P/*; do
 			if ! cmp -s "$f" "$casedir/b/P/$(basename "$f")"; then
