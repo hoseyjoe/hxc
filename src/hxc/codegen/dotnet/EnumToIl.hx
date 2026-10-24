@@ -104,9 +104,10 @@ class EnumToIl {
 		return !e.isExtern && HxGen.isHxGen(TEnumDecl(e));
 	}
 
-	// The enum whose classes values of type `t` belong to, or null.
+	// The enum whose classes values of type `t` belong to, or null. An abstract over the enum (haxeui's
+	// Variant) holds the same values.
 	public static function enumOfType(t:T):Null<TEnum> {
-		return switch (TypeFunctions.follow(t)) {
+		return switch (TypeFunctions.followWithAbstracts(t)) {
 			case TEnum(e, _) if (isHxGenEnum(e)): e;
 			case _: null;
 		}

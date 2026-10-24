@@ -8060,3 +8060,62 @@ class P {
 	}
 }
 ===
+--- abstract-enum-switch @gencs
+// haxeui's Variant: an abstract over an enum, switched on with the enum's patterns.
+enum VT {
+	VI(s:Int);
+	VS(s:String);
+	VN;
+}
+
+abstract V(VT) from VT {
+	public function new(x) this = x;
+
+	public var isNumber(get, never):Bool;
+
+	function get_isNumber():Bool {
+		return switch (this) {
+			case VI(_): true;
+			case _: false;
+		}
+	}
+}
+
+class P {
+	static function toDyn(v:V):Dynamic {
+		var d:Dynamic = v;
+		if (v != null) {
+			switch (v) {
+				case VT.VI(y): d = y;
+				case VT.VS(y): d = y;
+				case VT.VN: d = "none";
+			}
+		}
+		return d;
+	}
+
+	static function name(w:V):String {
+		return switch (w) {
+			case VI(n) if (n > 9): "big";
+			case VI(_): "int";
+			case VS(s): "str " + s;
+			case VN: "none";
+		}
+	}
+
+	static function main() {
+		Sys.println(toDyn(VI(3)));
+		Sys.println(toDyn(VS("a")));
+		Sys.println(toDyn(VN));
+		Sys.println(toDyn(null));
+		Sys.println(new V(VI(1)).isNumber + " " + new V(VN).isNumber);
+		for (v in [VI(10), VI(2), VS("x"), VN])
+			Sys.println(name(v));
+		var f = (v:V) -> switch (v) {
+			case VS(s): s.length;
+			case _: -1;
+		};
+		Sys.println(f(VS("abc")) + f(VN));
+	}
+}
+===
