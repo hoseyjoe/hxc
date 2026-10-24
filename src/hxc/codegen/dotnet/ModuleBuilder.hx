@@ -92,6 +92,12 @@ class ModuleBuilder {
 		tables.interfaceImpl.push([row(typeDefToken), typeDefOrRef]);
 	}
 
+	// Makes the method `body` (a MethodDef token) of the type the implementation of `declaration` (a
+	// MethodDef or MemberRef token), as C#'s explicit interface implementations are.
+	public function methodImpl(typeDefToken:Int, body:Int, declaration:Int):Void {
+		tables.methodImpl.push([row(typeDefToken), coded(T.IMethodDefOrRef, body), coded(T.IMethodDefOrRef, declaration)]);
+	}
+
 	public function field(owner:Int, flags:Int, name:String, sig:Bytes):Int {
 		tables.field.push([flags, heaps.strings.add(name), heaps.blobs.add(sig)]);
 		fieldOwners.push(row(owner));

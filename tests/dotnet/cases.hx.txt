@@ -951,9 +951,6 @@ class A {
 class B extends A {
 	override public function get():String return "s";
 }
-interface HasVar {
-	var x:Int;
-}
 class G<T> {
 	public function new() {}
 }
@@ -965,8 +962,7 @@ class P {
 }
 ===
 [compile]
-P.hx:9: characters 2-12 : dotnet: interface variables are not supported yet
-P.hx:17: characters 18-38 : dotnet: a cast between instantiations of G is not supported yet
+P.hx:14: characters 18-38 : dotnet: a cast between instantiations of G is not supported yet
 
 --- struct-mutation-through-fields
 @:struct class Vec {
@@ -1048,11 +1044,11 @@ Explicit body
 Base.new sees z=Explicit.z
 --- class-and-struct-declaration-errors
 interface Named {
-	function name():Dynamic;
+	function name(x:Int):Void;
 }
 class Wide implements Named {
 	public function new() {}
-	public function name():String return "w";
+	public function name(x:Dynamic):Void {}
 }
 interface Plain {
 	function name():String;
@@ -1093,7 +1089,7 @@ class P {
 }
 ===
 [compile]
-P.hx:4: lines 4-7 : dotnet: interface methods implemented with other types are not supported yet
+P.hx:4: lines 4-7 : dotnet: interface methods implemented with other parameter types are not supported yet
 P.hx:15: characters 1-54 : dotnet: interface methods implemented by a final inherited method are not supported yet
 P.hx:16: lines 16-22 : dotnet: properties of .NET interfaces are not supported yet
 P.hx:24: characters 10-41 : dotnet: structs that extend a class are not supported yet
@@ -6345,13 +6341,6 @@ G___hx_ctor__G_36__Fun_0
 	public function new(a:Int) this.a = a;
 	public dynamic function d() return 1;
 }
-interface I {
-	dynamic function f():Int;
-}
-class C implements I {
-	public function new() {}
-	public dynamic function f():Int return 4;
-}
 class Base {
 	public function new() {}
 	public function m() return 1;
@@ -6363,23 +6352,15 @@ class P {
 	static function main() {
 		Sys.println(new Nat().nd(4));
 		Sys.println(new S(1).d());
-		var i:I = new C();
-		Sys.println(i.f());
-		i.f = () -> 9;
 		Sys.println(new Sub().d());
-		Sys.println(Type.getInstanceFields(I));
 	}
 }
 ===
 [compile]
 P.hx:9: characters 2-38 : dotnet: dynamic methods in structs are not supported yet
-P.hx:12: characters 2-27 : dotnet: dynamic methods in interfaces are not supported yet
-P.hx:14: lines 14-17 : dotnet: I (left out: dynamic methods in interfaces) is not supported yet
-P.hx:28: characters 15-25 : dotnet: S (left out: dynamic methods in structs) is not supported yet
-P.hx:29: characters 13-20 : dotnet: C (left out: I (left out: dynamic methods in interfaces)) is not supported yet
-P.hx:33: characters 38-39 : dotnet: I (left out: dynamic methods in interfaces) is not supported yet
+P.hx:21: characters 15-25 : dotnet: S (left out: dynamic methods in structs) is not supported yet
 P.hx:4: characters 51-52 : dotnet: dynamic methods that use this outside gencs's class model are not supported yet
-P.hx:23: characters 37-42 : dotnet: super.method() calls in dynamic methods are not supported yet
+P.hx:16: characters 37-42 : dotnet: super.method() calls in dynamic methods are not supported yet
 --- run-timeout @run-timeout=3
 class P {
 	static function main() {
@@ -7443,3 +7424,463 @@ class P {
 	}
 }
 ===
+# A Haxe interface's variables and dynamic methods are no members of the CLR interface (gencs's
+# InterfaceVarsDeleteModf): through the interface they are Runtime.getField/setField/callField, as
+# for a Dynamic, through a parameter, a field, a local, a type parameter and a closure; a property's
+# accessors are the interface's methods, which Type.getInstanceFields lists.
+--- interface-variables @gencs
+interface I {
+	var x:Int;
+	var s:String;
+	var p(get, set):Float;
+	var r(default, null):String;
+	var n:Null<Int>;
+	var cb:Int->Int;
+	dynamic function d(a:Int):Int;
+	function m():Int;
+}
+interface J extends I {
+	var y:Float;
+	var w(default, set):Int;
+}
+interface G<T> {
+	var v:T;
+}
+class C implements J implements G<String> {
+	public var x:Int = 3;
+	public var s:String = "s";
+	public var p(get, set):Float;
+	public var r(default, null):String = "r";
+	public var n:Null<Int>;
+	public var cb:Int->Int;
+	public var y:Float = 0.5;
+	public var w(default, set):Int = 0;
+	public var v:String = "v";
+	var pv = 1.5;
+	public function new() {
+		cb = a -> a * 3;
+	}
+	function get_p() return pv;
+	function set_p(v:Float) return pv = v;
+	function set_w(v:Int) return w = v + 100;
+	public dynamic function d(a:Int):Int return a - 1;
+	public function m() return x + 1;
+}
+class Holder {
+	public var i:I;
+	public function new(i:I) this.i = i;
+}
+class P {
+	static function show(i:I) {
+		Sys.println(i.x + " " + i.s + " " + i.p + " " + i.r + " " + i.n + " " + i.m());
+	}
+	static function twice<T:J>(t:T):Float {
+		t.y *= 2;
+		return t.y;
+	}
+	static function main() {
+		var j:J = new C();
+		var i:I = j;
+		show(i);
+		i.x = 10;
+		i.x += 5;
+		i.x++;
+		Sys.println(++i.x);
+		i.s = "t";
+		i.s += "u";
+		i.p = 2.5;
+		i.n = 4;
+		Sys.println(i.n + 1);
+		show(i);
+		var h = new Holder(new C());
+		h.i.x = 8;
+		h.i.p = 1.25;
+		show(h.i);
+		Sys.println(i.cb(2) + " " + i.d(10));
+		var dd = i.d;
+		Sys.println(dd(20));
+		i.d = a -> a * a;
+		Sys.println(i.d(7) + " " + dd(7));
+		j.y += 1.25;
+		j.w = 5;
+		Sys.println(j.y + " " + j.w + " " + twice(j));
+		var c:C = cast j;
+		var g:G<String> = c;
+		g.v += "!";
+		Sys.println(g.v + " " + g.v.length);
+		var read = () -> i.x * 2;
+		Sys.println(read());
+		Sys.println(Reflect.field(i, "x") + " " + Reflect.fields(i).length);
+		var none:I = null;
+		Sys.println(none == null);
+		Sys.println(Type.getInstanceFields(I));
+		Sys.println(Type.getInstanceFields(J));
+		Sys.println(Type.getInstanceFields(G));
+	}
+}
+===
+[run]
+3 s 1.5 r null 4
+17
+5
+17 tu 2.5 r 4 18
+8 s 1.25 r null 9
+6 9
+19
+49 6
+1.75 105 3.5
+v! 2
+34
+17 11
+True
+[get_p,set_p,m]
+[set_w]
+[]
+# A switch on a Dynamic with enum patterns: gencs reads the index with Type.enumIndex(d), which casts
+# to haxe.lang.Enum (InvalidCastException for a String), and an argument as ((E)d as E_C).arg, so a
+# value of another enum matches by index alone.
+--- dynamic-enum-switch @gencs + -dce full
+enum E {
+	A;
+	B(x:Int);
+	C(s:String, n:Float);
+}
+enum F {
+	FA;
+	FB(e:E);
+}
+class P {
+	static function f(d:Dynamic):String {
+		return switch (d) {
+			case A: "a";
+			case B(x): "b" + (x + 1);
+			case C(s, n): "c" + s + n;
+			case _: "other";
+		}
+	}
+	static function g(d:Dynamic):String {
+		return switch (d) {
+			case FB(B(x)) if (x > 1): "fbb" + x;
+			case FB(e): "fb" + Type.enumConstructor(e);
+			case FA: "fa";
+			case _: "?";
+		}
+	}
+	static function main() {
+		Sys.println(f(A));
+		Sys.println(f(B(2)));
+		Sys.println(f(C("s", 1.5)));
+		Sys.println(g(FB(B(5))));
+		Sys.println(g(FB(B(0))));
+		Sys.println(g(FA));
+		var d:Dynamic = C("t", 2);
+		switch (d) {
+			case C(s, _): Sys.println(s);
+			case _:
+		}
+		try {
+			Sys.println(f("str"));
+		} catch (e:Dynamic) {
+			Sys.println("threw " + Type.getClassName(Type.getClass(e)));
+		}
+		try {
+			Sys.println(f(FA));
+		} catch (e:Dynamic) {
+			Sys.println("threw " + Type.getClassName(Type.getClass(e)));
+		}
+	}
+}
+===
+[run]
+a
+b3
+cs1.5
+fbb5
+fbB
+fa
+t
+threw System.InvalidCastException
+a
+# The server app's build flags: full DCE must keep the enum constructor classes, the closure classes,
+# __hx_constructs and the Serializer's paths as gencs keeps them.
+--- serverapp-flags @gencs + -dce full -D analyzer-optimize -D net-ver=40
+enum Shape {
+	Dot;
+	Circle(r:Float);
+	Rect(w:Int, h:Int);
+}
+class Counter {
+	public var n = 0;
+	public function new() {}
+	public dynamic function step(by:Int):Int return n += by;
+}
+class P {
+	static function main() {
+		var shapes = [Dot, Circle(1.5), Rect(2, 3)];
+		var describe = (s:Shape) -> switch (s) {
+			case Dot: "dot";
+			case Circle(r): "circle " + r;
+			case Rect(w, h): "rect " + (w * h);
+		};
+		Sys.println(shapes.map(describe).join(", "));
+		var c = new Counter();
+		c.step(2);
+		c.step = by -> c.n -= by;
+		Sys.println(c.step(5));
+		var s = haxe.Serializer.run(Rect(4, 5));
+		Sys.println(s);
+		var back:Shape = haxe.Unserializer.run(s);
+		Sys.println(describe(back) + " " + Type.enumEq(back, Rect(4, 5)));
+		var o = haxe.Serializer.run({name: "x", shape: Circle(2), list: [Dot]});
+		Sys.println(o);
+		var ob:Dynamic = haxe.Unserializer.run(o);
+		Sys.println(ob.name + " " + describe(ob.shape) + " " + ob.list.length);
+		Sys.println(Type.getEnumConstructs(Shape));
+	}
+}
+===
+# A switch on a Float, which gencs's SwitchToIf turns into comparisons in case order (NaN matches
+# nothing, -0.0 matches 0).
+--- float-switch @gencs
+class P {
+	static function kind(days:Float):String {
+		return switch (days) {
+			case 7 | 3: "soon";
+			case 0: "due";
+			case -1.5: "odd";
+			case _: "other";
+		}
+	}
+	static function main() {
+		for (d in [7.0, 3, 0, -0.0, -1.5, 2.5, Math.NaN]) Sys.println(kind(d));
+		var n:Null<Float> = 3;
+		switch (n) {
+			case 3: Sys.println("three");
+			case 4: Sys.println("four");
+			case _: Sys.println("not");
+		}
+	}
+}
+===
+[run]
+soon
+soon
+due
+due
+odd
+other
+other
+three
+# Comparisons with a Single operand, as C# binds them: in Double with a Float operand, else in
+# Single, NaN comparing false.
+--- single-comparisons @gencs
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+}
+class P {
+	static function main() {
+		var s:Single = 0.5;
+		var f = 0.6;
+		var i = 1;
+		Sys.println((s >= f) + " " + (s < f) + " " + (s == 0.5) + " " + (s > i) + " " + (i >= s) + " " + (f != s));
+		var nan:Single = Math.NaN;
+		Sys.println((nan >= f) + " " + (nan < f) + " " + (nan != f) + " " + (nan == nan) + " " + (nan <= s));
+		var b = new Box<Single>(0.75);
+		Sys.println(b.v >= f);
+		var arr = [b, new Box<Single>(0.25)];
+		Sys.println(arr.filter(m -> m.v >= f).length);
+		var ns:Null<Single> = 0.5;
+		Sys.println(ns <= f);
+		var t:Single = 0.1;
+		Sys.println((t == 0.1) + " " + (t < 0.1) + " " + (t > 0.1));
+	}
+}
+===
+[run]
+false true true false true true
+false false true false false
+True
+1
+True
+false false true
+# A captured local that is written is boxed by the captured_vars filter, `__array__(init)`; an
+# initializer with a loop (the inlined Array.map) is evaluated before the array is made.
+--- captured-variable-loop-initializer @gencs
+typedef Cfg = {name:String};
+typedef Details = {saved:Array<Cfg>};
+class P {
+	static function run(f:Int->Void) f(3);
+	static function get(details:Details) {
+		var all = details.saved != null ? details.saved.map(c -> {config: c, extra: null}) : [];
+		run(n -> {
+			for (i in 0...n) all.push({config: {name: "n" + i}, extra: null});
+		});
+		all = all.filter(x -> x.config.name != "n1");
+		return all;
+	}
+	static function main() {
+		Sys.println(get({saved: [{name: "a"}]}).map(x -> x.config.name));
+		Sys.println(get({saved: null}).length);
+	}
+}
+===
+[run]
+[a,n0,n2]
+2
+# An interface method implemented with the same parameter types and another return type (a subclass,
+# Int for Float or Dynamic, through a superclass's method too): gencs's FixOverrides adds a private
+# explicit implementation, `global::<interface>.<name>`, which calls the method and casts the result,
+# the last one made first in the class.
+--- interface-implementations-with-other-types @gencs
+interface IDS {
+	function n():Int;
+}
+class DS implements IDS {
+	public function new() {}
+	public function n() return 1;
+}
+interface I {
+	var record(get, never):IDS;
+	function copy(a:Array<Int>):IDS;
+	function count():Float;
+	function any():Dynamic;
+	function same(x:Int):Int;
+}
+interface IG<T> {
+	function get(a:T):Iterable<T>;
+}
+interface IG2<A, B> {
+	function pair(a:A, b:B):Dynamic;
+}
+class Base {
+	public function new() {}
+	public function copy(a:Array<Int>) return new DS();
+}
+class C extends Base implements I implements IG<String> implements IG2<String, Int> {
+	public var record(get, never):IDS;
+	function get_record() return new DS();
+	public function count():Int return 7;
+	public function any():Int return 8;
+	public function same(x:Int) return x + 1;
+	public function get(a:String) return [a, a];
+	public function pair(a:String, b:Int):String return a + b;
+}
+class Sub extends C {
+	override public function count():Int return 9;
+}
+class P {
+	static function main() {
+		var i:I = new C();
+		Sys.println(i.copy([]).n() + " " + i.record.n() + " " + i.count() + " " + i.any() + " " + i.same(1));
+		var c = new C();
+		var ds:DS = c.copy([]);
+		Sys.println(ds.n() + " " + c.count());
+		var s:I = new Sub();
+		Sys.println(s.count());
+		var g:IG<String> = c;
+		Sys.println(Lambda.count(g.get("x")));
+		var g2:IG2<String, Int> = c;
+		Sys.println(g2.pair("a", 1));
+		var d:Dynamic = c;
+		Sys.println(d.count());
+		Sys.println([for (f in Type.getInstanceFields(C)) if (!StringTools.endsWith(f, "_cast")) f]);
+		var flags:cs.system.reflection.BindingFlags = cast 38; // NonPublic | Instance | DeclaredOnly
+		var ms:cs.NativeArray<cs.system.reflection.MethodInfo> = cs.Lib.toNativeType(C).GetMethods(flags);
+		for (m in ms) if (m.Name.indexOf(".") >= 0) Sys.println(m.Name + " " + Std.string(m.Attributes));
+	}
+}
+===
+[run]
+1 1 7 8 2
+1 7
+9
+2
+a1
+7
+[get_record,count,any,same,get,pair,copy]
+global::I.any Private, Final, Virtual, HideBySig, VtableLayoutMask
+global::I.count Private, Final, Virtual, HideBySig, VtableLayoutMask
+global::I.copy Private, Final, Virtual, HideBySig, VtableLayoutMask
+global::IG<System.String>.get Private, Final, Virtual, HideBySig, VtableLayoutMask
+global::IG2<System.String,System.Int32>.pair Private, Final, Virtual, HideBySig, VtableLayoutMask
+# A switch on Type.typeof's TClass argument, a Class value against type expressions: gencs's
+# SwitchToIf compares with Runtime.refEq in case order.
+--- type-typeof-switch @gencs
+class P {
+	static function kind(input:Dynamic):String {
+		return switch (Type.typeof(input)) {
+			case TClass(String): "string";
+			case TClass(Array): "array";
+			case TInt | TFloat: "number";
+			case TBool: "bool";
+			case TEnum(e): "enum " + Type.getEnumName(e);
+			case TObject: "object";
+			case TNull: "null";
+			case _: "other";
+		}
+	}
+	static function main() {
+		for (v in ([("s" : Dynamic), [1], 2, 2.5, true, haxe.ds.Option.Some(1), {a: 1}, null] : Array<Dynamic>)) Sys.println(kind(v));
+	}
+}
+===
+[run]
+string
+array
+number
+number
+bool
+enum haxe.ds.Option
+object
+null
+# Interface variables as haxeui-core declares them: properties with (get, set) and (get, null) whose
+# accessors a superclass declares, a method with a default argument, a variable of a function type
+# compared with null and called.
+--- interface-variable-shapes @gencs
+interface IValidating {
+	var depth(get, set):Int;
+	var isOff(get, null):Bool;
+	function validate(nextFrame:Bool = true):Void;
+}
+interface IDataItem {
+	var onChanged:Void->Void;
+}
+class Component {
+	public function new() {}
+	var _depth = 0;
+	public var depth(get, set):Int;
+	function get_depth() return _depth;
+	function set_depth(v:Int) return _depth = v * 10;
+	public var isOff(get, null):Bool;
+	function get_isOff() return _depth > 5;
+}
+class Button extends Component implements IValidating implements IDataItem {
+	public var onChanged:Void->Void;
+	public function validate(nextFrame:Bool = true) Sys.println("validate " + nextFrame);
+}
+class P {
+	static function main() {
+		var v:IValidating = new Button();
+		Sys.println(v.depth + " " + v.isOff);
+		v.depth = 1;
+		v.depth += 2;
+		Sys.println(v.depth + " " + v.isOff);
+		v.validate();
+		var d:IDataItem = cast v;
+		Sys.println(d.onChanged == null);
+		d.onChanged = () -> Sys.println("changed");
+		if (d.onChanged != null) d.onChanged();
+		Sys.println(Type.getInstanceFields(IValidating));
+		Sys.println(Type.getInstanceFields(IDataItem));
+	}
+}
+===
+[run]
+0 false
+120 true
+validate true
+True
+changed
+[get_depth,set_depth,get_isOff,validate]
+[]

@@ -309,6 +309,15 @@ class TexprOps {
 				var x = idx1 != null ? idx1 : idx2;
 				tl.texpr(RValue(tl.sig(x.value.type)), x.value);
 				tl.calls.externEnumLiteral(x.en, TexprToIl.enumFieldAt(x.en, idx1 != null ? constInt(e2) : constInt(e1)));
+			} else if ((s1.match(LFloat32) || s2.match(LFloat32)) && (isNumeric(s1) || s1.match(LFloat32))
+				&& (isNumeric(s2) || s2.match(LFloat32))) {
+				// A Single operand, as C# binds it (singleBinary): in Double with a Float operand, else in Single.
+				var t = s1.match(LFloat64) || s2.match(LFloat64) ? LFloat64 : LFloat32;
+				isFloat = true;
+				tl.nullOperand(RValue(s1), e1);
+				tl.convert(s1, t);
+				tl.nullOperand(RValue(s2), e2);
+				tl.convert(s2, t);
 			} else if (mixesUIntAndInt(s1, s2)) {
 				tl.nullOperand(RValue(s1), e1);
 				widen(s1);
@@ -416,6 +425,21 @@ class TexprOps {
 		if (op.match(OpNotEq)) not();
 		tl.coerce(LBool, ret);
 		return true;
+	}
+
+	// Whether a switch case's value compares with a Class or Enum subject as `==` on types does
+	// (typeEquality): a type expression, or a Class or Enum value.
+	static function isTypeCase(v:TExpr):Bool {
+		var k = typeOperand(v);
+		return k != null && k != ONull;
+	}
+
+	// With a Class or Enum subject on the stack, as a System.Type, pushes whether the case's value
+	// (isTypeCase) equals it, as typeEquality compares.
+	function typeCase(v:TExpr):Void {
+		var ref = typeOperand(v) == OStatics;
+		tl.texpr(RValue(ref ? LObject : TexprCalls.systemType), v);
+		tl.dyn.runtimeCall(ref ? "refEq" : "typeEq");
 	}
 
 	// The .NET class whose operators C# looks up for a value of type `t`: its own, or for a Haxe class

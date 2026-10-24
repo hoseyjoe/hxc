@@ -98,7 +98,8 @@ class TexprCalls {
 			case TConst(TThis) if (tl.thisSig != null && DotnetTypes.isValueType(tl.thisSig)):
 				code.ldarg(0);
 				return true;
-			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
+			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))
+				&& !TexprDynamic.isInterfaceField(c, cf)):
 				var f = instanceField(c, cparams, cf);
 				receiver(obj, f.owner, forStore);
 				code.opToken(IlOps.LDFLDA, f.token, 1, 1);
@@ -179,6 +180,9 @@ class TexprCalls {
 			case FClosure(null, cf):
 				// A method of an anonymous structure is one of its fields.
 				if (!TexprDynamic.isDynamic(obj.type)) throw new Unsupported("method closures", true);
+				tl.dyn.fieldGet(ret, e, obj, cf.name, e.type, true);
+			case FInstance(_, _, cf) | FClosure(_, cf) if (TexprDynamic.isDynamicReceiver(fa, obj)):
+				// A variable or dynamic method of a Haxe interface, through Runtime.getField as gencs reads it.
 				tl.dyn.fieldGet(ret, e, obj, cf.name, e.type, true);
 			case FStatic(c, cf) if (!isExtern(c) && isMethod(cf)):
 				// A static method as a value: `new Closure(typeof(C), "name", hash)`.
@@ -407,8 +411,9 @@ class TexprCalls {
 				code.opToken(IlOps.CALLVIRT, g.mb.memberRef(g.typeTokenOf(LObject), name, g.sigs.method(true, m, [for (_ in args) LObject], 0)),
 					args.length + 1, 1);
 				tl.coerce(m, ret);
-			case TField(obj, fa = FDynamic(_) | FAnon(_)) if (TexprDynamic.isDynamicReceiver(fa, obj)):
-				// Runtime.callField, as gencs calls a method of a Dynamic.
+			case TField(obj, fa = FDynamic(_) | FAnon(_) | FInstance(_, _, _)) if (TexprDynamic.isDynamicReceiver(fa, obj)):
+				// Runtime.callField, as gencs calls a method of a Dynamic, or a variable of a function type or
+				// a dynamic method of a Haxe interface.
 				tl.dyn.fieldCall(ret, e, obj, TexprDynamic.fieldName(fa), args);
 			case TField(_, FStatic(c, cf)) if (isStd(c) && cf.name == "string" && args.length == 1 && stringArg(args[0]) != null):
 				// A value of a known type prints as in a concatenation, Bool as true or false.
@@ -636,16 +641,36 @@ class TexprCalls {
 	function newVector(ret:Ret, e:TExpr, args:Array<TExpr>):Void {
 		var elem = vectorElement(tl.sig(e.type));
 		var elemToken = g.typeTokenOf(elem);
+		for (a in args) if (strip(a).expr.match(TUnop(Spread, _, _))) throw new Unsupported("the spread operator", false);
+		// When an element holds a loop, whose head needs an empty stack, the elements are evaluated first,
+		// in order, into locals, as gencs's C# evaluates a block it hoists out of the initializer.
+		var temps:Null<Array<Int>> = null;
+		if (Lambda.exists(args, hasLoop)) temps = [
+			for (a in args) {
+				tl.texpr(RValue(elem), a);
+				var t = code.addLocal(elem);
+				code.stloc(t);
+				t;
+			}
+		];
 		code.ldcI4(args.length);
 		code.opToken(IlOps.NEWARR, elemToken, 1, 1);
 		for (i in 0...args.length) {
-			if (strip(args[i]).expr.match(TUnop(Spread, _, _))) throw new Unsupported("the spread operator", false);
 			code.op(IlOps.DUP, 1, 2);
 			code.ldcI4(i);
-			tl.texpr(RValue(elem), args[i]);
+			if (temps != null) code.ldloc(temps[i]) else tl.texpr(RValue(elem), args[i]);
 			code.stelem(elem, () -> elemToken);
 		}
 		tl.coerce(LVector(elem), ret);
+	}
+
+	// Whether `e` holds a loop; a local function's body is its own method.
+	static function hasLoop(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TWhile(_, _, _) | TFor(_, _, _): true;
+			case TFunction(_): false;
+			case _: TexprTools.checkExpr(hasLoop, e);
+		}
 	}
 
 	// gencs's magic identifiers in untyped code, which hxcs's std uses: `__as__(e)` is C#'s `e as T`

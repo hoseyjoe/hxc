@@ -720,11 +720,24 @@ class TexprToIl {
 				texpr(RValue(sig(e1.type)), e1);
 				code.opToken(IlOps.LDFLD, g.enumPlans.get(EnumToIl.enumOfType(e1.type)).hxIndex, 1, 1);
 				coerce(LInt32, ret);
+			case TEnumIndex(e1) if (TexprDynamic.isDynamic(e1.type)):
+				// A switch on a Dynamic with enum patterns: gencs's Type.enumIndex(d), which casts it to
+				// haxe.lang.Enum (or finds a .NET enum's value among its type's).
+				texpr(RValue(LObject), e1);
+				var type = g.runtimeClass("Type");
+				var cf = type == null ? null : type.statics.get("enumIndex");
+				var token = cf == null ? null : g.methodTokens.get(cf);
+				if (token == null) throw new Unsupported("enum patterns on a Dynamic without Type.enumIndex", false);
+				g.types.checkKept(TClassDecl(type));
+				code.opToken(IlOps.CALL, token, 1, 1);
+				coerce(LInt32, ret);
 			case TEnumParameter(e1, ef, i) if (EnumToIl.isHxGenEnum(EnumToIl.enumOf(ef))):
 				// `(e as <Enum>_<Ctor>).<arg>`, converted from the argument's erased type to the expression's,
-				// as gencs reads an Opt<Int>'s Some(v) with Runtime.toInt.
+				// as gencs reads an Opt<Int>'s Some(v) with Runtime.toInt; a Dynamic is first cast to the
+				// enum's class, `((<Enum>) d as <Enum>_<Ctor>).<arg>`.
 				texpr(RValue(sig(e1.type)), e1);
 				var plan = g.enumPlans.get(EnumToIl.enumOf(ef));
+				if (EnumToIl.enumOfType(e1.type) == null) code.opToken(IlOps.CASTCLASS, plan.baseToken(), 1, 1);
 				code.opToken(IlOps.ISINST, plan.ctorToken(ef), 1, 1);
 				code.opToken(IlOps.LDFLD, plan.param(ef, i), 1, 1);
 				var t = sig(e.type);
@@ -1054,6 +1067,9 @@ class TexprToIl {
 				volatilePrefix(cf);
 				code.opToken(IlOps.STSFLD, f.token, 1, 0);
 				if (needVal(ret)) coerce(f.sig, ret);
+			case TField(obj, fa) if (TexprDynamic.isDynamicReceiver(fa, obj)):
+				// Runtime.setField, as gencs assigns a field of a Dynamic or a variable of a Haxe interface.
+				dyn.fieldSet(ret, lhs, obj, TexprDynamic.fieldName(fa), rhs, lhs.type);
 			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c)):
 				var f = calls.instanceField(c, cparams, cf);
 				calls.receiver(obj, f.owner, true);
@@ -1088,9 +1104,6 @@ class TexprToIl {
 					case _:
 						throw new Unsupported("assignments to a read-only .NET member", true);
 				}
-			case TField(obj, fa) if (TexprDynamic.isDynamicReceiver(fa, obj)):
-				// Runtime.setField, as gencs assigns a field of a Dynamic.
-				dyn.fieldSet(ret, lhs, obj, TexprDynamic.fieldName(fa), rhs, lhs.type);
 			case _:
 				throw new Unsupported("this kind of assignment", false);
 		}
@@ -1197,7 +1210,8 @@ class TexprToIl {
 						code.opToken(IlOps.STSFLD, f.token, 1, 0);
 					}
 				};
-			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))):
+			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))
+				&& !TexprDynamic.isInterfaceField(c, cf)):
 				var f = calls.instanceField(c, cparams, cf);
 				return {
 					sig: f.sig,

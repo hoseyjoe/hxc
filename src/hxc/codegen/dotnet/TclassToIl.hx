@@ -42,6 +42,8 @@ enum MethodKind {
 	MBridge(cf:TClassField);
 	// A member of one of the classes an hxgen enum becomes (EnumToIl).
 	MEnum(e:TEnum, member:EnumMember);
+	// An interface method the class implements with a method of other types (InterfaceBridge).
+	MInterfaceBridge(b:InterfaceBridge);
 }
 
 // How an override takes the slot of the method it overrides, as gencs's FixOverrides fixes one whose
@@ -107,6 +109,20 @@ typedef ClassPlan = {
 
 // An interface a class implements, with its type arguments in terms of the class's type parameters.
 private typedef ImplementedInterface = {c:TClass, params:Array<T>, sig:IlSigNorm};
+
+// An interface method `im` of `iface` that the method `target` of `owner` (the class or a superclass,
+// with type arguments `ownerParams` in terms of the class's type parameters) implements with the same
+// parameter types and another return type. As gencs's FixOverrides writes it, the class gets an
+// explicit implementation `global::<interface>.<name>` with the interface's signature `want`, which
+// calls the method and casts its result.
+typedef InterfaceBridge = {
+	iface:ImplementedInterface,
+	im:TClassField,
+	want:{args:Array<IlSigNorm>, ret:IlSigNorm},
+	target:TClassField,
+	owner:TClass,
+	ownerParams:Array<T>
+};
 
 class TypeAttrs {
 	public static inline var PUBLIC = 0x1;
@@ -202,18 +218,17 @@ class TclassToIl {
 		if (model && c.superClass == null && DotnetTypes.haxePath(TClassDecl(c)) != DotnetCtx.hxObjectPath)
 			superSig = LClass(g.types.stdClassPath(DotnetCtx.hxObjectPath, "haxe.lang.HxObject", false), []);
 		var interfaces = interfaceClosure(g, c);
-		if (isInterface) for (cf in c.orderedFields) switch (cf.kind) {
-			case Var(_): throw at(new Unsupported("interface variables", true), cf.pos);
-			// A field, which a CLR interface cannot have either.
-			case Method(MethDynamic): throw at(new Unsupported("dynamic methods in interfaces", true), cf.pos);
-			case Method(_):
-		}
-		var implementing = isInterface ? new ObjectMap() : interfaceImpls(g, c, interfaces);
+		var impls = isInterface ? null : interfaceImpls(g, c, interfaces);
+		var implementing = impls == null ? new ObjectMap<TClassField, Bool>() : impls.own;
 
 		var fields:Array<FieldPlan> = [];
 		function addFields(list:Array<TClassField>, isStatic:Bool) {
 			for (cf in list) {
 				if (TypeFunctions.hasClassFieldFlag(cf, CfExtern) || !TypeFunctions.isPhysicalField(cf)) continue;
+				// As gencs's InterfaceVarsDeleteModf leaves them off, an interface has no fields, which a CLR
+				// interface cannot have: its variables and dynamic methods are reached through Runtime
+				// (TexprDynamic.isInterfaceField), its properties' accessors are its methods.
+				if (isInterface && !isStatic) continue;
 				try {
 					switch (cf.kind) {
 						case Var(_):
@@ -376,6 +391,11 @@ class TclassToIl {
 			checkParameterlessBase(g, c);
 			methods.push(implicitCtor(c.pos, TypeFunctions.hasClassFlag(c, CAbstract)));
 		}
+		// gencs adds each bridge in front of the class's fields, so the last one made comes first.
+		if (impls != null) for (b in impls.bridges) {
+			if (isStruct) throw new Unsupported("interface methods implemented with other types", true);
+			methods.push(bridgeMethod(g, c, b));
+		}
 		for (cf in c.orderedFields) addMethod(cf, false, false);
 		for (r in ReflectionMembers.members(g, c)) methods.push(ReflectionMembers.plan(g, c, r));
 		var toString = isInterface ? null : c.fields.get("toString");
@@ -491,10 +511,13 @@ class TclassToIl {
 			|| cf.kind.match(Method(MethInline));
 	}
 
-	// The class's own methods that implement an interface method. The CLR matches an implementation
-	// by name and exact signature, so an interface method without one it would match throws.
-	static function interfaceImpls(g:DotnetCtx, c:TClass, interfaces:Array<ImplementedInterface>):ObjectMap<TClassField, Bool> {
+	// The class's own methods that implement an interface method, and the bridges for interface methods
+	// it implements with other types, in the order gencs adds them to the class (last made first). The
+	// CLR matches an implementation by name and exact signature, so an interface method without one it
+	// would match throws.
+	static function interfaceImpls(g:DotnetCtx, c:TClass, interfaces:Array<ImplementedInterface>):{own:ObjectMap<TClassField, Bool>, bridges:Array<InterfaceBridge>} {
 		var own = new ObjectMap<TClassField, Bool>();
+		var bridges:Array<InterfaceBridge> = [];
 		var ihx = g.runtimeClass("cs.internal.IHxObject");
 		for (i in interfaces) {
 			// The reflection members, which the class or HxObject has, implement IHxObject.
@@ -504,10 +527,10 @@ class TclassToIl {
 				switch (im.kind) {
 					case Var(_):
 						if (isExternInterface) throw new Unsupported("properties of .NET interfaces", true);
-						// A Haxe interface with variables is left out, and this class with it.
+						// A Haxe interface's variable is no member of the CLR interface.
 						continue;
 					case Method(MethDynamic):
-						// Likewise one with dynamic methods.
+						// Nor is a dynamic method.
 						continue;
 					case Method(MethMacro):
 						continue;
@@ -531,15 +554,78 @@ class TclassToIl {
 						name = DotnetNames.fieldName(i.c, f.name);
 						want = methodSig(g, i.c, i.params, f);
 					}
-					findImplementation(g, c, f.name, name, want, own);
+					var other = findImplementation(g, c, f.name, name, want, own);
+					if (other == null) continue;
+					if (isExternInterface || f.params.length > 0 || other.cf.params.length > 0 || im.overloads.length > 0)
+						throw new Unsupported("interface methods implemented with other types", true);
+					var found = methodSig(g, other.owner, other.params, other.cf);
+					if (!IlPaths.sigsEq(found.args, want.args)) throw new Unsupported("interface methods implemented with other parameter types", true);
+					bridges.push({iface: i, im: f, want: want, target: other.cf, owner: other.owner, ownerParams: other.params});
 				}
 			}
 		}
-		return own;
+		return {own: own, bridges: bridgeOrder(c, bridges)};
 	}
 
+	// The bridges in the order gencs adds them in front of the class's fields: it goes through the
+	// interfaces the class lists, each one's own interfaces before its methods, and the last bridge made
+	// comes first.
+	static function bridgeOrder(c:TClass, bridges:Array<InterfaceBridge>):Array<InterfaceBridge> {
+		if (bridges.length == 0) return bridges;
+		var made:Array<InterfaceBridge> = [];
+		function visit(i:TClass) {
+			for (sup in i.interfaces) visit(sup.c);
+			for (im in i.orderedFields) for (b in bridges) if (b.im == im && made.indexOf(b) < 0) made.push(b);
+		}
+		for (i in c.interfaces) visit(i.c);
+		made.reverse();
+		return made;
+	}
+
+	static function bridgeMethod(g:DotnetCtx, c:TClass, b:InterfaceBridge):MethodPlan {
+		var names = switch (TypeFunctions.follow(b.im.type)) {
+			case TFun(sig): [for (a in sig.args) a.name];
+			case _: throw "internal error: a method without a function type";
+		}
+		return {
+			kind: MInterfaceBridge(b),
+			name: "global::" + displayName(c, b.iface.sig) + "." + DotnetNames.fieldName(b.iface.c, b.im.name),
+			flags: MethodAttrs.PRIVATE | MethodAttrs.FINAL | MethodAttrs.VIRTUAL | MethodAttrs.HIDE_BY_SIG | MethodAttrs.NEW_SLOT,
+			hasThis: true,
+			ret: b.want.ret,
+			args: b.want.args,
+			argNames: names,
+			generics: [],
+			pos: b.target.pos,
+			token: 0
+		};
+	}
+
+	// A type as the C# compiler names it in an explicit implementation's name: `pack.I`, its type
+	// arguments in angle brackets, a class's type parameters by name.
+	static function displayName(c:TClass, s:IlSigNorm):String {
+		return switch (s) {
+			case LClass(p, args) | LValueType(p, args):
+				var parts = p.ns.concat(p.nested);
+				var name = p.name;
+				var tick = name.indexOf("`");
+				if (tick >= 0) name = name.substr(0, tick);
+				parts.push(name);
+				parts.join(".") + (args.length == 0 ? "" : "<" + [for (a in args) displayName(c, a)].join(",") + ">");
+			case LTypeParam(i): c.params[i].name;
+			case LVector(e): displayName(c, e) + "[]";
+			case _:
+				var p = DotnetTypes.primitivePath(s);
+				if (p == null) throw new Unsupported("interface methods implemented with other types", true);
+				p.ns.join(".") + "." + p.name;
+		}
+	}
+
+	// The method that implements an interface method with the CLR name `name` and signature `want`: null
+	// when one has that signature (a method of the class itself goes into `own`), else the method of that
+	// name with other types, which a bridge calls.
 	static function findImplementation(g:DotnetCtx, c:TClass, hxName:String, name:String, want:{args:Array<IlSigNorm>, ret:IlSigNorm},
-			own:ObjectMap<TClassField, Bool>):Void {
+			own:ObjectMap<TClassField, Bool>):Null<{cf:TClassField, owner:TClass, params:Array<T>}> {
 		var cur = c;
 		var params = TypeFunctions.extractParamTypes(c.params);
 		var other = new Unsupported("interface methods implemented with other types", true);
@@ -547,7 +633,7 @@ class TclassToIl {
 			var cf = cur.fields.get(hxName);
 			if (cf != null) {
 				// The .NET base class's own method, which the CLR checks when it loads the type.
-				if (TypeFunctions.hasClassFlag(cur, CExtern)) return;
+				if (TypeFunctions.hasClassFlag(cur, CExtern)) return null;
 				if (DotnetNames.fieldName(cur, cf.name) != name) throw other;
 				for (f in [cf].concat(cf.overloads)) {
 					if (!sameSig(methodSig(g, cur, params, f), want)) continue;
@@ -556,9 +642,10 @@ class TclassToIl {
 						throw new Unsupported("interface methods implemented by overrides that change the signature", true, f.pos);
 					if (cur == c) own.set(f, true);
 					else if (isFinalMethod(cur, f)) throw new Unsupported("interface methods implemented by a final inherited method", true);
-					return;
+					return null;
 				}
-				throw other;
+				if (cf.overloads.length > 0 || !cf.kind.match(Method(MethNormal | MethInline))) throw other;
+				return {cf: cf, owner: cur, params: params};
 			}
 			var s = cur.superClass;
 			if (s == null) break;
@@ -874,6 +961,7 @@ class TclassToIl {
 			case MReflect(r): ReflectionMembers.label(r);
 			case MBridge(cf): cf.name;
 			case MEnum(_, member): EnumToIl.label(member);
+			case MInterfaceBridge(b): b.im.name;
 		}
 	}
 
@@ -1092,6 +1180,35 @@ class TclassToIl {
 		}
 	}
 
+	// An explicit interface implementation (InterfaceBridge): `return (<ret>) this.<method>(args)`, and
+	// the MethodImpl row that makes it the interface method's implementation.
+	@:access(hxc.codegen.dotnet.TexprToIl)
+	static function interfaceBridgeBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, b:InterfaceBridge, code:IlCode, lower:TexprToIl):Void {
+		var target = g.methodPlans.get(b.target), ownerPlan = g.planOf.get(b.owner), im = g.methodPlans.get(b.im);
+		if (target == null || ownerPlan == null || im == null) throw "internal error: no method for the bridge " + m.name;
+		var owner = b.owner == plan.c ? plan.thisSig : g.types.toSig(TInst(b.owner, b.ownerParams));
+		var inst = switch (owner) {
+			case LClass(_, l) | LValueType(_, l): l;
+			case _: [];
+		}
+		var ret = DotnetTypes.substitute(target.ret, inst, []);
+		code.ldarg(0);
+		for (i in 0...m.args.length) {
+			code.ldarg(i + 1);
+			lower.convert(m.args[i], DotnetTypes.substitute(target.args[i], inst, []));
+		}
+		code.opToken(IlOps.CALLVIRT, g.memberOf(ownerPlan, owner, b.target), m.args.length + 1, ret.match(LVoid) ? 0 : 1);
+		if (m.ret.match(LVoid)) {
+			if (!ret.match(LVoid)) code.op(IlOps.POP, 1, 0);
+			code.op(IlOps.RET, 0, 0);
+		} else {
+			lower.convert(ret, m.ret);
+			code.op(IlOps.RET, 1, 0);
+		}
+		var decl = b.iface.c.params.length == 0 ? im.token : g.mb.memberRef(g.typeTokenOf(b.iface.sig), im.name, g.sigs.method(true, im.ret, im.args, 0));
+		g.mb.methodImpl(plan.token, m.token, decl);
+	}
+
 	// Instance var initializers, as gencommon's init_funcs moves them into constructors: @:readOnly
 	// ones, which C# runs as field initializers, in declaration order, then the others in reverse
 	// declaration order.
@@ -1213,6 +1330,8 @@ class TclassToIl {
 					});
 				case MBridge(cf):
 					g.types.inParams(plan.classParams, cf.params, () -> bridgeBody(g, plan, m, cf, code, lower));
+				case MInterfaceBridge(b):
+					interfaceBridgeBody(g, plan, m, b, code, lower);
 				case MEntryPoint:
 					var boot = g.bootInit();
 					if (boot != null) code.opToken(IlOps.CALL, boot, 0, 0);

@@ -147,13 +147,24 @@ class TexprDynamic {
 	}
 
 	// A field access gencs reaches through Runtime: a field of a Dynamic or of an anonymous structure
-	// that is not a class's statics. A name the receiver's class declares is its own field in gencs.
+	// that is not a class's statics, or a variable or dynamic method of a Haxe interface. A name the
+	// receiver's class declares is its own field in gencs.
 	static function isDynamicReceiver(fa:TFieldAccess, obj:TExpr):Bool {
 		return switch (fa) {
 			case FDynamic(n): !isClassField(obj.type, n);
 			case FAnon(_): isDynamic(obj.type);
+			case FClosure(null, _): false;
+			case FInstance(c, _, cf) | FClosure({c: c}, cf): isInterfaceField(c, cf);
 			case _: false;
 		}
+	}
+
+	// A variable or dynamic method of a Haxe interface, which gencs's InterfaceVarsDeleteModf leaves off
+	// the CLR interface (a CLR interface has no fields): through the interface, gencs reaches it with
+	// Runtime.getField, setField and callField, as a field of a Dynamic.
+	static function isInterfaceField(c:TClass, cf:TClassField):Bool {
+		return TypeFunctions.hasClassFlag(c, CInterface) && !TypeFunctions.hasClassFlag(c, CExtern)
+			&& cf.kind.match(Var(_) | Method(MethDynamic));
 	}
 
 	static function isClassField(t:T, name:String):Bool {

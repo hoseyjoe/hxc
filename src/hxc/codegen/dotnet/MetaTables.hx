@@ -92,6 +92,7 @@ class MetaTables {
 	public final constant:Array<Row> = [];
 	public final customAttribute:Array<Row> = [];
 	public final standAloneSig:Array<Row> = [];
+	public final methodImpl:Array<Row> = [];
 	public final typeSpec:Array<Row> = [];
 	public final assembly:Array<Row> = [];
 	public final assemblyRef:Array<Row> = [];
@@ -116,6 +117,7 @@ class MetaTables {
 			{table: T.IConstant, rows: constant, schema: [U16, T.IHasConstant, BLOB]},
 			{table: T.ICustomAttribute, rows: customAttribute, schema: [T.IHasCustomAttribute, T.ICustomAttributeType, BLOB]},
 			{table: T.IStandAloneSig, rows: standAloneSig, schema: [BLOB]},
+			{table: T.IMethodImpl, rows: methodImpl, schema: [T.ITypeDef, T.IMethodDefOrRef, T.IMethodDefOrRef]},
 			{table: T.ITypeSpec, rows: typeSpec, schema: [BLOB]},
 			{table: T.IAssembly, rows: assembly, schema: [U32, U16, U16, U16, U16, U32, BLOB, STR, STR]},
 			{table: T.IAssemblyRef, rows: assemblyRef, schema: [U16, U16, U16, U16, U32, BLOB, STR, STR, BLOB]},
@@ -143,9 +145,10 @@ class MetaTables {
 	}
 
 	public function writeMetadata(h:MetaHeaps):{bytes:Bytes, mvidOffset:Int} {
-		// Nothing points at a Constant or CustomAttribute row, so those tables alone are sorted here.
+		// Nothing points at a Constant, CustomAttribute or MethodImpl row, so those tables alone are sorted here.
 		sortBy(constant, [1]);
 		sortBy(customAttribute, [0]);
+		sortBy(methodImpl, [0]);
 		checkSorted("InterfaceImpl", interfaceImpl, [0, 1]);
 		checkSorted("GenericParam", genericParam, [2, 0]);
 		checkSorted("GenericParamConstraint", genericParamConstraint, [0]);

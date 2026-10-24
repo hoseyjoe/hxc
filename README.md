@@ -33,7 +33,7 @@ output.
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
 | `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set |
-| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>` and native .NET exceptions work; see [.NET output](#net-output) |
+| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, the Serializer and exceptions work; see [.NET output](#net-output) |
 | `--lua`, `--python`, `--php`, `--hl`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
@@ -123,16 +123,27 @@ methods can be reached by reflection (`Reflect.field`, `Reflect.setField`, `Refl
 calls, arithmetic, comparison, equality, string concatenation and conversion to and from the basic
 types; array access on a `Dynamic` is not supported yet. Anonymous objects (`{x: 1}`, printed and
 read through `Dynamic`) and `Null<T>`, including `Null<Int>`, `Null<Float>` and `Null<Bool>` and
-defaulted arguments, work too. The `@gencs` cases in the tests check that these behave as gencs's
-output does.
+defaulted arguments, work too.
+
+Haxe enums become gencs's classes (`<pack>.<Enum>` and one `<pack>.<Enum>_<Ctor>` per constructor
+with arguments), `switch` on them included, on a `Dynamic` too. Local functions and lambdas become
+gencs's closure classes (`<Class>_<field>_<line>__Fun`), method closures are `haxe.lang.Closure`, and
+function values are called through `haxe.lang.Function`. `dynamic` methods, `Int64` and `UInt64`
+arithmetic, `cs.Flags`, `Std`, `Type` and `Reflect` (enums and classes alike), `haxe.Exception` with
+its stacks, and `haxe.Serializer`/`haxe.Unserializer` work. Interface variables and `dynamic`
+methods of an interface are reached through `haxe.lang.Runtime`, as gencs reaches them, and an
+interface method implemented with another return type gets gencs's explicit implementation. The
+`@gencs` cases in the tests check that these behave as gencs's output does, and `@serial` cases that
+serialized data round-trips between the two.
 
 Constructs not supported yet are compile errors in user code (`dotnet: ... not supported yet`). The
-list is not complete; among others it has closures and local functions, Haxe enums, array access on
-`Dynamic`, `return`, `break` and `continue` inside expressions, `dynamic` methods, and casts between
-instantiations of a generic class (such as `Array<Dynamic>` to `Array<Int>`). The next steps for the
-.NET generator are closures, enums, the rest of `Std`, `Type` and `Reflect`, and `haxe.Exception`;
-then the generic-instantiation casts and the `Array` forwarding fix (Haxe issue 8314). Until then,
-standard-library code that needs them compiles to stubs.
+list is not complete; among others it has assignments to `Dynamic` array elements, `return`, `break`
+and `continue` inside expressions, casts between instantiations of a generic class (such as
+`Array<Dynamic>` to `Array<Int>`), `Std.isOfType` with a generic class, inline C# (`untyped __cs__`,
+`@:classCode`, `@:functionCode`), and .NET interop beyond calling referenced assemblies (properties of
+.NET interfaces, generic .NET methods, `Nullable<T>`). The next steps for the .NET generator are the
+generic-instantiation casts and the `Array` forwarding fix (Haxe issue 8314), then .NET interop.
+Until then, standard-library code that needs them compiles to stubs.
 
 hxc ships its own copy of the hxcs runtime classes that generated code depends on
 (`haxe.lang.HxObject`, `haxe.lang.DynamicObject`, `haxe.lang.FieldLookup`, `haxe.lang.Runtime`,
@@ -141,12 +152,9 @@ in place of hxcs's versions, so a class path entry cannot override them.
 
 The rest of the standard library comes from hxcs's runtime sources and is partly stubbed; a stubbed
 method throws `System.NotSupportedException` when called. `-D dotnet-stub-report` prints what was
-skipped, stubbed or ignored, one sorted line each. For a program that only prints it is about seven
-lines: calls of function values in `Array`, and `Std`, `Type` and `Reflect` helpers.
-`haxe.Exception`-based code compiles but reaches such stubs: `throw "x"` and other throws of values
-that are not `cs.system.Exception`s, `new haxe.Exception(...)` and `catch (e:haxe.Exception)` throw
-`System.NotSupportedException` at run time. A catch-all such as `catch (e:Dynamic)` or
-`catch (e:cs.system.Exception)` catches that exception too, so it can hide a stub.
+skipped, stubbed or ignored, one sorted line each; for a program that prints, maps an array and
+throws and catches a `haxe.Exception` it prints nothing. A catch-all such as `catch (e:Dynamic)` or
+`catch (e:cs.system.Exception)` catches a stub's exception too, so it can hide a stub.
 
 The tests need the .NET 10 SDK and hxcs installed globally. They build `tests/fixtures/hxccheck`, compile each case twice to
 check the output is deterministic, verify it with ILVerify, and run it:
