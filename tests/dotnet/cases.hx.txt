@@ -3007,6 +3007,72 @@ class P {
 	}
 }
 ===
+--- nested-casts-collapse-as-gencs @gencs
+interface IFace {}
+class Base {
+	public function new() {}
+	public function toString() return "Base";
+}
+class Sub extends Base implements IFace {
+	public function new() super();
+}
+class Impl implements IFace {
+	public function new() {}
+	public function toString() return "Impl";
+}
+class P {
+	static function show(o:Dynamic) Sys.println(o);
+	static function takeFloat(f:Float) Sys.println(f);
+	static function takeInt(i:Int) Sys.println(i);
+	static function main() {
+		var fl = 2.5;
+		var o1:Dynamic = (cast (cast fl : Int) : cs.system.Object);
+		show(o1);
+		var o2:Dynamic = (cast (cast fl : Int) : {});
+		show(o2);
+		var o3:Dynamic = (cast (cast fl : Int) : {x:Int});
+		show(o3);
+		var o4:Dynamic = (cast (cast fl : Int) : EnumValue);
+		show(o4);
+		var o5:Dynamic = (cast (cast fl : Int) : Dynamic);
+		show(o5);
+		var o6:Dynamic = (cast (cast fl : Int) : Null<Int>);
+		show(o6);
+		var o7:Float = (cast (cast fl : Int) : Float);
+		show(o7);
+		var bd:Dynamic = new Base();
+		try show((cast (cast bd : Sub) : Base)) catch (e:Dynamic) show("threw");
+		var im:Dynamic = new Impl();
+		try show((cast (cast im : Sub) : IFace)) catch (e:Dynamic) show("threw");
+		var sd:Dynamic = new Sub();
+		show((cast (cast sd : Base) : cs.system.Object));
+		try show((cast (cast bd : Sub) : cs.system.Object)) catch (e:Dynamic) show("threw");
+		var b:Base = (cast (cast bd : Sub) : Base);
+		show(b);
+		show((cast fl : Null<Int>));
+		var n1:Dynamic = (cast (cast fl : Int) : Null<Int>);
+		show(n1);
+		var n2:Float = (cast (cast fl : Null<Int>) : Float);
+		show(n2);
+		var n3:Int = (cast (cast fl : Null<Int>) : Int);
+		show(n3);
+		var n4:Dynamic = (cast (cast fl : Null<Int>) : cs.system.Object);
+		show(n4);
+		var n5:Null<Float> = (cast (cast fl : Null<Int>) : Null<Float>);
+		show(n5);
+		var n6:String = (cast (cast fl : Null<Int>) : String);
+		show(n6);
+		takeFloat((cast fl : Null<Int>));
+		takeInt((cast fl : Null<Int>));
+		var dd:Dynamic = 3.5;
+		takeFloat((cast dd : Null<Int>));
+		show((cast dd : Null<Int>));
+		var ni:Null<Int> = (cast fl : Null<Int>);
+		show(ni);
+		show((cast fl : Null<Int>) + 1);
+	}
+}
+===
 --- dynamic-equality-and-order @gencs
 class P {
 	static function main() {

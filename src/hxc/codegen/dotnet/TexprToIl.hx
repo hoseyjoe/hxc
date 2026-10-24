@@ -666,6 +666,13 @@ class TexprToIl {
 			case RValue(w): w;
 			case _: null;
 		}
+		// A cast to haxe.lang.Null<T> that meets a conversion to another type (not String), which
+		// HardNullableSynf gives the outer type (nullCastUnwrapped): e1 goes straight to that type.
+		if (from != null && to != null && want != null && isHaxeNull(to) && !isHaxeNull(from) && !isHaxeNull(want) && !want.match(LString)
+			&& keepNull.indexOf(strip(e)) < 0 && keepNull.indexOf(e) < 0) {
+			texpr(RValue(want), e1);
+			return;
+		}
 		var viaOwn = from != null && to != null && !IlPaths.sigEq(from, to) && !to.match(LObject) && (checked
 			|| want != null && !IlPaths.sigEq(want, to) && (to.match(LString) && !inRuntimeClass()
 				|| DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)
@@ -764,24 +771,111 @@ class TexprToIl {
 	}
 
 	// The cast `e` as gencs's CastDetect leaves it. When its operand is itself a cast and no cast is
-	// needed from the operand's type to `e`'s (into Dynamic, or to the same type), CastDetect gives
-	// the inner cast `e`'s type, so the inner conversion is lost: `Sys.println((cast f : Int))` passes
-	// f itself. Inner casts are collapsed first, as CastDetect visits them first.
+	// needed from the operand's type to `e`'s (see noCastNeeded), CastDetect gives the inner cast
+	// `e`'s type, so the inner conversion is lost: `Sys.println((cast f : Int))` passes f itself, and
+	// `(cast (cast b : Sub) : Base)` casts b to Base only. Inner casts are collapsed first, as
+	// CastDetect visits them first.
 	function collapseCast(e:TExpr):TExpr {
 		return switch (e.expr) {
 			case TCast(e1, md):
 				var inner = collapseCast(e1);
 				switch (inner.expr) {
-					case TCast(z, md2) if (noCastNeeded(inner.type, e.type)): new TExpr(TCast(z, md2), e.type, e.pos);
+					case TCast(z, md2) if (noCastNeeded(inner.type, e.type) || nullCastUnwrapped(inner.type, e.type)):
+						new TExpr(TCast(z, md2), e.type, e.pos);
 					case _: inner == e1 ? e : new TExpr(TCast(inner, md), e.type, e.pos);
 				}
 			case _: e;
 		}
 	}
 
+	// Whether gencs's handle_cast adds no cast from `from` to `to`, judged on gencs's real types
+	// (castReal): the same type; into Dynamic from anything but a haxe.lang.Null<T> or a pointer; a
+	// class to one of its superclasses or interfaces with the same type arguments; native arrays;
+	// the same core abstract. A cast to cs.system.Object or between different basic types is needed.
 	function noCastNeeded(from:T, to:T):Bool {
-		var f = try sig(from) catch (_:Unsupported) null, t = try sig(to) catch (_:Unsupported) null;
-		return f != null && t != null && (t.match(LObject) || IlPaths.sigEq(f, t));
+		var f = castReal(from), t = castReal(to);
+		if (realEq(f, t)) return true;
+		return switch (t) {
+			case TDynamic(_) | TMono(_):
+				// gencs's gneeds_box.
+				!switch (f) {
+					case TAbstract(a, _): isNullAbstract(f) || TexprDynamic.isPath(a.path, ["cs"], "Pointer");
+					case _: false;
+				}
+			case TInst(ct, _) if (TexprDynamic.isPath(ct.path, [], "String") || ct.kind.match(KTypeParameter(_))): false;
+			case TInst(ct, tp):
+				switch (f) {
+					case TInst(cf, _) if (cf == ct && isNativeArray(t)): true;
+					case TInst(cf, fp) if (!cf.kind.match(KTypeParameter(_))):
+						var at = argsAt(cf, fp, ct);
+						var a = at == null ? null : try sig(TInst(ct, at)) catch (_:Unsupported) null;
+						var b = try sig(TInst(ct, tp)) catch (_:Unsupported) null;
+						a != null && b != null && IlPaths.sigEq(a, b);
+					case _: false;
+				}
+			case TAbstract(at, _) if (!isNullAbstract(t)):
+				switch (f) {
+					case TAbstract(af, _): af == at;
+					case _: false;
+				}
+			case _: false;
+		}
+	}
+
+	// Whether gencs's HardNullableSynf, which runs after CastDetect, gives a cast to haxe.lang.Null<T>
+	// under a cast to `to` the outer type (its "unnecessary cast to Nullable"): `to` is neither a
+	// haxe.lang.Null<T> nor String. `(cast (cast f : Null<Int>) : Float)` is f as a Float.
+	static function nullCastUnwrapped(from:T, to:T):Bool {
+		var t = castReal(to);
+		var toString = switch (t) {
+			case TInst(c, _): TexprDynamic.isPath(c.path, [], "String");
+			case _: false;
+		}
+		return isNullAbstract(castReal(from)) && !isNullAbstract(t) && !toString;
+	}
+
+	static function isNullAbstract(t:T):Bool {
+		return switch (t) {
+			case TAbstract(a, [_]): TexprDynamic.isPath(a.path, [], "Null");
+			case _: false;
+		}
+	}
+
+	// gencs's real type as handle_cast tells types apart: Dynamic for Dynamic, EnumValue and
+	// anonymous structures; Null<T> only of a basic type or type parameter (haxe.lang.Null<T>);
+	// other abstracts unwrapped down to core types; monomorphs left as they are.
+	static function castReal(t:T, depth = 0):T {
+		if (depth > 20) return TypeFunctions.tDynamic;
+		var f = TypeFunctions.followWithoutNull(t);
+		return switch (f) {
+			case TAnon(a) if (!a.status.get().match(Statics(_) | EnumStatics(_) | AbstractStatics(_))): TypeFunctions.tDynamic;
+			case TAbstract(a, [p]) if (TexprDynamic.isPath(a.path, [], "Null")):
+				var r = castReal(p, depth + 1);
+				TexprDynamic.isBasic(r) || TexprDynamic.isTypeParamType(r) ? TAbstract(a, [r]) : r;
+			case TAbstract(a, _) if (TexprDynamic.isPath(a.path, [], "EnumValue") || TexprDynamic.isPath(a.path, [], "Dynamic")):
+				TypeFunctions.tDynamic;
+			case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta)): castReal(TypeFunctions.getUnderlyingType(a, tl), depth + 1);
+			case _: f;
+		}
+	}
+
+	// gencommon's fast_eq on real types.
+	static function realEq(a:T, b:T, depth = 0):Bool {
+		if (depth > 20) return false;
+		function params(p1:TParams, p2:TParams):Bool {
+			if (p1.length != p2.length) return false;
+			for (i in 0...p1.length) if (!realEq(castReal(p1[i]), castReal(p2[i]), depth + 1)) return false;
+			return true;
+		}
+		return switch [a, b] {
+			case [TDynamic(_), TDynamic(_)]: true;
+			case [TMono(m1), TMono(m2)]: m1 == m2;
+			case [TInst(c1, p1), TInst(c2, p2)]: c1 == c2 && params(p1, p2);
+			case [TEnum(e1, p1), TEnum(e2, p2)]: e1 == e2 && params(p1, p2);
+			case [TAbstract(a1, p1), TAbstract(a2, p2)]: a1 == a2 && params(p1, p2);
+			case [TAnon(a1), TAnon(a2)]: a1 == a2;
+			case _: false;
+		}
 	}
 
 	// The extern .NET enum that values of type `t` belong to, or null.
