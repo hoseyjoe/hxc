@@ -1284,7 +1284,9 @@ class EvalMacro {
 		buildMacroPendings.remove(c);
 		var rewroteFields = buildRewroteFields.exists(c);
 		buildRewroteFields.remove(c);
-		for (f in pending) f();
+		// The list is prepended to, so the latest addition runs first.
+		var i = pending.length;
+		while (i > 0) pending[--i]();
 		// The class initializes from the field list the build returns, once the builds and their pendings
 		// are done. A build that returned null leaves the fields it was given, which nothing has resolved
 		// yet.
@@ -5846,8 +5848,9 @@ class EvalMacro {
 	// haxe.macro.Type.ClassType. Refs (super/fields/statics) are lazy so a class can reference itself
 	// without infinite recursion.
 	static function encodeClassType(ec:EvalContext, c:TClass):EvalValue {
-		// Encoding a class forces its build first.
+		// Encoding a class forces its build first, a canceled one's included.
 		hxc.typing.TypeResolve.forceQueuedBuild(c);
+		hxc.typing.TypeFields.retryCanceledBuild(c);
 		var f:Map<Int, EvalValue> = new Map();
 		// The hidden ref handle round-trips the decl through decode.
 		stashModuleTypeRef(f, TClassDecl(c));
@@ -5866,10 +5869,10 @@ class EvalMacro {
 		f.set(EvalNames.hIsAbstract(), TypeFunctions.hasClassFlag(c, CAbstract) ? VTrue : VFalse);
 		f.set(EvalNames.hSuperClass(), c.superClass == null ? VNull : encodeClassRelation(ec, c.superClass));
 		f.set(EvalNames.hInterfaces(), encodeArray([for (i in c.interfaces) encodeClassRelation(ec, i)]));
-		// A class whose build macros are running has no fields yet: they are made from the list the builds
-		// return. hxc registers the declared fields as shells at module load, so they are hidden here, and
-		// a ClassType encoded during the build keeps answering none.
-		if (buildMacroPendings.exists(c)) {
+		// A class whose build has not reached the end of its build macros, or was canceled, has no fields
+		// yet: they are made from the list the builds return. hxc registers the declared fields as shells
+		// at module load, so they are hidden here, and a ClassType encoded meanwhile keeps answering none.
+		if (hxc.typing.TypeFields.awaitsFields(c)) {
 			f.set(EvalNames.hFields(), encodeLazyRef(ec, function() return encodeArray([])));
 			f.set(EvalNames.hStatics(), encodeLazyRef(ec, function() return encodeArray([])));
 			f.set(EvalNames.hConstructor(), VNull);

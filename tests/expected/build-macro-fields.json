@@ -1,5 +1,10 @@
 {
 	"local-class-has-no-fields-while-it-builds": "P.hx:3: character 1 : Warning : B fields=[] statics=[] constructor=false super=[a]",
 	"fields-are-checked-after-the-last-build": "",
-	"the-class-has-no-fields-between-its-builds": "P.hx:2: characters 1-8 : Warning : P fields=[] statics=[] constructor=false super=-"
+	"the-class-has-no-fields-between-its-builds": "P.hx:2: characters 1-8 : Warning : P fields=[] statics=[] constructor=false super=-",
+	"a-subclass-has-no-fields-while-it-builds-its-parent": "P.hx:1: characters 1-8 : Warning : peek B fields=[] super=[]\nP.hx:4: character 1 : Warning : B fields=[] statics=[] constructor=false super=[a,added]",
+	"a-subclass-the-parents-build-reaches-builds-after-it": "P.hx:3: characters 1-8 : Warning : peek B fields=[] super=[]\nP.hx:3: characters 1-8 : Warning : peek C fields=[] super=[]\nP.hx:2: character 1 : Warning : C fields=[] statics=[] constructor=false super=[a,added]\nP.hx:1: character 1 : Warning : B fields=[] statics=[] constructor=false super=[a,added]",
+	"a-grandchild-waits-on-the-same-parent": "P.hx:3: characters 1-8 : Warning : peek D fields=[] super=[]\nP.hx:3: characters 1-8 : Warning : peek B fields=[] super=[]\nP.hx:2: character 1 : Warning : B fields=[] statics=[] constructor=false super=[a,added]\nP.hx:1: character 1 : Warning : D fields=[] statics=[] constructor=false super=[b]",
+	"subclasses-another-module-loads-build-after-the-parent": "MBase.hx:1: characters 1-8 : Warning : peek B fields=[] super=[]\nMBase.hx:1: characters 1-8 : Warning : peek C fields=[] super=[]\nMSubs.hx:2: character 1 : Warning : C fields=[] statics=[] constructor=false super=[a,added]\nMSubs.hx:1: character 1 : Warning : B fields=[] statics=[] constructor=false super=[a,added]",
+	"the-macro-api-builds-a-canceled-class-once-its-parent-is-built": "P.hx:4: characters 1-8 : Warning : peek B fields=[] super=[]\nP.hx:1: character 1 : Warning : B fields=[] statics=[] constructor=false super=[a,added]\nP.hx:2: characters 1-8 : Warning : peek B fields=[b] super=[a,added]"
 }

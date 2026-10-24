@@ -25,4 +25,18 @@ class M {
 		var inherited = [for (f in sup.fields.get()) f.name];
 		return [for (f in Context.getBuildFields()) if (inherited.indexOf(f.name) == -1) f];
 	}
+
+	// What each named class and its superclass hold when a build reaches it; then adds a field.
+	macro public static function peek(paths:Array<String>):Array<Field> {
+		for (path in paths) switch (Context.getType(path)) {
+			case TInst(r, _):
+				var c = r.get();
+				var sup = c.superClass == null ? "-" : names(c.superClass.t.get().fields.get());
+				Context.warning("peek " + c.name + " fields=" + names(c.fields.get()) + " super=" + sup, Context.currentPos());
+			case _:
+		}
+		var fields = Context.getBuildFields();
+		fields.push({name: "added", access: [APublic], kind: FVar(macro :Int, macro 3), pos: Context.currentPos()});
+		return fields;
+	}
 }

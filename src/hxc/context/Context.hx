@@ -422,6 +422,14 @@ class Context {
 		else delayed.insert(idx, {pass: pass, fns: [f]});
 	}
 
+	// delay_late: a bucket of its own after every bucket of the pass, so it runs once what the pass
+	// already holds has.
+	public function delayLate(pass:Int, f:Void->Void):Void {
+		var idx = 0;
+		while (idx < delayed.length && delayed[idx].pass <= pass) idx++;
+		delayed.insert(idx, {pass: pass, fns: [f]});
+	}
+
 	public function flushPass(pass:Int):Void {
 		while (delayed.length > 0 && delayed[0].pass <= pass) {
 			var bucket = delayed[0];

@@ -15,3 +15,38 @@ class P { static function main() { new B().b; } }
 @:build(M.keep())
 @:build(M.show())
 class P { var x:Int = 1; static function main() {} }
+
+--- a-subclass-has-no-fields-while-it-builds-its-parent
+@:build(M.peek(["B"]))
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public function new() {} }
+class B extends A { public var b:Int = 2; }
+class P { static function main() { new B().b; } }
+
+--- a-subclass-the-parents-build-reaches-builds-after-it
+class B extends A { public var b:Int = 2; }
+class C extends A { public var c:Int = 3; }
+@:build(M.peek(["B", "C"]))
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public function new() {} }
+class P { static function main() { new B().b + new C().c; } }
+
+--- a-grandchild-waits-on-the-same-parent
+class D extends B { public var d:Int = 4; }
+class B extends A { public var b:Int = 2; }
+@:build(M.peek(["D", "B"]))
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public function new() {} }
+class P { static function main() { new D().d; } }
+
+--- subclasses-another-module-loads-build-after-the-parent
+class P { static function main() { new MSubs.B().b + new MSubs.C().c; } }
+
+--- the-macro-api-builds-a-canceled-class-once-its-parent-is-built
+class B extends A { public var b:Int = 2; }
+@:build(M.peek(["B"]))
+class E { public function new() {} }
+@:build(M.peek(["B"]))
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public function new() {} }
+class P { static function main() { new B().b; new E(); } }
