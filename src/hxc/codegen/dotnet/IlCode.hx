@@ -42,6 +42,7 @@ class IlOps {
 	public static inline var SUB = 0x59;
 	public static inline var MUL = 0x5A;
 	public static inline var DIV = 0x5B;
+	public static inline var DIV_UN = 0x5C;
 	public static inline var REM = 0x5D;
 	public static inline var REM_UN = 0x5E;
 	public static inline var AND = 0x5F;

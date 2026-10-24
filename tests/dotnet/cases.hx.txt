@@ -3581,3 +3581,118 @@ class P {
 	}
 }
 ===
+--- int64-arithmetic @gencs
+import cs.StdTypes.Int64;
+import cs.StdTypes.UInt64;
+class P {
+	static function main() {
+		var a:Int64 = 5000000000;
+		var b:Int64 = 3;
+		var i = 7;
+		Sys.println(a + b);
+		Sys.println(a - b);
+		Sys.println(a * b);
+		Sys.println(a / b);
+		Sys.println(a % b);
+		Sys.println(-a);
+		Sys.println((a | b) + " " + (a & b) + " " + (a ^ b) + " " + ~b);
+		Sys.println((a << 2) + " " + (a >> 1) + " " + (-a >> 1));
+		Sys.println(a + i);
+		Sys.println(i * a);
+		Sys.println(cast(a, Float) / 2.0);
+		var f = 1.5e10;
+		// gencs drops a checked cast to Int64/Int here: the Float (and the Int64) print unchanged.
+		Sys.println(cast(f, Int64));
+		Sys.println(cast(-2.7, Int64));
+		Sys.println(cast(a, Int));
+		var c = a;
+		c += b;
+		c++;
+		c *= 2;
+		Sys.println(c);
+		Sys.println((a > b) + " " + (a == 5000000000) + " " + (b < i));
+		var u:UInt64 = 18446744073709551615;
+		Sys.println(u);
+		// UInt64 / Int is C#'s integer division under gencs, though Haxe types it Float.
+		Sys.println(u / 2);
+		var max:Int64 = 9223372036854775807;
+		Sys.println(max + 1);
+		var h = haxe.Int64.make(1, 2);
+		Sys.println(h + " " + haxe.Int64.toStr(h) + " " + h.high + " " + h.low);
+		var x = haxe.Int64.ofInt(-7);
+		Sys.println(haxe.Int64.toStr(x * h + 1) + " " + haxe.Int64.div(h, 3) + " " + haxe.Int64.mod(h, 3) + " " + haxe.Int64.compare(x, h));
+		Sys.println(haxe.Int64.toInt(haxe.Int64.ofInt(42)) + " " + haxe.Int64.isNeg(x) + " " + haxe.Int64.isZero(x - x));
+		Sys.println(haxe.Int64.parseString("-9223372036854775808") + " " + haxe.Int64.fromFloat(1e15));
+		try haxe.Int64.toInt(h) catch (e:Dynamic) Sys.println("overflow: " + e);
+		var d:Dynamic = a;
+		Sys.println(Std.string(d) + " " + Std.isOfType(d, Int) + " " + Std.isOfType(d, Float));
+	}
+}
+===
+[run]
+5000000003
+4999999997
+15000000000
+1666666666
+2
+-5000000000
+5000000003 0 5000000003 -4
+20000000000 2500000000 -2500000000
+5000000007
+35000000000
+2500000000
+15000000000
+-2.7
+5000000000
+10000000008
+true true true
+18446744073709551615
+9223372036854775807
+-9223372036854775808
+4294967298 4294967298 1 2
+-30064771085 1431655766 0 -1
+42 true true
+-9223372036854775808 1000000000000000
+overflow: Overflow
+5000000000 false false
+--- date-time @gencs
+class P {
+	// The same wall-clock time as milliseconds since 1970 in UTC, whatever the machine's time zone.
+	static function wall(d:Date):Float return d.getTime() - d.getTimezoneOffset() * 60000.0;
+	static function main() {
+		var d = new Date(2000, 0, 1, 0, 0, 0);
+		Sys.println(wall(d));
+		Sys.println(wall(new Date(2020, 1, 29, 13, 45, 30)));
+		var t = 1234567890123.0;
+		var u = Date.fromTime(t);
+		Sys.println(u.getTime() == t);
+		Sys.println(u.getUTCFullYear() + "-" + u.getUTCMonth() + "-" + u.getUTCDate() + " " + u.getUTCHours() + ":" + u.getUTCMinutes() + ":" + u.getUTCSeconds() + " day " + u.getUTCDay());
+		Sys.println(Date.fromTime(0).getUTCFullYear() + " " + Date.fromTime(-86400000.0).getUTCDate() + " " + Date.fromTime(0.5).getTime());
+		var s = Date.fromString("2001-02-03 04:05:06");
+		Sys.println(s.toString() + " " + wall(s));
+		Sys.println(Date.fromString("10:20:30").getTime());
+		Sys.println(wall(Date.fromString("2001-02-03")));
+		Sys.println(DateTools.format(s, "%Y-%m-%d %H:%M:%S"));
+		Sys.println(DateTools.format(s, "%d/%m/%y %I %p %e"));
+		Sys.println(wall(DateTools.delta(s, DateTools.days(1.5))));
+		Sys.println(DateTools.getMonthDays(new Date(2024, 1, 1, 0, 0, 0)) + " " + DateTools.getMonthDays(new Date(2023, 1, 1, 0, 0, 0)));
+		Sys.println(Date.now().getTime() > t);
+		try Date.fromString("bad") catch (e:String) Sys.println(e);
+	}
+}
+===
+[run]
+946684800000
+1582983930000
+True
+2009-1-13 23:31:30 day 5
+1970 31 0.5
+2001-02-03 04:05:06 981173106000
+37230000
+981158400000
+2001-02-03 04:05:06
+03/02/01 04 AM 3
+981302706000
+29 28
+True
+Invalid date format : bad

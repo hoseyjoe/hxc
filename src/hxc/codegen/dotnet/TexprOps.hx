@@ -19,6 +19,7 @@ import hxc.codegen.dotnet.TexprToIl.Ret;
 import hxc.codegen.dotnet.TexprToIl.Slot;
 import hxc.codegen.dotnet.TexprToIl.SpillMode;
 import hxc.codegen.dotnet.TexprToIl.constInt;
+import hxc.codegen.dotnet.TexprToIl.is64;
 import hxc.codegen.dotnet.TexprToIl.isExtern;
 import hxc.codegen.dotnet.TexprToIl.isIntLike;
 import hxc.codegen.dotnet.TexprToIl.isNullConst;
@@ -58,6 +59,10 @@ class TexprOps {
 				tl.coerce(LString, ret);
 			case OpAdd | OpSub | OpMult | OpDiv | OpMod | OpAnd | OpOr | OpXor | OpShl | OpShr | OpUShr:
 				var s1 = tl.operandSig(op, e1), s2 = tl.operandSig(op, e2);
+				if (is64(s1) || is64(s2)) {
+					wideBinary(ret, e, op, e1, e2, s1, s2);
+					return;
+				}
 				// A Null<T> result is computed in T and wrapped again, as HardNullableSynf does.
 				var own = tl.sig(e.type);
 				var t = tl.unNull(own);
@@ -86,6 +91,79 @@ class TexprOps {
 		code.op(s.match(LUInt32) ? IlOps.CONV_U8 : IlOps.CONV_I8, 1, 1);
 	}
 
+	// The type C# computes an operator on `s1` and `s2` in when one is an Int64 or UInt64: Float when
+	// the other is a Float, else the 64-bit type, which an Int or UInt widens to; null for an Int64 with
+	// a UInt64, which C# refuses.
+	static function wideType(s1:IlSigNorm, s2:IlSigNorm):Null<IlSigNorm> {
+		if (s1.match(LFloat64) || s2.match(LFloat64)) return LFloat64;
+		if (s1.match(LUInt64) || s2.match(LUInt64)) return s1.match(LInt64) || s2.match(LInt64) ? null : LUInt64;
+		return LInt64;
+	}
+
+	// The operand of type `s` on the stack as the operator's type `t` (wideType): an Int with a UInt64
+	// zero-extends, as C# converts a constant.
+	function widenTo(s:IlSigNorm, t:IlSigNorm):Void {
+		if (IlPaths.sigEq(s, t)) return;
+		if (isIntLike(s) && is64(t)) {
+			if (t.match(LUInt64)) code.op(IlOps.CONV_U8, 1, 1) else widen(s);
+		} else {
+			tl.convert(s, t);
+		}
+	}
+
+	// `op` with an Int64 or UInt64 operand, as C# binds it (wideType): `/` and `%` of two integers are
+	// integer division and remainder whatever the expression's type, and a shift's count is an Int. The
+	// value keeps C#'s type until its destination converts it.
+	function wideBinary(ret:Ret, e:TExpr, op:Binop, e1:TExpr, e2:TExpr, s1:IlSigNorm, s2:IlSigNorm):Void {
+		var bad = new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+		var shift = op.match(OpShl | OpShr | OpUShr);
+		var t = shift ? s1 : wideType(s1, s2);
+		if (t == null || shift && !is64(t) || !isArith(op) && t.match(LFloat64)) throw bad;
+		var add = op.match(OpAdd);
+		tl.nullOperand(RValue(s1), e1, add);
+		widenTo(s1, t);
+		if (shift) {
+			shiftCount(e2, 63);
+			code.op(op.match(OpShl) ? IlOps.SHL : op.match(OpShr) && t.match(LInt64) ? IlOps.SHR : IlOps.SHR_UN, 2, 1);
+		} else {
+			tl.nullOperand(RValue(s2), e2, add);
+			widenTo(s2, t);
+			arith(op, t);
+		}
+		switch (ret) {
+			case RValue(null): tl.convert(t, tl.sig(e.type));
+			case _: tl.coerce(t, ret);
+		}
+	}
+
+	// Pushes a shift's count, an Int masked as C# does: to 31, or to 63 for a 64-bit value.
+	function shiftCount(e2:TExpr, mask:Int):Void {
+		var n = constInt(e2);
+		if (n != null) {
+			code.ldcI4(n & mask);
+		} else {
+			tl.texpr(RValue(LInt32), e2);
+			code.ldcI4(mask);
+			code.op(IlOps.AND, 2, 1);
+		}
+	}
+
+	// Applies `op`, not a shift, to two operands of type `t` on the stack.
+	function arith(op:Binop, t:IlSigNorm):Void {
+		var unsigned = t.match(LUInt32 | LUInt64);
+		code.op(switch (op) {
+			case OpAdd: IlOps.ADD;
+			case OpSub: IlOps.SUB;
+			case OpMult: IlOps.MUL;
+			case OpDiv: unsigned ? IlOps.DIV_UN : IlOps.DIV;
+			case OpMod: unsigned ? IlOps.REM_UN : IlOps.REM;
+			case OpAnd: IlOps.AND;
+			case OpOr: IlOps.OR;
+			case OpXor: IlOps.XOR;
+			case _: throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+		}, 2, 1);
+	}
+
 	// The left operand, of type `t` on the stack and `left` as typed, is there; this pushes the right
 	// one and applies `op`. A compound assignment does not promote: gencs casts its right side to the
 	// left's type, so the left type's own remainder applies.
@@ -94,9 +172,10 @@ class TexprOps {
 	function numericTail(op:Binop, t:IlSigNorm, e2:TExpr, left:IlSigNorm, promote = true, keepNull = false):Void {
 		var bad = new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 		if (!isNumeric(t)) throw bad;
-		if (!isArith(op) && !isIntLike(t)) throw bad;
-		var unsigned = t.match(LUInt32);
-		if (op.match(OpDiv) && !t.match(LFloat64)) throw bad;
+		if (!isArith(op) && !isIntLike(t) && !is64(t)) throw bad;
+		var unsigned = t.match(LUInt32 | LUInt64);
+		// Integer `/` reaches here only from a 64-bit compound assignment, which C# divides as integers.
+		if (op.match(OpDiv) && !t.match(LFloat64) && !is64(t)) throw bad;
 		var right = promote && op.match(OpMod) && isIntLike(t) ? tl.sig(e2.type) : null;
 		if (right != null && mixesUIntAndInt(left, right)) {
 			// gencs casts the long remainder back to the result type.
@@ -109,29 +188,11 @@ class TexprOps {
 		}
 		switch (op) {
 			case OpShl | OpShr | OpUShr:
-				// The count is masked as C# does.
-				var n = constInt(e2);
-				if (n != null) {
-					code.ldcI4(n & 31);
-				} else {
-					tl.texpr(RValue(LInt32), e2);
-					code.ldcI4(31);
-					code.op(IlOps.AND, 2, 1);
-				}
+				shiftCount(e2, is64(t) ? 63 : 31);
 				code.op(op.match(OpShl) ? IlOps.SHL : op.match(OpShr) && !unsigned ? IlOps.SHR : IlOps.SHR_UN, 2, 1);
 			case _:
 				tl.nullOperand(RValue(t), e2, keepNull);
-				code.op(switch (op) {
-					case OpAdd: IlOps.ADD;
-					case OpSub: IlOps.SUB;
-					case OpMult: IlOps.MUL;
-					case OpDiv: IlOps.DIV;
-					case OpMod: unsigned ? IlOps.REM_UN : IlOps.REM;
-					case OpAnd: IlOps.AND;
-					case OpOr: IlOps.OR;
-					case OpXor: IlOps.XOR;
-					case _: throw bad;
-				}, 2, 1);
+				arith(op, t);
 		}
 	}
 
@@ -192,6 +253,16 @@ class TexprOps {
 				widen(s1);
 				tl.nullOperand(RValue(s2), e2);
 				widen(s2);
+			} else if (isNumeric(s1) && isNumeric(s2) && (is64(s1) || is64(s2))) {
+				// An Int64 or UInt64 against a number, as C# binds it.
+				var t = wideType(s1, s2);
+				if (t == null) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+				isFloat = t.match(LFloat64);
+				unsigned = t.match(LUInt64);
+				tl.nullOperand(RValue(s1), e1);
+				widenTo(s1, t);
+				tl.nullOperand(RValue(s2), e2);
+				widenTo(s2, t);
 			} else if (isNumeric(s1) && isNumeric(s2)) {
 				var t = s1.match(LFloat64) || s2.match(LFloat64) ? LFloat64 : s1.match(LUInt32) || s2.match(LUInt32) ? LUInt32 : LInt32;
 				isFloat = t.match(LFloat64);
@@ -201,11 +272,6 @@ class TexprOps {
 			} else if (equality && (TexprToIl.clrEnum(e1.type) != null && TexprToIl.clrEnum(e1.type) == TexprToIl.clrEnum(e2.type)
 				|| TexprToIl.externEnum(e1.type) != null && TexprToIl.externEnum(e1.type) == TexprToIl.externEnum(e2.type))) {
 				// Two values of one CLR enum compare as their indices, two of a .NET enum as their values.
-				tl.texpr(RValue(s1), e1);
-				tl.texpr(RValue(s2), e2);
-			} else if (s1.match(LInt64) && s2.match(LInt64) || s1.match(LUInt64) && s2.match(LUInt64)) {
-				// Two Int64 or two UInt64 values, as C# compares longs.
-				unsigned = s1.match(LUInt64);
 				tl.texpr(RValue(s1), e1);
 				tl.texpr(RValue(s2), e2);
 			} else if (equality && s1.match(LValueType(_, _)) && IlPaths.sigEq(s1, s2) && TexprToIl.externEnum(e1.type) == null) {
@@ -368,7 +434,7 @@ class TexprOps {
 			case NegBits:
 				var own = tl.sig(e.type);
 				var t = tl.unNull(own);
-				if (!t.match(LInt32)) throw new Unsupported("the ~ operator on these types", false);
+				if (!t.match(LInt32 | LInt64 | LUInt64)) throw new Unsupported("the ~ operator on these types", false);
 				tl.nullOperand(RValue(t), e1, false);
 				code.op(IlOps.NOT, 1, 1);
 				tl.dyn.finish(t, own, ret);
@@ -385,7 +451,14 @@ class TexprOps {
 		if (p == null) throw new Unsupported("this kind of assignment", false);
 		if (!isNumeric(p.sig)) throw new Unsupported("the " + (increment ? "++" : "--") + " operator on these types", false);
 		function step() {
-			if (isIntLike(p.sig)) code.ldcI4(1) else code.opR8(IlOps.LDC_R8, 1.0, 0, 1);
+			if (isIntLike(p.sig)) {
+				code.ldcI4(1);
+			} else if (is64(p.sig)) {
+				code.ldcI4(1);
+				code.op(IlOps.CONV_I8, 1, 1);
+			} else {
+				code.opR8(IlOps.LDC_R8, 1.0, 0, 1);
+			}
 			code.op(increment ? IlOps.ADD : IlOps.SUB, 2, 1);
 		}
 		p.prepare();

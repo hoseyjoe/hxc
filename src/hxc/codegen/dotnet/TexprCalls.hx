@@ -512,9 +512,47 @@ class TexprCalls {
 			case ["__lock__", 2]:
 				lock(args[0], args[1]);
 				tl.coerce(LVoid, ret);
+			case ["__cs__", 1] if (csIntLiteral(args[0]) != null):
+				var lit = csIntLiteral(args[0]);
+				if (lit.t.match(LInt32 | LUInt32)) code.ldcI4(lit.v.low) else code.opI64(IlOps.LDC_I8, lit.v, 0, 1);
+				tl.coerce(lit.t, ret);
 			case _:
 				throw new Unsupported("untyped code", false);
 		}
+	}
+
+	// The constant of `__cs__(s)` when s is a C# integer literal, such as hxcs's `0xffffffffL` in
+	// haxe.Int64.make, with the type C# gives it; null for any other C#, which milestone 4's subset of
+	// C# expressions covers.
+	static function csIntLiteral(e:TExpr):Null<{v:haxe.Int64, t:IlSigNorm}> {
+		var body = switch (strip(e).expr) {
+			case TConst(TString(s)): s;
+			case _: return null;
+		}
+		var suffix = "";
+		while (body.length > 0 && "uUlL".indexOf(body.charAt(body.length - 1)) >= 0) {
+			suffix = body.charAt(body.length - 1).toLowerCase() + suffix;
+			body = body.substr(0, body.length - 1);
+		}
+		if (suffix != "" && suffix != "u" && suffix != "l" && suffix != "ul" && suffix != "lu") return null;
+		var hex = body.length > 2 && (body.substr(0, 2) == "0x" || body.substr(0, 2) == "0X");
+		var digits = hex ? body.substr(2).toLowerCase() : body;
+		// At most 16 hex or 19 decimal digits, which fit in a ulong.
+		if (digits.length == 0 || digits.length > (hex ? 16 : 19)) return null;
+		var v:haxe.Int64 = 0;
+		for (i in 0...digits.length) {
+			var d = (hex ? "0123456789abcdef" : "0123456789").indexOf(digits.charAt(i));
+			if (d < 0) return null;
+			v = hex ? (v << 4) | d : v * 10 + d;
+		}
+		// The first of int, uint, long, ulong that holds the value and that the suffix allows.
+		var unsigned = suffix.indexOf("u") >= 0, long = suffix.indexOf("l") >= 0;
+		inline function fits(high:Int, low:Int) return haxe.Int64.ucompare(v, haxe.Int64.make(high, low)) <= 0;
+		var t = if (!long && !unsigned && fits(0, 0x7FFFFFFF)) LInt32
+			else if (!long && fits(0, 0xFFFFFFFF)) LUInt32
+			else if (!unsigned && fits(0x7FFFFFFF, 0xFFFFFFFF)) LInt64
+			else LUInt64;
+		return {v: v, t: t};
 	}
 
 	// The type a magic identifier's type argument names: a type expression, or in untyped code the name

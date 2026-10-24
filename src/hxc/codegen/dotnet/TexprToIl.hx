@@ -261,8 +261,8 @@ class TexprToIl {
 			nullConvert(from, to);
 			return;
 		}
-		// Int and UInt are both an int32 on the stack.
-		if (isIntLike(from) && isIntLike(to)) return;
+		// Int and UInt are both an int32 on the stack, Int64 and UInt64 both an int64.
+		if (isIntLike(from) && isIntLike(to) || is64(from) && is64(to)) return;
 		// A .NET enum and its underlying integer are the same value on the stack, as C#'s casts between
 		// them.
 		if (sameAsEnum(from, to) || sameAsEnum(to, from)) return;
@@ -294,26 +294,29 @@ class TexprToIl {
 			else if (from.match(LUInt32) && to.match(LFloat64)) {
 				code.op(IlOps.CONV_R_UN, 1, 1);
 				code.op(IlOps.CONV_R8, 1, 1);
-			} else if (from.match(LFloat64) && to.match(LInt32)) code.op(IlOps.CONV_I4, 1, 1);
+			} else if (from.match(LFloat64 | LInt64 | LUInt64) && to.match(LInt32)) code.op(IlOps.CONV_I4, 1, 1);
 			// To Single and Int64 as C#'s casts, and Int's implicit widening, convert.
-			else if (from.match(LFloat64 | LInt32) && to.match(LFloat32)) code.op(IlOps.CONV_R4, 1, 1);
-			else if (from.match(LUInt32) && to.match(LFloat32)) {
+			else if (from.match(LFloat64 | LInt32 | LInt64) && to.match(LFloat32)) code.op(IlOps.CONV_R4, 1, 1);
+			else if (from.match(LUInt32 | LUInt64) && to.match(LFloat32)) {
 				code.op(IlOps.CONV_R_UN, 1, 1);
 				code.op(IlOps.CONV_R4, 1, 1);
-			} else if (from.match(LFloat64 | LInt32) && to.match(LInt64)) code.op(IlOps.CONV_I8, 1, 1);
-			// Single and the small integers widen to Float, as C# does implicitly.
-			else if (from.match(LFloat32 | LInt8 | LInt16) && to.match(LFloat64)) code.op(IlOps.CONV_R8, 1, 1);
-			else if (from.match(LUInt8 | LUInt16 | LChar) && to.match(LFloat64)) {
+			} else if (from.match(LFloat64 | LInt32 | LInt8 | LInt16) && to.match(LInt64)) code.op(IlOps.CONV_I8, 1, 1);
+			// Int64 widens to Float, as C# does implicitly, and so do Single and the small integers.
+			else if (from.match(LFloat32 | LInt8 | LInt16 | LInt64) && to.match(LFloat64)) code.op(IlOps.CONV_R8, 1, 1);
+			else if (from.match(LUInt8 | LUInt16 | LChar | LUInt64) && to.match(LFloat64)) {
 				code.op(IlOps.CONV_R_UN, 1, 1);
 				code.op(IlOps.CONV_R8, 1, 1);
 			}
-			else if (from.match(LUInt32) && to.match(LInt64)) code.op(IlOps.CONV_U8, 1, 1);
+			else if (from.match(LUInt32 | LUInt8 | LUInt16 | LChar) && is64(to)) code.op(IlOps.CONV_U8, 1, 1);
+			// C#'s (ulong) of an int sign-extends, and of a double converts unsigned.
+			else if (from.match(LInt32 | LInt8 | LInt16) && to.match(LUInt64)) code.op(IlOps.CONV_I8, 1, 1);
+			else if (from.match(LFloat64) && to.match(LUInt64)) code.op(IlOps.CONV_U8, 1, 1);
 			// To the small integers and Char, as C#'s unchecked casts truncate.
-			else if (isIntLike(from) && to.match(LChar | LUInt16)) code.op(IlOps.CONV_U2, 1, 1);
-			else if (isIntLike(from) && to.match(LInt16)) code.op(IlOps.CONV_I2, 1, 1);
-			else if (isIntLike(from) && to.match(LUInt8)) code.op(IlOps.CONV_U1, 1, 1);
-			else if (isIntLike(from) && to.match(LInt8)) code.op(IlOps.CONV_I1, 1, 1);
-			else if (from.match(LFloat64) && to.match(LUInt32)) code.op(IlOps.CONV_U4, 1, 1);
+			else if ((isIntLike(from) || is64(from)) && to.match(LChar | LUInt16)) code.op(IlOps.CONV_U2, 1, 1);
+			else if ((isIntLike(from) || is64(from)) && to.match(LInt16)) code.op(IlOps.CONV_I2, 1, 1);
+			else if ((isIntLike(from) || is64(from)) && to.match(LUInt8)) code.op(IlOps.CONV_U1, 1, 1);
+			else if ((isIntLike(from) || is64(from)) && to.match(LInt8)) code.op(IlOps.CONV_I1, 1, 1);
+			else if (from.match(LFloat64 | LInt64 | LUInt64) && to.match(LUInt32)) code.op(IlOps.CONV_U4, 1, 1);
 			else if (isTypeParam(from) || isTypeParam(to)) {
 				// Between a type parameter and another type that is one at run time, as C# casts through object.
 				code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
@@ -344,6 +347,8 @@ class TexprToIl {
 	}
 
 	static function isIntLike(s:IlSigNorm):Bool return s.match(LInt32 | LUInt32);
+
+	static function is64(s:IlSigNorm):Bool return s.match(LInt64 | LUInt64);
 
 	// gencs's haxe.lang.Null<T>, which Null<T> of a value type maps to.
 	function isHaxeNull(s:IlSigNorm):Bool {
@@ -652,7 +657,8 @@ class TexprToIl {
 	// A cast; `checked` for cast(e, T). gencs writes both as C#'s cast to the expression's type, so a cast
 	// that changes the type converts or checks through that type even when the value goes on somewhere
 	// else, as C#'s `(object)(int)d` does: to a String (Runtime.toString), between value types, from
-	// Dynamic to a value type, a type parameter or a class, and every checked cast.
+	// Dynamic to a value type, a type parameter or a class, and every checked cast but those of 64-bit
+	// integers.
 	function castExpr(ret:Ret, e:TExpr, e1:TExpr, checked:Bool):Void {
 		var from = null, to = null;
 		if (!isNullConst(e1)) {
@@ -660,6 +666,12 @@ class TexprToIl {
 			to = try sig(e.type) catch (_:Unsupported) null;
 			// A cast between instantiations is reported at the cast.
 			if (from != null && to != null) checkInstantiationCast(from, to);
+		}
+		// gencs writes no conversion for cast(x, T) when T or x's type is Int64 or UInt64: the value keeps
+		// x's type, and converts only where its destination does (`cast(-2.7, Int64)` printed is -2.7).
+		if (checked && from != null && to != null && (is64(from) || is64(to))) {
+			texpr(ret.match(RValue(null)) ? RValue(from) : ret, e1);
+			return;
 		}
 		var want = switch (ret) {
 			case RValue(w): w;
@@ -1013,7 +1025,7 @@ class TexprToIl {
 
 	static function isStringClass(c:TClass):Bool return c.path.pack.length == 0 && c.path.name == "String";
 
-	static function isNumeric(s:IlSigNorm):Bool return s.match(LInt32 | LUInt32 | LFloat64);
+	static function isNumeric(s:IlSigNorm):Bool return s.match(LInt32 | LUInt32 | LFloat64 | LInt64 | LUInt64);
 
 	// The type an operand is computed in: a Null<T> operand's T, read from its value.
 	function operandSig(op:Binop, e:TExpr):IlSigNorm {
