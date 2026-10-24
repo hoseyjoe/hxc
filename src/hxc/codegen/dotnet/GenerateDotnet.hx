@@ -251,19 +251,25 @@ class DotnetCtx {
 // directory, plus <name>.runtimeconfig.json for a program with a main.
 
 class GenerateDotnet {
-	// Joined with "\n" so the file is the same whatever line endings this source was checked out with.
-	static final runtimeConfig = [
-		'{',
-		'  "runtimeOptions": {',
-		'    "tfm": "net10.0",',
-		'    "framework": {',
-		'      "name": "Microsoft.NETCore.App",',
-		'      "version": "10.0.0"',
-		'    }',
-		'  }',
-		'}',
-		''
-	].join("\n");
+	// The .NET a program is built for unless -D dotnet-version says otherwise, and the oldest it can be.
+	static inline final defaultVersion = 10;
+
+	// The runtimeconfig.json of a program for .NET `version`. Joined with "\n" so the file is the same
+	// whatever line endings this source was checked out with.
+	static function runtimeConfig(version:Int):String {
+		return [
+			'{',
+			'  "runtimeOptions": {',
+			'    "tfm": "net' + version + '.0",',
+			'    "framework": {',
+			'      "name": "Microsoft.NETCore.App",',
+			'      "version": "' + version + '.0.0"',
+			'    }',
+			'  }',
+			'}',
+			''
+		].join("\n");
+	}
 
 	public static function generate(ctx:Context):Void {
 		var dir = ctx.file.split("\\").join("/");
@@ -273,6 +279,15 @@ class GenerateDotnet {
 		var isDll = ctx.main == null;
 		var mb = new ModuleBuilder(name, isDll);
 		var g = new DotnetCtx(ctx, mb);
+		var version = defaultVersion;
+		if (ctx.defines.rawDefined("dotnet_version")) {
+			var s = ctx.defines.rawDefinedValueSafe("dotnet_version");
+			var v = NetSetup.parseInt(s);
+			if (v == null || v < defaultVersion)
+				g.error("-D dotnet-version must be a whole number, " + defaultVersion + " or later, like 11 (not " + s + ")", Position.nullPos);
+			else
+				version = v;
+		}
 		var identities = new Map<String, ModuleBuilder.AssemblyIdentity>();
 		mb.externScope = function(path:IlPath) {
 			for (lib in ctx.netLibs) if (lib.definesType(path)) {
@@ -412,7 +427,7 @@ class GenerateDotnet {
 		if (g.diagnostics > 0) return;
 		if (!isDll && g.entryPoint == 0) throw "internal error: the program has no entry point";
 		sys.io.File.saveBytes(dir + "/" + name + ".dll", mb.finish(g.entryPoint));
-		if (!isDll) sys.io.File.saveContent(dir + "/" + name + ".runtimeconfig.json", runtimeConfig);
+		if (!isDll) sys.io.File.saveContent(dir + "/" + name + ".runtimeconfig.json", runtimeConfig(version));
 	}
 
 	// gencs's C# enum for a @:nativeGen flat enum: `value__`, then a literal per constructor, numbered in

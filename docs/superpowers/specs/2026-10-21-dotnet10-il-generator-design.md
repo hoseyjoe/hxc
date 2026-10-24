@@ -91,7 +91,8 @@ commit built with Haxe 4.3.7.
 - Byte-identical output with Haxe 4.3.7's gencs (C# source). This target is new; hxc's "identical
   output" promise does not apply to it.
 - C# source output, in any mode.
-- .NET Framework or Mono. Only .NET 10 (`net10.0`) is targeted.
+- .NET Framework, Mono, or .NET before 10. .NET 10 (`net10.0`) is targeted by default, and
+  `-D dotnet-version=<N>` picks a later one (see Output).
 - Edit and Continue / Hot Reload.
 - NativeAOT-specific work (emitted IL should not rule it out, but nobody tests for it).
 - Changes to the server app's JS client or Electron builds.
@@ -240,6 +241,9 @@ wrong-typed write through `Dynamic`, nested arrays, and two threads casting one 
 
 - **Output**: one PE32 IL-only, AnyCPU assembly per compile, plus a separate Portable PDB. Library
   output when there's no `-main`, a console app (with a `*.runtimeconfig.json`) when there is.
+  The runtimeconfig asks for `net10.0` unless `-D dotnet-version=<N>` names another .NET: a whole
+  number, 10 or more, so `11` writes `net11.0` / `11.0.0`; anything else is a compile error. Only the
+  runtimeconfig changes; the assembly's references come from `--net-std`/`--net-lib` as before.
 - **Command line**: `--cs <dir>` together with `-D dotnet` selects this generator, the same way
   `--java <dir> -D jvm` selects the JVM backend. The platform stays `cs`, so `#if cs`, the `cs.*`
   std package and every existing `cs.system.*` / `cs.NativeArray` / `@:nativeGen` use in the server app keep

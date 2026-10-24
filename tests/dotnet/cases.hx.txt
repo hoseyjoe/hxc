@@ -13,6 +13,50 @@ class P {}
 ===
 [dump]
 assembly My.App 1.0.0.0
+--- runtimeconfig-defaults-to-net10 @runtimeconfig
+class P {
+	static function main() {}
+}
+===
+[runtimeconfig]
+{
+  "runtimeOptions": {
+    "tfm": "net10.0",
+    "framework": {
+      "name": "Microsoft.NETCore.App",
+      "version": "10.0.0"
+    }
+  }
+}
+--- dotnet-version-define @runtimeconfig + -D dotnet-version=11
+class P {
+	static function main() {}
+}
+===
+[runtimeconfig]
+{
+  "runtimeOptions": {
+    "tfm": "net11.0",
+    "framework": {
+      "name": "Microsoft.NETCore.App",
+      "version": "11.0.0"
+    }
+  }
+}
+--- dotnet-version-below-10 + -D dotnet-version=9
+class P {
+	static function main() {}
+}
+===
+[compile]
+dotnet: -D dotnet-version must be a whole number, 10 or later, like 11 (not 9)
+--- dotnet-version-not-a-number + -D dotnet-version=net11.0
+class P {
+	static function main() {}
+}
+===
+[compile]
+dotnet: -D dotnet-version must be a whole number, 10 or later, like 11 (not net11.0)
 --- hello @gencs @stress-fieldlookup
 class P {
 	static function main() {

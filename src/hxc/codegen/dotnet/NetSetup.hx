@@ -81,7 +81,7 @@ class NetSetup {
 	}
 
 	// OCaml's int_of_string for a decimal value: an optional sign and digits only.
-	static function parseInt(s:String):Null<Int> {
+	public static function parseInt(s:String):Null<Int> {
 		var start = s.length > 0 && (s.charAt(0) == "-" || s.charAt(0) == "+") ? 1 : 0;
 		if (s.length == start) return null;
 		for (i in start...s.length) {

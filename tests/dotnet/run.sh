@@ -2,10 +2,12 @@
 # Runs the .NET generator's cases in cases.hx.txt.
 #   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>]
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@stress-fieldlookup]
-# [+ extra hxc args]`, its source, `===`, and the expected result. Each case compiles twice into a
-# fresh directory, and its .dll must be byte-identical between the two, pass ILVerify, run (unless
-# @lib) and dump as expected. A @stress-fieldlookup case's .dll must also pass HxcCheck's
-# stress-fieldlookup (haxe.lang.FieldLookup called from many threads at once).
+# [@runtimeconfig] [+ extra hxc args]`, its source, `===`, and the expected result. Each case
+# compiles twice into a fresh directory, and its .dll must be byte-identical between the two, pass
+# ILVerify, run (unless @lib) and dump as expected. A @stress-fieldlookup case's .dll must also pass
+# HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup called from many threads at once). A
+# @runtimeconfig case is not run; its <name>.runtimeconfig.json is the result instead, so a case can
+# build for a .NET version this machine does not have.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
 # and a case whose expectation has no [run] section takes the gencs output as that expectation.
@@ -151,7 +153,7 @@ EOF
 
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 stress=0 t
+	local lib=0 module="P" dump="" gencs=0 stress=0 config=0 t
 	for t in $tags; do
 		case "$t" in
 			@lib) lib=1 ;;
@@ -159,6 +161,7 @@ run_case() {
 			@dump=*) dump="${t#@dump=}" ;;
 			@gencs) gencs=1 ;;
 			@stress-fieldlookup) stress=1 ;;
+			@runtimeconfig) config=1 ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
 		esac
 	done
@@ -196,7 +199,9 @@ run_case() {
 		done
 		local vout
 		if ! vout="$(check verify "$(native "$dll")" 2>&1)"; then problem="${problem}${vout}"$'\n'; fi
-		if [ $lib = 0 ]; then
+		if [ $config = 1 ]; then
+			result="${result:+$result$'\n'}[runtimeconfig]"$'\n'"$(cat "$casedir"/a/P/*.runtimeconfig.json 2>&1)"
+		elif [ $lib = 0 ]; then
 			local rout code=0
 			rout="$(cd "$casedir" && dotnet "a/P/$(basename "$dll")" 2>&1)" || code=$?
 			[ $code != 0 ] && rout="${rout}"$'\n'"[exit $code]"
