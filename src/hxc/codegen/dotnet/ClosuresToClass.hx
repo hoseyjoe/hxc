@@ -136,7 +136,39 @@ class ClosuresToClass {
 
 	// A variable's initializer or a dynamic method's function, which becomes a class itself.
 	function value(cf:TClassField):Void {
-		if (hasFunction(cf.expr)) g.closureExprs.set(cf, map(cf.expr));
+		if (!hasFunction(cf.expr)) return;
+		if (!cf.kind.match(Method(MethDynamic)) || field == "Anon") {
+			g.closureExprs.set(cf, map(cf.expr));
+			return;
+		}
+		// An instance dynamic method's `this`: in the split constructor, overloadingConstructor's
+		// `__hx_this`, a local the class captures; the code creating the class passes `this`. In a
+		// constructor outside the split model gencs leaves `this`, the closure class's own (its C# does
+		// not compile).
+		var self = TypeFunctions.allocVar(VGenerated, "__hx_this", TInst(owner, TypeFunctions.extractParamTypes(owner.params)), cf.expr.pos);
+		TypeFunctions.addVarFlag(self, VCaptured);
+		var outside = field == "new";
+		function rebind(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TConst(TThis) if (outside): refused("dynamic methods that use this outside gencs's class model", e);
+				case TConst(TThis): TypeFunctions.mk(TLocal(self), self.type, e.pos);
+				case TConst(TSuper): refused("super.method() calls in dynamic methods", e);
+				case _: TexprTools.mapExpr(rebind, e);
+			}
+		}
+		function unbind(e:TExpr):TExpr {
+			return switch (e.expr) {
+				case TLocal(v) if (v == self): TypeFunctions.mk(TConst(TThis), self.type, e.pos);
+				case _: TexprTools.mapExpr(unbind, e);
+			}
+		}
+		g.closureExprs.set(cf, unbind(map(rebind(cf.expr))));
+	}
+
+	// `__refused__(what)`, which TexprCalls.magicCall reports as not supported.
+	static function refused(what:String, e:TExpr):TExpr {
+		var msg = TypeFunctions.mk(TConst(TString(what)), TypeFunctions.tDynamic, e.pos);
+		return TypeFunctions.mk(TCall(TypeFunctions.mk(TIdent("__refused__"), TypeFunctions.tDynamic, e.pos), [msg]), e.type, e.pos);
 	}
 
 	static function hasFunction(e:TExpr):Bool {

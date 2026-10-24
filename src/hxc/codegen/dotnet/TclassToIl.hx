@@ -220,7 +220,15 @@ class TclassToIl {
 							sig: g.types.toSig(cf.type)
 						});
 					case Method(MethDynamic):
-						throw new Unsupported("dynamic methods", true);
+						// A field of type haxe.lang.Function, which an override sets again (fieldInits).
+						if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) continue;
+						if (isStruct && !isStatic) throw new Unsupported("dynamic methods in structs", true);
+						fields.push({
+							cf: cf,
+							name: DotnetNames.fieldName(c, cf.name),
+							flags: FieldAttrs.PUBLIC | (isStatic ? FieldAttrs.STATIC : 0),
+							sig: g.types.toSig(cf.type)
+						});
 					case Method(_):
 				} catch (u:Unsupported) throw at(u, cf.pos);
 			}
@@ -231,7 +239,7 @@ class TclassToIl {
 		var methods:Array<MethodPlan> = [];
 		function addMethod(cf:TClassField, isStatic:Bool, isCtor:Bool) {
 			switch (cf.kind) {
-				case Method(MethMacro): return;
+				case Method(MethMacro | MethDynamic): return;
 				case Method(_):
 				case Var(_): return;
 			}
@@ -1016,8 +1024,9 @@ class TclassToIl {
 		code.op(IlOps.RET, 0, 0);
 	}
 
-	// The static constructor: the initializers, then the constructor's body, or for a cloned one the
-	// base class's static constructor with the arguments.
+	// The static constructor: the constructor's body with the initializers (withInits); without one, the
+	// initializers, or for a cloned one the var initializers, the base class's static constructor with
+	// the arguments, then the dynamic methods.
 	static function staticCtorBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, hc:HaxeCtor, code:IlCode, lower:TexprToIl, what:String):Void {
 		var c = plan.c;
 		if (hc.own != null) {
@@ -1027,16 +1036,23 @@ class TclassToIl {
 			statement(lower, RReturn, withInits(g, c, tf.expr));
 			return;
 		}
-		var inits = fieldInits(g, c);
-		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: c.pos});
-		if (hc.clone) {
-			var s = c.superClass;
-			var superPlan = g.planOf.get(s.c);
-			var margs = [for (p in s.params) g.types.toSig(p)];
-			var stat = ctorOf(superPlan, hc.origin).stat;
-			for (i in 0...m.args.length) code.ldarg(i);
-			code.opToken(IlOps.CALL, staticCtorRef(g, superPlan, stat, margs), m.args.length, 0);
+		var inits = fieldInits(g, c), dynamics = dynamicInits(g, c);
+		if (!hc.clone) {
+			initStatements(lower, c, inits.concat(dynamics));
+			return;
 		}
+		initStatements(lower, c, inits);
+		var s = c.superClass;
+		var superPlan = g.planOf.get(s.c);
+		var margs = [for (p in s.params) g.types.toSig(p)];
+		var stat = ctorOf(superPlan, hc.origin).stat;
+		for (i in 0...m.args.length) code.ldarg(i);
+		code.opToken(IlOps.CALL, staticCtorRef(g, superPlan, stat, margs), m.args.length, 0);
+		initStatements(lower, c, dynamics);
+	}
+
+	static function initStatements(lower:TexprToIl, c:TClass, inits:Array<TExpr>):Void {
+		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: c.pos});
 	}
 
 	// A constructor cloned from a native base class's: that constructor with the arguments, then the
@@ -1045,8 +1061,7 @@ class TclassToIl {
 		var owner = null;
 		for (p in HxGen.previousCtors(plan.c)) if (p.origin == hc.origin) owner = p.owner;
 		nativeBaseCtor(g, plan, code, hc.origin, owner, _ -> for (i in 0...m.args.length) code.ldarg(i + 1));
-		var inits = fieldInits(g, plan.c);
-		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: plan.c.pos});
+		initStatements(lower, plan.c, fieldInits(g, plan.c).concat(dynamicInits(g, plan.c)));
 	}
 
 	// gencs's FixOverrides override for a method with a contravariant parameter (OOverload), with the
@@ -1077,38 +1092,59 @@ class TclassToIl {
 	// declaration order.
 	static function fieldInits(g:DotnetCtx, c:TClass):Array<TExpr> {
 		var readOnly = [], others = [];
-		var params = TypeFunctions.extractParamTypes(c.params);
 		for (cf in c.orderedFields) {
 			if (!cf.kind.match(Var(_)) || cf.expr == null || TypeFunctions.hasClassFieldFlag(cf, CfExtern) || !TypeFunctions.isPhysicalField(cf)) continue;
-			var ethis:TExpr = {expr: TConst(TThis), type: TInst(c, params), pos: cf.pos};
-			var assign:TExpr = {
-				expr: TBinop(OpAssign, {expr: TField(ethis, FInstance(c, params, cf)), type: cf.type, pos: cf.pos}, g.exprOf(cf)),
-				type: cf.type,
-				pos: cf.expr.pos
-			};
+			var assign = initAssign(g, c, cf);
 			if (TypeFunctions.hasMeta(":readOnly", cf.meta)) readOnly.push(assign) else others.unshift(assign);
 		}
 		return readOnly.concat(others);
 	}
 
-	// The constructor body with the initializers: before it, or after its leading super(...) when the
-	// class descends from a native class (whose constructor C# runs first).
+	// The dynamic methods' assignments, an override's included, which init_funcs adds after the var
+	// initializers, in reverse declaration order.
+	static function dynamicInits(g:DotnetCtx, c:TClass):Array<TExpr> {
+		var r = [];
+		for (cf in c.orderedFields)
+			if (cf.kind.match(Method(MethDynamic)) && cf.expr != null && !TypeFunctions.hasClassFieldFlag(cf, CfExtern)) r.unshift(initAssign(g, c, cf));
+		return r;
+	}
+
+	// `this.f = <f's value>`.
+	static function initAssign(g:DotnetCtx, c:TClass, cf:TClassField):TExpr {
+		var params = TypeFunctions.extractParamTypes(c.params);
+		var ethis:TExpr = {expr: TConst(TThis), type: TInst(c, params), pos: cf.pos};
+		return {
+			expr: TBinop(OpAssign, {expr: TField(ethis, FInstance(c, params, cf)), type: cf.type, pos: cf.pos}, g.exprOf(cf)),
+			type: cf.type,
+			pos: cf.expr.pos
+		};
+	}
+
+	// The constructor body with the initializers, as init_funcs's add_fn places them: when the body
+	// starts with super(...), the var initializers before it and the dynamic methods after it (both
+	// after it when the class descends from a native class, whose constructor C# runs first);
+	// otherwise all before the body.
 	static function withInits(g:DotnetCtx, c:TClass, body:TExpr):TExpr {
-		var inits = fieldInits(g, c);
-		if (inits.length == 0) return body;
+		var inits = fieldInits(g, c), dynamics = dynamicInits(g, c);
+		if (inits.length == 0 && dynamics.length == 0) return body;
 		var el = switch (body.expr) {
 			case TBlock(el): el;
 			case _: [body];
 		}
-		var first = el.length > 0 && isSuperCall(el[0]) && HxGen.descendsFromNative(c) ? 1 : 0;
-		return {expr: TBlock(el.slice(0, first).concat(inits).concat(el.slice(first))), type: body.type, pos: body.pos};
+		var block = if (el.length > 0 && isSuperCall(el[0])) {
+			var head = [el[0]];
+			if (HxGen.descendsFromNative(c)) head.concat(inits).concat(dynamics).concat(el.slice(1)) else inits.concat(head).concat(dynamics).concat(el.slice(1));
+		} else {
+			inits.concat(dynamics).concat(el);
+		}
+		return {expr: TBlock(block), type: body.type, pos: body.pos};
 	}
 
 	// For a constructor without super(...): the initializers, then the base type's parameterless
 	// constructor, as init_funcs puts them before the super() of a cloned or empty constructor; under a
 	// .NET base, whose constructor C# runs first, the other way round.
 	static function initsAndBaseCtor(g:DotnetCtx, plan:ClassPlan, code:IlCode, lower:TexprToIl):Void {
-		var inits = plan.c == null ? [] : fieldInits(g, plan.c);
+		var inits = plan.c == null ? [] : fieldInits(g, plan.c).concat(dynamicInits(g, plan.c));
 		var native = plan.c != null && HxGen.descendsFromNative(plan.c);
 		if (native) baseCtor(g, plan, code);
 		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: plan.c.pos});

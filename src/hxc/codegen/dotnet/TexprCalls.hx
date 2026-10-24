@@ -180,9 +180,8 @@ class TexprCalls {
 				// A method of an anonymous structure is one of its fields.
 				if (!TexprDynamic.isDynamic(obj.type)) throw new Unsupported("method closures", true);
 				tl.dyn.fieldGet(ret, e, obj, cf.name, e.type, true);
-			case FStatic(c, cf) if (!isExtern(c) && cf.kind.match(Method(_))):
+			case FStatic(c, cf) if (!isExtern(c) && isMethod(cf)):
 				// A static method as a value: `new Closure(typeof(C), "name", hash)`.
-				checkMethodValue(cf);
 				g.types.checkKept(TClassDecl(c));
 				var plan = g.ownerOf.get(cf);
 				if (plan == null) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
@@ -235,14 +234,14 @@ class TexprCalls {
 			case FInstance(_, _, cf) | FClosure(_, cf) if (cf.kind.match(Method(_)) && isDynamicArray(obj.type)):
 				// gencs reads a method of an Array<Dynamic>, the non-generic Array, through Runtime.getField.
 				tl.dyn.fieldGet(ret, e, obj, cf.name, e.type, true);
-			case FInstance(c, _, cf) | FClosure({c: c}, cf) if (cf.kind.match(Method(_))):
+			case FInstance(c, _, cf) | FClosure({c: c}, cf) if (isMethod(cf)):
 				// An instance method as a value: `new Closure(obj, "name", hash)`, the receiver evaluated now,
 				// the method found by name when the closure is called.
-				checkMethodValue(cf);
 				g.types.checkKept(TClassDecl(c));
 				pushClosure(obj, LObject, cf.name);
 				tl.coerce(closureSig(), ret);
-			case FInstance(c, cparams, cf):
+			case FInstance(c, cparams, cf) | FClosure({c: c, params: cparams}, cf):
+				// A variable, or a dynamic method (read as a value, the typer's FClosure), its field.
 				var f = instanceField(c, cparams, cf);
 				receiver(obj, f.owner);
 				tl.volatilePrefix(cf);
@@ -451,8 +450,8 @@ class TexprCalls {
 				var token = g.mb.memberRef(g.typeTokenOf(LString), ExternMembers.memberName(cf), g.sigs.method(false, retSig, argSigs, 0));
 				code.opToken(IlOps.CALL, token, argSigs.length, retSig.match(LVoid) ? 0 : 1);
 				tl.coerce(retSig, ret);
-			case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (!cf.kind.match(Method(_))):
-				// A variable of a function type.
+			case TField(_, FStatic(_, cf) | FInstance(_, _, cf)) if (!isMethod(cf)):
+				// A variable of a function type, or a dynamic method.
 				invokeFunction(ret, e, callee, args);
 			case TField(_, FStatic(c, cf)) if (!isExtern(c)):
 				g.types.checkKept(TClassDecl(c));
@@ -572,9 +571,9 @@ class TexprCalls {
 		code.opToken(IlOps.LDSFLD, tl.staticField(rt, cf).token, 0, 1);
 	}
 
-	// A dynamic method read as a value is its field, not a closure.
-	static function checkMethodValue(cf:TClassField):Void {
-		if (cf.kind.match(Method(MethDynamic))) throw new Unsupported("dynamic methods", true);
+	// A method, not a variable or a dynamic method, which is a field holding a haxe.lang.Function.
+	static function isMethod(cf:TClassField):Bool {
+		return cf.kind.match(Method(_)) && !cf.kind.match(Method(MethDynamic));
 	}
 
 	// An Array<Dynamic>, which hxcs declares as the non-generic Array.
@@ -793,6 +792,7 @@ class TexprCalls {
 	// type there and the type of the class declaring it.
 	function instanceField(c:TClass, params:TParams, cf:TClassField):{token:Int, sig:IlSigNorm, owner:IlSigNorm} {
 		g.types.checkKept(TClassDecl(c));
+		cf = declaredField(c, cf);
 		var plan = g.ownerOf.get(cf);
 		if (plan == null || !g.fieldTokens.exists(cf)) {
 			if (!TypeFunctions.isPhysicalField(cf)) throw new Unsupported("this kind of field access", false);
@@ -801,6 +801,17 @@ class TexprCalls {
 		var inst = [for (t in tl.ownerArgs(c, params, plan)) tl.sig(t)];
 		var owner = DotnetCtx.instanceOf(plan, inst);
 		return {token: g.memberOf(plan, owner, cf), sig: DotnetTypes.substitute(g.fieldSigs.get(cf), inst, []), owner: owner};
+	}
+
+	// The field an overriding dynamic method of `c` stands for: the one its superclass declares.
+	static function declaredField(c:TClass, cf:TClassField):TClassField {
+		var cur = c;
+		while (cf.kind.match(Method(MethDynamic)) && TypeFunctions.hasClassFieldFlag(cf, CfOverride) && cur.superClass != null) {
+			cur = cur.superClass.c;
+			var f = cur.fields.get(cf.name);
+			if (f != null) cf = f;
+		}
+		return cf;
 	}
 
 	// A method's token as a call reaches it, with a MethodSpec for a generic method, and its argument

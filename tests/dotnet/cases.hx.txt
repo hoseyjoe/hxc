@@ -6130,3 +6130,85 @@ class P {
 	}
 }
 ===
+--- dynamic-methods @gencs
+class A {
+	public var n = 1;
+	public function new() {}
+	public dynamic function fmt(x:Int):String return "A" + (x + n);
+	public static dynamic function sfmt(x:Int):String return "S" + x;
+}
+class B extends A {
+	override public dynamic function fmt(x:Int):String return "B" + x;
+}
+class P {
+	static function main() {
+		var a = new A();
+		Sys.println(a.fmt(1));
+		a.fmt = x -> "new" + x;
+		Sys.println(a.fmt(2));
+		Sys.println(A.sfmt(3));
+		A.sfmt = x -> "news" + x;
+		Sys.println(A.sfmt(4));
+		var b = new B();
+		Sys.println(b.fmt(5));
+		var f = b.fmt;
+		Sys.println(f(6));
+		Sys.println(Reflect.field(a, "fmt")(7));
+		Sys.println(Reflect.fields(new A()));
+		Reflect.setField(a, "fmt", (x:Int) -> "set" + x);
+		Sys.println(a.fmt(8));
+		Sys.println(Type.getInstanceFields(A));
+	}
+}
+===
+[run]
+A2
+new2
+S3
+news4
+B5
+B6
+new7
+[fmt,n]
+set8
+[n,fmt]
+--- for-loop-closures @gencs
+class P {
+	static function main() {
+		var n = 3;
+		var fs = [];
+		for (i in 0...n) fs.push(() -> i * 10);
+		for (f in fs) Sys.println(f());
+		var words = ["a", "b"];
+		var gs = [];
+		for (w in words) gs.push(() -> w + w);
+		for (g in gs) Sys.println(g());
+		var m = new Map<String, Int>();
+		m.set("k", 7);
+		var hs = [];
+		for (k => v in m) hs.push(() -> k + "=" + v);
+		Sys.println(hs[0]());
+		var sum = 0;
+		for (x in [1, 2, 3]) {
+			var add = () -> sum += x;
+			add();
+		}
+		Sys.println(sum);
+		var l = new haxe.ds.List<Int>();
+		l.add(4);
+		l.add(5);
+		var acc = [];
+		for (x in l) acc.push(() -> x);
+		Sys.println([for (a in acc) a()]);
+	}
+}
+===
+[run]
+0
+10
+20
+aa
+bb
+k=7
+6
+[4,5]

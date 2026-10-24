@@ -99,6 +99,8 @@ class ReflectionMembers {
 				if (seen.exists(cf.name)) continue;
 				if (TypeFunctions.hasMeta(":compilerGenerated", cf.meta) || TypeFunctions.hasMeta(":skipReflection", cf.meta)) continue;
 				if (TypeFunctions.hasClassFieldFlag(cf, CfExtern) && !TypeFunctions.hasClassFlag(cur, CExtern)) continue;
+				// An overriding dynamic method is the field its superclass declares.
+				if (cf.kind.match(Method(MethDynamic)) && TypeFunctions.hasClassFieldFlag(cf, CfOverride)) continue;
 				var keep = switch [what, cf.kind] {
 					case [_, Method(MethMacro)]: false;
 					case [CAll, _]: true;
