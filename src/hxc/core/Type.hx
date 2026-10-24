@@ -455,6 +455,9 @@ class TClass {
 	// and an abstract implementation's operators and casts with them (TypeResolve.resolveAbstractImpl).
 	public var hxcFieldsDeferred:Bool = false;
 	public var hxcAbstractOpsDeferred:Bool = false;
+	// The parents whose @:autoBuild it inherits once its build gets past them
+	// (TypeResolve.inheritAutoBuildOnceBuilt).
+	public var hxcAutoBuildFrom:Null<Array<TClass>> = null;
 	// The class's build while it is still queued (TypeResolve.ClassSlot).
 	public var hxcClassSlot:Dynamic = null;
 	public function new(path:Path, module:ModuleDef, pos:Position, namePos:Position, isPrivate:Bool,
