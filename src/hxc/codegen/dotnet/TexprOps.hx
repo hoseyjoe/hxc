@@ -614,6 +614,12 @@ class TexprOps {
 			tl.dyn.stdString();
 			return;
 		}
+		if (EnumToIl.enumOfType(e.type) != null) {
+			// An enum value through Std.string, as gencs writes it.
+			tl.texpr(RValue(LObject), e);
+			tl.dyn.stdString();
+			return;
+		}
 		stringKind(s);
 		tl.texpr(RValue(s), e);
 		stringifyTop(s);

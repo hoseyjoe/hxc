@@ -4392,3 +4392,140 @@ P.hx:10: characters 13-83 : dotnet: overrides that change the signature are not 
 P.hx:21: characters 2-69 : dotnet: interface methods implemented by overrides that change the signature are not supported yet
 P.hx:25: characters 15-47 : dotnet: DynTree (left out: interface methods implemented by overrides that change the signature) is not supported yet
 P.hx:26: characters 15-50 : dotnet: M (left out: overrides that change the signature) is not supported yet
+--- enum-shape @gencs @dump=Color,Color_Red,E,E_B,E_C,Opt,Opt_Some
+enum Color {
+	Red;
+	Green;
+	Blue;
+}
+enum E {
+	A;
+	B(x:Int, s:String);
+	C(f:Float, ?n:Int);
+}
+enum Opt<T> {
+	Some(v:T);
+	None;
+}
+class P {
+	static function main() {
+		var e = B(1, "z");
+		Sys.println(Green);
+		Sys.println(e);
+		Sys.println(C(1.5));
+		Sys.println(C(2, 3));
+		Sys.println(Some(3));
+		var none:Opt<String> = None;
+		Sys.println(none);
+		Sys.println(Some(Some("x")));
+		Sys.println(A);
+	}
+}
+===
+[run]
+Green
+B(1,z)
+C(1.5,null)
+C(2,3)
+Some(3)
+None
+Some(Some(x))
+A
+[dump]
+type public beforefieldinit Color extends haxe.lang.Enum
+  field public static initonly Color Red
+  field public static initonly Color Green
+  field public static initonly Color Blue
+  method family hidebysig specialname rtspecialname void .ctor(int32)
+  method private static hidebysig specialname rtspecialname void .cctor()
+type public sealed beforefieldinit Color_Red extends Color
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public virtual hidebysig string getTag()
+type public beforefieldinit E extends haxe.lang.Enum
+  field public static initonly E A
+  method family hidebysig specialname rtspecialname void .ctor(int32)
+  method public static hidebysig E B(int32, string)
+  method public static hidebysig E C(float64, haxe.lang.Null`1<int32>)
+  method private static hidebysig specialname rtspecialname void .cctor()
+type public sealed beforefieldinit E_B extends E
+  field public initonly int32 x
+  field public initonly string s
+  method public hidebysig specialname rtspecialname void .ctor(int32, string)
+  method public virtual hidebysig Array`1<object> getParams()
+  method public virtual hidebysig string getTag()
+  method public virtual hidebysig int32 GetHashCode()
+  method public virtual hidebysig bool Equals(object)
+  method public virtual hidebysig string toString()
+type public sealed beforefieldinit E_C extends E
+  field public initonly float64 f
+  field public initonly haxe.lang.Null`1<int32> n
+  method public hidebysig specialname rtspecialname void .ctor(float64, haxe.lang.Null`1<int32>)
+  method public virtual hidebysig Array`1<object> getParams()
+  method public virtual hidebysig string getTag()
+  method public virtual hidebysig int32 GetHashCode()
+  method public virtual hidebysig bool Equals(object)
+  method public virtual hidebysig string toString()
+type public beforefieldinit Opt extends haxe.lang.Enum
+  field public static initonly Opt None
+  method family hidebysig specialname rtspecialname void .ctor(int32)
+  method public static hidebysig Opt Some(object)
+  method private static hidebysig specialname rtspecialname void .cctor()
+type public sealed beforefieldinit Opt_Some extends Opt
+  field public initonly object v
+  method public hidebysig specialname rtspecialname void .ctor(object)
+  method public virtual hidebysig Array`1<object> getParams()
+  method public virtual hidebysig string getTag()
+  method public virtual hidebysig int32 GetHashCode()
+  method public virtual hidebysig bool Equals(object)
+  method public virtual hidebysig string toString()
+--- enum-strings @gencs
+enum Shape {
+	Dot;
+	Circle(r:Float);
+	Rect(w:Int, h:Int, ?label:String);
+	Group(items:Array<Shape>, inner:Shape);
+}
+enum Box<T> {
+	Full(v:T);
+	Empty;
+}
+class P {
+	static var fallback = Rect(1, 2, "unit");
+	static var nothing:Shape;
+	static function main() {
+		var d:Dynamic = Circle(0.5);
+		Sys.println(Std.string(d));
+		Sys.println("shape: " + Dot + " " + Rect(3, 4));
+		Sys.println(fallback);
+		Sys.println(Std.string(nothing));
+		Sys.println("n=" + nothing);
+		Sys.println(Group([Dot, Circle(2)], Rect(0, -1, null)));
+		Sys.println(Full(1.25));
+		Sys.println(Full(true));
+		Sys.println(Full(null));
+		Sys.println(Full([1, 2]));
+		Sys.println(Full(Full("deep")));
+		var b:Box<Int> = Empty;
+		Sys.println(b);
+		var maybe:Null<Shape> = null;
+		Sys.println(maybe == null);
+		maybe = Dot;
+		Sys.println(maybe);
+	}
+}
+===
+[run]
+Circle(0.5)
+shape: Dot Rect(3,4,null)
+Rect(1,2,unit)
+null
+n=null
+Group([Dot,Circle(2)],Rect(0,-1,null))
+Full(1.25)
+Full(true)
+Full(null)
+Full([1,2])
+Full(Full(deep))
+Empty
+True
+Dot

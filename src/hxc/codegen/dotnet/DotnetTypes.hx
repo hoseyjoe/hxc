@@ -329,7 +329,9 @@ class DotnetTypes {
 					checkKept(TEnumDecl(e));
 					// A @:nativeGen flat enum is a CLR enum.
 					if (HxGen.isClrEnum(e)) return LValueType(DotnetNames.typePath(TEnumDecl(e)), []);
-					throw new Unsupported("enums", true);
+					// gencs's enum class (EnumToIl), whose type parameters are erased: Opt<String> is Opt.
+					if (HxGen.isHxGen(TEnumDecl(e))) return LClass(DotnetNames.typePath(TEnumDecl(e)), []);
+					throw new Unsupported("@:nativeGen enums with type parameters", true);
 				}
 				LValueType(defined(externPathOf(TEnumDecl(e))), []);
 			case TInst(c, params):

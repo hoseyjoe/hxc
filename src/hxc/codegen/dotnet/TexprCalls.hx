@@ -239,6 +239,14 @@ class TexprCalls {
 				if (!needVal(ret)) return;
 				externEnumLiteral(en, ef);
 				tl.coerce(tl.sig(e.type), ret);
+			case FEnum(en, ef) if (EnumToIl.isHxGenEnum(en)):
+				// A constructor without arguments is the base class's static field holding its one value.
+				g.types.checkKept(TEnumDecl(en));
+				var plan = g.enumPlans.get(en);
+				if (!plan.isSingleton(ef)) throw new Unsupported("enum constructors as function values", true);
+				if (!needVal(ret)) return;
+				code.opToken(IlOps.LDSFLD, plan.singleton(ef), 0, 1);
+				tl.coerce(plan.base.thisSig, ret);
 			case FEnum(_, _):
 				throw new Unsupported("enum constructors", true);
 		}
@@ -445,11 +453,33 @@ class TexprCalls {
 				var op = isSuper || DotnetTypes.isValueType(m.owner) ? IlOps.CALL : IlOps.CALLVIRT;
 				code.opToken(op, m.token, args.length + 1, m.ret.match(LVoid) ? 0 : 1);
 				tl.coerce(m.ret, ret);
+			case TField(_, FEnum(en, ef)) if (EnumToIl.isHxGenEnum(en)):
+				enumFactoryCall(ret, en, ef, args, callee.type);
 			case TIdent(name):
 				magicCall(ret, e, name, args);
 			case _:
 				throw new Unsupported("calls of function values", true);
 		}
+	}
+
+	// A constructor with arguments: its factory, each argument converted to its type in the call's
+	// instantiation (`calleeType`) first, then to the factory's erased one, as Some(2) of an Opt<Float>
+	// stores a boxed Float.
+	function enumFactoryCall(ret:Ret, en:TEnum, ef:TEnumField, args:Array<TExpr>, calleeType:T):Void {
+		g.types.checkKept(TEnumDecl(en));
+		var plan = g.enumPlans.get(en);
+		var erased = plan.argSigs[ef.index];
+		var own = switch (TypeFunctions.follow(calleeType)) {
+			case TFun(sig): [for (a in sig.args) g.types.argSig(a.t, a.opt)];
+			case _: throw "internal error: the constructor " + ef.name + " is called without a function type";
+		}
+		if (args.length != erased.length || own.length != erased.length) throw new Unsupported("calls that leave out arguments", true);
+		for (i in 0...args.length) {
+			tl.texpr(RValue(own[i]), args[i]);
+			tl.convert(own[i], erased[i]);
+		}
+		code.opToken(IlOps.CALL, plan.factory(ef), args.length, 1);
+		tl.coerce(plan.base.thisSig, ret);
 	}
 
 	// The return type of System.Object's member `name` taking `argc` arguments, or null for another name.

@@ -8,6 +8,7 @@ import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
 import hxc.codegen.dotnet.DotnetTypes;
+import hxc.codegen.dotnet.EnumToIl;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.codegen.dotnet.HxGen;
 import hxc.codegen.dotnet.IlCode;
@@ -39,6 +40,8 @@ enum MethodKind {
 	// For an override with a contravariant parameter (OOverload): the override with the overridden
 	// method's signature, which calls the method, a new virtual overload with its own signature.
 	MBridge(cf:TClassField);
+	// A member of one of the classes an hxgen enum becomes (EnumToIl).
+	MEnum(e:TEnum, member:EnumMember);
 }
 
 // How an override takes the slot of the method it overrides, as gencs's FixOverrides fixes one whose
@@ -68,14 +71,15 @@ typedef MethodPlan = {
 	?ownArgs:Array<IlSigNorm>
 };
 
-typedef FieldPlan = {cf:TClassField, name:String, flags:Int, sig:IlSigNorm};
+// `cf` is null for a field of an enum's classes (EnumToIl); `token` is set when the row is written.
+typedef FieldPlan = {cf:Null<TClassField>, name:String, flags:Int, sig:IlSigNorm, ?token:Int};
 
 // A constructor of a class in gencs's class model: the real one, and the static one holding its body
 // (null when the class descends from a native type).
 typedef CtorPlan = {hx:HaxeCtor, real:MethodPlan, stat:Null<MethodPlan>};
 
 // What a class becomes, worked out before any row is written, so a class that cannot be declared
-// is left out without leaving rows behind. `c` is null for EntryPoint__Main.
+// is left out without leaving rows behind. `c` is null for EntryPoint__Main and an enum's classes.
 typedef ClassPlan = {
 	c:Null<TClass>,
 	hxPath:String,
@@ -129,8 +133,10 @@ class MethodAttrs {
 
 class FieldAttrs {
 	public static inline var PRIVATE = 0x1;
+	public static inline var FAMILY = 0x4;
 	public static inline var PUBLIC = 0x6;
 	public static inline var STATIC = 0x10;
+	public static inline var INIT_ONLY = 0x20;
 	public static inline var LITERAL = 0x40;
 	public static inline var SPECIAL_NAME = 0x200;
 	public static inline var RT_SPECIAL_NAME = 0x400;
@@ -799,8 +805,9 @@ class TclassToIl {
 		for (i in implemented) mb.interfaceImpl(plan.token, i);
 		if (plan.c != null && plan.isStd && TypeFunctions.hasMeta(":classCode", plan.c.meta)) g.records.push("ignored @:classCode in " + plan.hxPath);
 		for (f in plan.fields) {
-			var token = mb.field(plan.token, f.flags, f.name, g.sigs.field(f.sig));
-			g.fieldTokens.set(f.cf, token);
+			f.token = mb.field(plan.token, f.flags, f.name, g.sigs.field(f.sig));
+			if (f.cf == null) continue;
+			g.fieldTokens.set(f.cf, f.token);
 			g.fieldSigs.set(f.cf, f.sig);
 			g.ownerOf.set(f.cf, plan);
 		}
@@ -853,6 +860,7 @@ class TclassToIl {
 			case MStaticCtor(_): "new";
 			case MReflect(r): ReflectionMembers.label(r);
 			case MBridge(cf): cf.name;
+			case MEnum(_, member): EnumToIl.label(member);
 		}
 	}
 
@@ -1141,6 +1149,8 @@ class TclassToIl {
 					});
 				case MReflect(r):
 					ReflectionMembers.emit(g, plan, m, r, code, lower);
+				case MEnum(e, member):
+					EnumToIl.emit(g, m, e, member, code, lower);
 				case MToString(cf):
 					code.ldarg(0);
 					code.opToken(plan.isStruct ? IlOps.CALL : IlOps.CALLVIRT, g.memberOf(plan, plan.thisSig, cf), 1, 1);

@@ -11,7 +11,8 @@ class DotnetNames {
 	public static var noRoot = false;
 
 	// A top-level type has no namespace; with -D no-root, top-level non-extern types, Std and Math go
-	// to haxe.root. @:native replaces the path, and a generic type's name ends in `N.
+	// to haxe.root. @:native replaces the path, and a generic class's name ends in `N (an enum's type
+	// parameters are erased).
 	public static function typePath(mt:ModuleType):IlPath {
 		var infos = TypeFunctions.tInfos(mt);
 		var ns = infos.path.pack.copy();
@@ -30,7 +31,7 @@ class DotnetNames {
 			}
 			if (!isExtern || name == "Std" || name == "Math") ns = ["haxe", "root"];
 		}
-		if (infos.params.length > 0) name += "`" + infos.params.length;
+		if (infos.params.length > 0 && !mt.match(TEnumDecl(_))) name += "`" + infos.params.length;
 		return {ns: ns, nested: [], name: name};
 	}
 

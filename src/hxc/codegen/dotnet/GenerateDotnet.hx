@@ -7,6 +7,7 @@ import hxc.core.Globals;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.codegen.dotnet.DotnetTypes;
+import hxc.codegen.dotnet.EnumToIl;
 import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.IlMeta.IlConstant;
 import hxc.codegen.dotnet.IlMeta.TableIdx;
@@ -28,6 +29,8 @@ class DotnetCtx {
 	public final planOf = new ObjectMap<TClass, ClassPlan>();
 	// The plan of the class declaring each Haxe field and method.
 	public final ownerOf = new ObjectMap<TClassField, ClassPlan>();
+	// What each hxgen enum became (EnumToIl).
+	public final enumPlans = new ObjectMap<TEnum, EnumPlan>();
 	public var plans:Array<ClassPlan> = [];
 	// "skipped", "stubbed" and "ignored" lines for -D dotnet-stub-report.
 	public final records:Array<String> = [];
@@ -63,7 +66,11 @@ class DotnetCtx {
 
 	public function report(u:Unsupported):Void {
 		var msg = u.isBug ? u.what : u.what + " " + u.verb() + " not supported yet";
-		ctx.addDiagnostic("dotnet: " + msg, u.pos == null ? Position.nullPos : u.pos);
+		error(msg, u.pos == null ? Position.nullPos : u.pos);
+	}
+
+	public function error(msg:String, pos:Position):Void {
+		ctx.addDiagnostic("dotnet: " + msg, pos);
 		diagnostics++;
 	}
 
@@ -258,14 +265,17 @@ class GenerateDotnet {
 
 		var candidates:Array<TClass> = [];
 		var enums:Array<TEnum> = [];
+		var hxEnums:Array<TEnum> = [];
 		for (mt in ctx.types) switch (mt) {
 			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)):
 				candidates.push(c);
 				if (ctx.mainClass != null && Globals.sTypePath(c.path) == Globals.sTypePath(ctx.mainClass)) g.mainClass = c;
 			case TEnumDecl(e) if (HxGen.isClrEnum(e)):
 				enums.push(e);
+			case TEnumDecl(e) if (EnumToIl.isHxGenEnum(e)):
+				hxEnums.push(e);
 			case TEnumDecl(e) if (!e.isExtern):
-				leaveOut(g, mt, e.pos, new Unsupported("enums", true, e.pos));
+				leaveOut(g, mt, e.pos, new Unsupported("@:nativeGen enums with type parameters", true, e.pos));
 			case _:
 		}
 		if (ctx.main != null && g.mainClass == null) {
@@ -277,15 +287,36 @@ class GenerateDotnet {
 		}
 
 		// Two classes with one CLR name, through @:native, would be two TypeDefs of that name: the second
-		// is left out.
-		var named = new Map<String, Bool>();
-		for (e in enums) named.set(IlPaths.key(DotnetNames.typePath(TEnumDecl(e))), true);
+		// is left out. A name one of an hxgen enum's classes takes that is taken already is an error, as
+		// gencs's C# would not compile either; the type that comes second is left out without a further
+		// report. `named` maps each name to what an enum's class is, for messages, or "" for another type.
+		var named = new Map<String, String>();
+		for (e in enums) named.set(IlPaths.key(DotnetNames.typePath(TEnumDecl(e))), "");
+		// True when the class `mt` (`what` null) takes the name of another class or a CLR enum.
+		function clash(mt:ModuleType, path:IlPath, what:Null<String>, pos:Position):Bool {
+			var other = named.get(IlPaths.key(path));
+			if (other == null) {
+				named.set(IlPaths.key(path), what == null ? "" : what);
+				return false;
+			}
+			if (what == null && other == "") return true;
+			g.error((what == null ? "the class " + DotnetTypes.haxePath(mt) : what) + " has the CLR name " + NetConverter.ilpathS(path) + " of "
+				+ (other == "" ? "another type" : other), pos);
+			g.types.leftOut.set(DotnetTypes.haxePath(mt), "a CLR name that is taken");
+			return false;
+		}
+		for (e in hxEnums) {
+			var mt = TEnumDecl(e);
+			var hxPath = DotnetTypes.haxePath(mt);
+			clash(mt, DotnetNames.typePath(mt), "the enum " + hxPath, e.pos);
+			for (ef in EnumToIl.constructors(e)) if (!g.types.leftOut.exists(hxPath))
+				clash(mt, EnumToIl.ctorPath(e, ef), "the class of " + hxPath + "." + ef.name, ef.pos);
+		}
 		for (c in candidates) {
 			var mt = TClassDecl(c);
 			var path = DotnetNames.typePath(mt);
-			if (named.exists(IlPaths.key(path)))
+			if (clash(mt, path, null, c.pos))
 				leaveOut(g, mt, c.pos, new Unsupported("a second class with the CLR name " + NetConverter.ilpathS(path), false));
-			named.set(IlPaths.key(path), true);
 		}
 
 		// A class that cannot be declared is left out, and so is every class that refers to it; this
@@ -296,6 +327,18 @@ class GenerateDotnet {
 			g.plans = [];
 			// A class left out in the last round must not stay planned for the classes that refer to it.
 			g.planOf.clear();
+			g.enumPlans.clear();
+			// Enums first, so the classes that refer to one see whether it was left out.
+			for (e in hxEnums) {
+				var mt = TEnumDecl(e);
+				if (g.types.leftOut.exists(DotnetTypes.haxePath(mt))) continue;
+				try {
+					EnumToIl.declare(g, e);
+				} catch (u:Unsupported) {
+					leaveOut(g, mt, e.pos, u);
+					changed = true;
+				}
+			}
 			for (c in candidates) {
 				var mt = TClassDecl(c);
 				if (g.types.leftOut.exists(DotnetTypes.haxePath(mt))) continue;
@@ -310,7 +353,7 @@ class GenerateDotnet {
 		var plans = [];
 		for (p in g.plans) {
 			plans.push(p);
-			if (p.c == g.mainClass && p.c.path.name == "Main") plans.push(TclassToIl.entryPointClass(g, p.c));
+			if (p.c != null && p.c == g.mainClass && p.c.path.name == "Main") plans.push(TclassToIl.entryPointClass(g, p.c));
 		}
 		g.plans = plans;
 
@@ -318,6 +361,7 @@ class GenerateDotnet {
 		// CLR enums come after the classes, their fields after the classes' fields.
 		var enumTokens = [for (e in enums) mb.typeDef(TypeAttrs.PUBLIC | TypeAttrs.SEALED, DotnetNames.typePath(TEnumDecl(e)))];
 		for (p in plans) TclassToIl.write(g, p);
+		EnumToIl.written(g);
 		for (i in 0...enums.length) writeEnum(g, enums[i], enumTokens[i]);
 		// GenericParam rows go in owner order, a TypeDef's before its methods'.
 		var generics = [];
