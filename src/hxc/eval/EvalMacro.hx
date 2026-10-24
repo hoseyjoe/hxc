@@ -1219,7 +1219,9 @@ class EvalMacro {
 	// @:autoBuild inherited from a superclass or implemented interface.
 	// The build macros precede the field checks: a class whose build has not run yet has no final field
 	// list to check.
+	// A build whose macros are running is pending too: the fields wait for the list the last one leaves.
 	public static function hasPendingBuild(com:Context, c:TClass):Bool {
+		if (buildMacroPendings.exists(c)) return true;
 		var key = (com.isMacro ? "macro:" : "") + c.path.pack.join(".") + "." + c.path.name;
 		return !builtClasses.exists(key) && collectBuildEntries(c).length > 0;
 	}
@@ -1275,10 +1277,13 @@ class EvalMacro {
 		buildMacroPendings.set(c, []);
 		try runBuildEntries(com, c, entries, fail) catch (e:Dynamic) {
 			buildMacroPendings.remove(c);
+			buildRewroteFields.remove(c);
 			throw e;
 		}
 		var pending = buildMacroPendings.get(c);
 		buildMacroPendings.remove(c);
+		var rewroteFields = buildRewroteFields.exists(c);
+		buildRewroteFields.remove(c);
 		for (f in pending) f();
 		// The class initializes from the field list the build returns, once the builds and their pendings
 		// are done. A build that returned null leaves the fields it was given, which nothing has resolved
@@ -1287,6 +1292,15 @@ class EvalMacro {
 			var declEntry = com.declOfType.get(Context.pathKey(c.path));
 			switch (declEntry == null ? null : declEntry.decl) {
 				case EClass(d):
+					// The FINAL field list is checked, the builds' included (a duplicate name, a variable
+					// without hint or value, an accessor name, a modifier): with the com, the registration
+					// reports them for what the macros returned.
+					if (rewroteFields) hxc.context.ModuleLoader.rebuildFields(c, d.dData, com);
+					// Resolved in the class's own module so its private sibling types (e.g. a private
+					// typedef used in a field signature) resolve; a build triggered from another module's
+					// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule. The
+					// heritage is already resolved, so only the field signatures are (resolveClass would
+					// re-process extends and reject the set super).
 					var savedMod = com.currentModule;
 					com.currentModule = c.module;
 					try hxc.typing.TypeResolve.resolveClassFields(com, c, d, declEntry.pos) catch (e:Dynamic) {
@@ -1564,20 +1578,15 @@ class EvalMacro {
 		}
 		var newDef:Definition<ClassFlag, Array<ClassField>> = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta, dFlags: d.dFlags, dData: newFields};
 		com.declOfType.set(Context.pathKey(c.path), {decl: EClass(newDef), pos: declEntry.pos});
-		// The FINAL field list is checked, the build's included (a duplicate name, a variable without hint
-		// or value, an accessor name, a modifier): with the com, the registration reports them for what the
-		// macro returned.
-		hxc.context.ModuleLoader.rebuildFields(c, newFields, com);
-		// Resolve the rewritten fields in the class's own module so its private sibling types (e.g. a
-		// private typedef used in a field signature) resolve; a build triggered from another module's
-		// typing (new C() -> ensureBuilt) would otherwise carry the caller's currentModule.
-		var savedResolveMod = com.currentModule;
-		com.currentModule = c.module;
-		// The build macro rewrites fields only; the class heritage is already resolved, so re-resolve
-		// just the field signatures (resolveClass would re-process extends and reject the set super).
-		hxc.typing.TypeResolve.resolveClassFields(com, c, newDef, declEntry.pos);
-		com.currentModule = savedResolveMod;
+		// Only the declaration changes here. The class's fields are made once, from the list the LAST build
+		// leaves (runClassBuildMacros): a later build can still remove or rewrite what this one returned, so
+		// nothing between two builds is registered, resolved or checked.
+		c.hxcFieldsDeferred = true;
+		buildRewroteFields.set(c, true);
 	}
+
+	// The classes whose running builds returned a field list, which their fields are registered from anew.
+	static var buildRewroteFields = new haxe.ds.ObjectMap<TClass, Bool>();
 
 	// An enum's constructors are shown to a build macro as ordinary fields, so a no-argument constructor
 	// without type parameters reads as a var and every other one reads as a body-less function.
@@ -5857,11 +5866,21 @@ class EvalMacro {
 		f.set(EvalNames.hIsAbstract(), TypeFunctions.hasClassFlag(c, CAbstract) ? VTrue : VFalse);
 		f.set(EvalNames.hSuperClass(), c.superClass == null ? VNull : encodeClassRelation(ec, c.superClass));
 		f.set(EvalNames.hInterfaces(), encodeArray([for (i in c.interfaces) encodeClassRelation(ec, i)]));
-		f.set(EvalNames.hFields(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf, c)])));
-		f.set(EvalNames.hStatics(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedStatics) encodeClassField(ec, cf, c)])));
-		f.set(EvalNames.hConstructor(), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
+		// A class whose build macros are running has no fields yet: they are made from the list the builds
+		// return. hxc registers the declared fields as shells at module load, so they are hidden here, and
+		// a ClassType encoded during the build keeps answering none.
+		if (buildMacroPendings.exists(c)) {
+			f.set(EvalNames.hFields(), encodeLazyRef(ec, function() return encodeArray([])));
+			f.set(EvalNames.hStatics(), encodeLazyRef(ec, function() return encodeArray([])));
+			f.set(EvalNames.hConstructor(), VNull);
+			f.set(EvalNames.hOverrides(), encodeArray([]));
+		} else {
+			f.set(EvalNames.hFields(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedFields) encodeClassField(ec, cf, c)])));
+			f.set(EvalNames.hStatics(), encodeLazyRef(ec, function() return encodeArray([for (cf in c.orderedStatics) encodeClassField(ec, cf, c)])));
+			f.set(EvalNames.hConstructor(), c.constructor == null ? VNull : encodeLazyRef(ec, function() return encodeClassField(ec, c.constructor)));
+			f.set(EvalNames.hOverrides(), encodeArray([for (cf in c.orderedFields) if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) encodeClassFieldRef(ec, cf)]));
+		}
 		f.set(EvalNames.hInit(), c.init == null ? VNull : encodeTypedExpr(ec, c.init));
-		f.set(EvalNames.hOverrides(), encodeArray([for (cf in c.orderedFields) if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) encodeClassFieldRef(ec, cf)]));
 		// Exclude() makes the class extern and drops its init.
 		f.set(EvalNames.hExclude(), VFunction(function(_) {
 			TypeFunctions.addClassFlag(c, CExtern);

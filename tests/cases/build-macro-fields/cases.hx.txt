@@ -1,0 +1,17 @@
+--- local-class-has-no-fields-while-it-builds
+@:autoBuild(M.show())
+class A { public var a:Int = 1; public static var sa = 0; public function new() {} }
+class B extends A { public var b:Int = 2; static var sb = 3; public function new() { super(); } }
+class P { static function main() { new B(); } }
+
+--- fields-are-checked-after-the-last-build
+@:autoBuild(M.dropInherited())
+@:autoBuild(M.keep())
+class A { public var a:Int = 1; public function new() {} }
+class B extends A { public var a:Int = 2; public var b:Int = 3; }
+class P { static function main() { new B().b; } }
+
+--- the-class-has-no-fields-between-its-builds
+@:build(M.keep())
+@:build(M.show())
+class P { var x:Int = 1; static function main() {} }

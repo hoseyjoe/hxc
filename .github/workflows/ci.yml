@@ -107,7 +107,8 @@ jobs:
         run: |
           cd "${{ steps.t.outputs.conformance }}"
           neko run.n run --compiler "${{ steps.t.outputs.hxc }}" --std "$HAXE_STD_PATH" \
-            --cases "$GITHUB_WORKSPACE/tests/cases" -j 4 --junit "$RUNNER_TEMP/hxc.xml" --title "hxc"
+            --cases "$GITHUB_WORKSPACE/tests/cases" --expected "$GITHUB_WORKSPACE/tests/expected" \
+            -j 4 --junit "$RUNNER_TEMP/hxc.xml" --title "hxc"
 
   jvm:
     name: JVM

@@ -1,0 +1,5 @@
+{
+	"local-class-has-no-fields-while-it-builds": "P.hx:3: character 1 : Warning : B fields=[] statics=[] constructor=false super=[a]",
+	"fields-are-checked-after-the-last-build": "",
+	"the-class-has-no-fields-between-its-builds": "P.hx:2: characters 1-8 : Warning : P fields=[] statics=[] constructor=false super=-"
+}
