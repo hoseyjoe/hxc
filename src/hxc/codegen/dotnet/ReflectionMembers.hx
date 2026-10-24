@@ -372,28 +372,8 @@ private class ReflectionEmitter {
 				// Null<object>.ofDynamic<T>(value), as gencs writes it.
 				lower.ofDynamic(to);
 			case LClass(_, _) if (g.isGenericHaxeClass(to)):
-				// gencs converts between instantiations of a generic Haxe class (an Array<Dynamic> into an
-				// Array<Int> field) with __hx_cast, plan 3c; until then a value of another instantiation is
-				// refused loudly rather than with an InvalidCastException: null or the same instantiation
-				// passes, anything else throws NotSupportedException.
-				var tmp = code.addLocal(LObject);
-				var isNull = code.newLabel(), done = code.newLabel();
-				code.stloc(tmp);
-				code.ldloc(tmp);
-				code.branch(IlOps.BRFALSE, isNull);
-				code.ldloc(tmp);
-				code.opToken(IlOps.ISINST, g.typeTokenOf(to), 1, 1);
-				code.op(IlOps.DUP, 1, 2);
-				code.branch(IlOps.BRTRUE, done);
-				code.op(IlOps.POP, 1, 0);
-				var ex = LClass({ns: ["System"], nested: [], name: "NotSupportedException"}, []);
-				code.opToken(IlOps.LDSTR, g.mb.userString("hxc dotnet: converting " + hxc.core.TPrinting.sTypeStr(t)
-					+ " through reflection is not supported yet"), 0, 1);
-				code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(ex), ".ctor", g.sigs.method(true, LVoid, [LString], 0)), 1, 1);
-				code.op(IlOps.THROW, 1, 0);
-				code.mark(isNull);
-				code.op(IlOps.LDNULL, 0, 1);
-				code.mark(done);
+				// An Array<Dynamic> into an Array<Int> field, which gencs converts with __hx_cast (plan 3c).
+				lower.checkedInstanceCast(to, hxc.core.TPrinting.sTypeStr(t) + " through reflection");
 			case _ if (DotnetTypes.isValueType(to) || to.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _) | LTypeParam(_) | LMethodTypeParam(_))):
 				lower.dyn.toSig(to);
 			case _:

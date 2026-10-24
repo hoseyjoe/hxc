@@ -694,6 +694,12 @@ import cs.system.Object;
 	}
 	#end
 
+	// hxc: C#'s cast of an object to a type parameter, `(T)obj`, an unbox.any. Type.createEmptyInstance
+	// writes it in C# in hxcs; outside this class a cast from Dynamic to a type parameter is genericCast.
+	public static function unboxAny<T>(obj:Dynamic):T {
+		return cast obj;
+	}
+
 	public static function concat(s1:String, s2:String):String {
 		return (s1 == null ? "null" : s1) + (s2 == null ? "null" : s2);
 	}

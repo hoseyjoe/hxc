@@ -34,6 +34,8 @@ class DotnetCtx {
 	public var mainClass:Null<TClass> = null;
 	public var entryPoint = 0;
 	public var diagnostics = 0;
+	// gencommon's mk_temp counter, which numbers FixOverrides's `__temp_` parameters across the program.
+	public var tempCount = 0;
 
 	final stdRoots:Array<String>;
 
@@ -121,6 +123,21 @@ class DotnetCtx {
 			case _: null;
 		}
 		return c == null ? Std.string(s) : DotnetTypes.haxePath(TClassDecl(c));
+	}
+
+	// The Haxe type a signature stands for, as messages print it: haxe.ds.StringMap<Dynamic>.
+	public function haxeTypeOf(s:IlSigNorm):String {
+		return switch (s) {
+			case LObject: "Dynamic";
+			case LString: "String";
+			case LBool: "Bool";
+			case LInt32: "Int";
+			case LUInt32: "UInt";
+			case LFloat64: "Float";
+			case LClass(_, args) | LValueType(_, args) if (args.length > 0):
+				haxePathOf(s) + "<" + [for (a in args) haxeTypeOf(a)].join(", ") + ">";
+			case _: haxePathOf(s);
+		}
 	}
 
 	// A class defined by Haxe code (not an extern) with type arguments.

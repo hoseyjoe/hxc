@@ -258,6 +258,8 @@ class TexprDynamic {
 				runtimeCall("genericCast", null, [to]);
 			case _ if (DotnetTypes.isValueType(to)):
 				code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
+			case _ if (g.isGenericHaxeClass(to)):
+				tl.checkedInstanceCast(to, "a value to " + g.haxeTypeOf(to));
 			case _:
 				tl.castTo(to);
 		}

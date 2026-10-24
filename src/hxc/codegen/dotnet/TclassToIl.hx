@@ -6,6 +6,7 @@ import hxc.core.Globals;
 import hxc.core.TexprTools;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.core.TypeUnification;
 import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.codegen.dotnet.HxGen;
@@ -35,6 +36,21 @@ enum MethodKind {
 	MClonedCtor(ctor:HaxeCtor);
 	// One of gencs's `__hx_*` reflection members.
 	MReflect(r:ReflectMember);
+	// For an override with a contravariant parameter (OOverload): the override with the overridden
+	// method's signature, which calls the method, a new virtual overload with its own signature.
+	MBridge(cf:TClassField);
+}
+
+// How an override takes the slot of the method it overrides, as gencs's FixOverrides fixes one whose
+// CLR signature differs from the slot's: the same signature; the slot's, the parameters whose types
+// changed renamed `__temp_<name><n>` and converted into locals of their own names and types at the
+// top of the body; or, when a parameter is contravariant (the base method's type unifies with the
+// override's and not the other way round, unless the override's is Dynamic), the method keeps its own
+// signature as a new virtual overload and an override with the slot's (MBridge) calls it.
+enum OverrideShape {
+	OSame;
+	OInline(slot:{args:Array<IlSigNorm>, ret:IlSigNorm});
+	OOverload(slot:{args:Array<IlSigNorm>, ret:IlSigNorm});
 }
 
 typedef MethodPlan = {
@@ -47,7 +63,9 @@ typedef MethodPlan = {
 	argNames:Array<String>,
 	generics:Array<String>,
 	pos:Position,
-	token:Int
+	token:Int,
+	// An override that took its slot's signature (OInline): the parameter types its body sees.
+	?ownArgs:Array<IlSigNorm>
 };
 
 typedef FieldPlan = {cf:TClassField, name:String, flags:Int, sig:IlSigNorm};
@@ -223,22 +241,70 @@ class TclassToIl {
 					continue;
 				}
 				if (isCtor && !isStruct && !hasSuperCall(f.expr)) checkParameterlessBase(g, c);
+				var shape = !isStatic && !isCtor && !isInterface && isOverride(f) ? overrideShape(g, c, TypeFunctions.extractParamTypes(c.params), f, sig) : OSame;
 				var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG;
 				if (isStatic) flags |= MethodAttrs.STATIC;
 				else if (isCtor) flags |= MethodAttrs.SPECIAL_NAME | MethodAttrs.RT_SPECIAL_NAME;
-				else flags |= virtuality(g, c, f, isStruct, implementing.exists(f), sig);
-				methods.push({
-					kind: MField(f),
-					name: isCtor ? ".ctor" : DotnetNames.fieldName(c, f.name),
-					flags: flags,
-					hasThis: !isStatic,
-					ret: isCtor ? LVoid : sig.ret,
-					args: sig.args,
-					argNames: sig.names,
-					generics: [for (p in f.params) p.name],
-					pos: f.pos,
-					token: 0
-				});
+				else flags |= virtuality(c, f, isStruct, implementing.exists(f), !shape.match(OOverload(_)));
+				var name = isCtor ? ".ctor" : DotnetNames.fieldName(c, f.name);
+				var generics = [for (p in f.params) p.name];
+				if (!shape.match(OSame) && TypeFunctions.hasClassFieldFlag(f, CfAbstract))
+					throw new Unsupported("abstract overrides that change the signature", true);
+				switch (shape) {
+					case OSame:
+						methods.push({
+							kind: MField(f),
+							name: name,
+							flags: flags,
+							hasThis: !isStatic,
+							ret: isCtor ? LVoid : sig.ret,
+							args: sig.args,
+							argNames: sig.names,
+							generics: generics,
+							pos: f.pos,
+							token: 0
+						});
+					case OInline(slot):
+						methods.push({
+							kind: MField(f),
+							name: name,
+							flags: flags,
+							hasThis: true,
+							ret: slot.ret,
+							args: slot.args,
+							argNames: tempNames(g, sig, slot),
+							generics: generics,
+							pos: f.pos,
+							token: 0,
+							ownArgs: sig.args
+						});
+					case OOverload(slot):
+						// The override first, as gencs writes the overload it adds in front of the method.
+						methods.push({
+							kind: MBridge(f),
+							name: name,
+							flags: MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.VIRTUAL,
+							hasThis: true,
+							ret: slot.ret,
+							args: slot.args,
+							argNames: tempNames(g, sig, slot),
+							generics: generics,
+							pos: f.pos,
+							token: 0
+						});
+						methods.push({
+							kind: MField(f),
+							name: name,
+							flags: flags,
+							hasThis: true,
+							ret: sig.ret,
+							args: sig.args,
+							argNames: sig.names,
+							generics: generics,
+							pos: f.pos,
+							token: 0
+						});
+				}
 			} catch (u:Unsupported) throw at(u, f.pos);
 		}
 		var ctors:Null<Array<CtorPlan>> = null;
@@ -480,16 +546,13 @@ class TclassToIl {
 		throw new Unsupported("abstract classes that leave interface methods unimplemented", true);
 	}
 
-	// gencs's modifiers: virtual unless final or inline, override without newslot, abstract, and
-	// final virtual for a non-virtual method that implements an interface method.
-	static function virtuality(g:DotnetCtx, c:TClass, cf:TClassField, isStruct:Bool, implementsInterface:Bool,
-			sig:{args:Array<IlSigNorm>, ret:IlSigNorm}):Int {
+	// gencs's modifiers: virtual unless final or inline, override without newslot (unless FixOverrides
+	// made the method a new overload: `overrides` false), abstract, and final virtual for a non-virtual
+	// method that implements an interface method.
+	static function virtuality(c:TClass, cf:TClassField, isStruct:Bool, implementsInterface:Bool, overrides:Bool):Int {
 		if (TypeFunctions.hasClassFlag(c, CInterface)) return MethodAttrs.VIRTUAL | MethodAttrs.NEW_SLOT | MethodAttrs.ABSTRACT;
 		var isAbstract = TypeFunctions.hasClassFieldFlag(cf, CfAbstract);
-		if (isOverride(cf)) {
-			checkOverride(g, c, cf, sig);
-			return MethodAttrs.VIRTUAL | (isAbstract ? MethodAttrs.ABSTRACT : 0);
-		}
+		if (overrides && isOverride(cf)) return MethodAttrs.VIRTUAL | (isAbstract ? MethodAttrs.ABSTRACT : 0);
 		if (isAbstract) return MethodAttrs.VIRTUAL | MethodAttrs.NEW_SLOT | MethodAttrs.ABSTRACT;
 		if (!isFinalMethod(c, cf)) return MethodAttrs.VIRTUAL | MethodAttrs.NEW_SLOT;
 		return implementsInterface ? MethodAttrs.VIRTUAL | MethodAttrs.FINAL | MethodAttrs.NEW_SLOT : 0;
@@ -509,17 +572,20 @@ class TclassToIl {
 		}
 	}
 
-	// An override replaces the base method's slot only with the same signature; a covariant one would
+	// How the override `cf` of `owner` (with type arguments `ownerArgs`, in terms of the class being
+	// planned), whose signature is `sig`, takes the slot of the method it overrides. The slot of a .NET
+	// method or of an overloaded one is taken only with the same signature; a covariant one would
 	// silently become a new method.
-	static function checkOverride(g:DotnetCtx, c:TClass, cf:TClassField, sig:{args:Array<IlSigNorm>, ret:IlSigNorm}):Void {
+	static function overrideShape(g:DotnetCtx, owner:TClass, ownerArgs:Array<T>, cf:TClassField, sig:{args:Array<IlSigNorm>, ret:IlSigNorm}):OverrideShape {
 		var changed = new Unsupported("overrides that change the signature", true);
-		var s = c.superClass;
-		var params = s == null ? [] : s.params;
-		while (s != null) {
+		var s = owner.superClass;
+		if (s == null) return OSame;
+		var params = [for (t in s.params) TypeFunctions.applyParams(owner.params, ownerArgs, t)];
+		while (true) {
 			var base = s.c.fields.get(cf.name);
 			if (base != null) {
 				if (TypeFunctions.hasClassFlag(s.c, CExtern)) {
-					if (s.c.params.length > 0 || c.params.length > 0) throw new Unsupported("overriding methods of generic .NET classes", true);
+					if (s.c.params.length > 0 || owner.params.length > 0) throw new Unsupported("overriding methods of generic .NET classes", true);
 					var m = try g.externs.method(s.c, cf) catch (_:Unsupported) throw changed;
 					if (!m.isVirtual) throw new Unsupported("overriding a non-virtual .NET method", false);
 					var ret = switch (m.sig) {
@@ -527,16 +593,66 @@ class TclassToIl {
 						case _: throw "internal error: not a method signature";
 					}
 					if (!IlPaths.sigEq(ret, sig.ret)) throw changed;
-					return;
+					return OSame;
 				}
-				for (f in [base].concat(base.overloads)) if (sameSig(methodSig(g, s.c, params, f), sig)) return;
-				throw changed;
+				if (base.overloads.length > 0) {
+					for (f in [base].concat(base.overloads)) if (sameSig(methodSig(g, s.c, params, f), sig)) return OSame;
+					throw changed;
+				}
+				var slot = slotSig(g, s.c, params, base);
+				if (sameSig(slot, sig)) return OSame;
+				if (slot.args.length != sig.args.length || slot.ret.match(LVoid) != sig.ret.match(LVoid) || base.params.length != cf.params.length)
+					throw changed;
+				return contravariant(g, owner, ownerArgs, cf, s.c, params, base) ? OOverload(slot) : OInline(slot);
 			}
 			var next = s.c.superClass;
-			if (next == null) return;
+			if (next == null) return OSame;
 			params = [for (t in next.params) TypeFunctions.applyParams(s.c.params, params, t)];
 			s = {c: next.c, params: params};
 		}
+	}
+
+	// The CLR signature of the method `cf` of `owner`, which an override of it takes: its own, or for an
+	// override that took its slot's (OInline), that one.
+	static function slotSig(g:DotnetCtx, owner:TClass, ownerArgs:Array<T>, cf:TClassField):{args:Array<IlSigNorm>, ret:IlSigNorm} {
+		var own = methodSig(g, owner, ownerArgs, cf);
+		if (!isOverride(cf)) return own;
+		return switch (overrideShape(g, owner, ownerArgs, cf, own)) {
+			case OInline(slot): slot;
+			case _: own;
+		}
+	}
+
+	// gencs's has_contravariant_args: a parameter of the base method `bf` whose type unifies with the
+	// override's and not the other way round. An override parameter whose real type is Dynamic (Dynamic,
+	// EnumValue, an anonymous structure) unifies with anything.
+	static function contravariant(g:DotnetCtx, owner:TClass, ownerArgs:Array<T>, cf:TClassField, base:TClass, baseArgs:Array<T>,
+			bf:TClassField):Bool {
+		function args(t:T):Array<T> {
+			return switch (TypeFunctions.follow(t)) {
+				case TFun(sig): [for (a in sig.args) a.t];
+				case _: throw "internal error: a method without a function type";
+			}
+		}
+		var cur = args(TypeFunctions.applyParams(owner.params, ownerArgs, cf.type));
+		var orig = args(TypeFunctions.applyParams(base.params, baseArgs, bf.type));
+		for (i in 0...cur.length) {
+			var real = try g.types.withParams(g.types.currentClassParams(), cf.params, () -> g.types.toSig(cur[i])) catch (_:Unsupported) null;
+			if (real != null && real.match(LObject)) continue;
+			if (TypeUnification.doesUnify(orig[i], cur[i]) && !TypeUnification.doesUnify(cur[i], orig[i])) return true;
+		}
+		return false;
+	}
+
+	// The parameter names of an override that takes its slot's signature: `__temp_<name><n>` for each
+	// parameter whose type changed, numbered by gencommon's mk_temp counter, which runs across the
+	// program; the others keep their own.
+	static function tempNames(g:DotnetCtx, sig:{args:Array<IlSigNorm>, names:Array<String>, ret:IlSigNorm},
+			slot:{args:Array<IlSigNorm>, ret:IlSigNorm}):Array<String> {
+		return [
+			for (i in 0...sig.args.length)
+				IlPaths.sigEq(sig.args[i], slot.args[i]) ? sig.names[i] : "__temp_" + sig.names[i] + (++g.tempCount)
+		];
 	}
 
 	// gencs adds ToString for a class whose own toString() returns String and overrides nothing.
@@ -733,6 +849,7 @@ class TclassToIl {
 			case MEmptyCtor | MSplitCtor(_) | MClonedCtor(_): "new";
 			case MStaticCtor(_): "new";
 			case MReflect(r): ReflectionMembers.label(r);
+			case MBridge(cf): cf.name;
 		}
 	}
 
@@ -921,6 +1038,29 @@ class TclassToIl {
 		if (inits.length > 0) statement(lower, RVoid, {expr: TBlock(inits), type: TypeFunctions.tDynamic, pos: plan.c.pos});
 	}
 
+	// gencs's FixOverrides override for a method with a contravariant parameter (OOverload), with the
+	// slot's signature: `return (R)this.f((A)a, ...)`, a call of the method, which keeps its own signature.
+	@:access(hxc.codegen.dotnet.TexprToIl)
+	static function bridgeBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, cf:TClassField, code:IlCode, lower:TexprToIl):Void {
+		var target = g.methodPlans.get(cf);
+		if (target == null) throw "internal error: no method " + plan.hxPath + "." + cf.name;
+		code.ldarg(0);
+		for (i in 0...m.args.length) {
+			code.ldarg(i + 1);
+			lower.convert(m.args[i], target.args[i]);
+		}
+		var token = g.memberOf(plan, plan.thisSig, cf);
+		if (cf.params.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec([for (i in 0...cf.params.length) LMethodTypeParam(i)]));
+		code.opToken(IlOps.CALLVIRT, token, m.args.length + 1, target.ret.match(LVoid) ? 0 : 1);
+		if (m.ret.match(LVoid)) {
+			if (!target.ret.match(LVoid)) code.op(IlOps.POP, 1, 0);
+			code.op(IlOps.RET, 0, 0);
+		} else {
+			lower.convert(target.ret, m.ret);
+			code.op(IlOps.RET, 1, 0);
+		}
+	}
+
 	// Instance var initializers, as gencommon's init_funcs moves them into constructors: @:readOnly
 	// ones, which C# runs as field initializers, in declaration order, then the others in reverse
 	// declaration order.
@@ -1013,10 +1153,12 @@ class TclassToIl {
 						if (m.name == ".ctor") {
 							if (!plan.isStruct && !hasSuperCall(body)) initsAndBaseCtor(g, plan, code, lower) else body = withInits(plan.c, body);
 						}
-						lower.bindArgs(tf, m.hasThis ? 1 : 0, m.args);
+						if (m.ownArgs != null) lower.bindOwnArgs(tf, m.args, m.ownArgs) else lower.bindArgs(tf, m.hasThis ? 1 : 0, m.args);
 						statement(lower, RReturn, body);
 						if (failures.length == 0) lower.finish();
 					});
+				case MBridge(cf):
+					g.types.inParams(plan.classParams, cf.params, () -> bridgeBody(g, plan, m, cf, code, lower));
 				case MEntryPoint:
 					var boot = g.bootInit();
 					if (boot != null) code.opToken(IlOps.CALL, boot, 0, 0);

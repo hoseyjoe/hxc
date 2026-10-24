@@ -919,16 +919,13 @@ class G<T> {
 class P {
 	static function main() {
 		Sys.println(new B().get());
-		var d:Dynamic = null;
-		var g:G<Int> = cast d;
+		var g:G<Int> = cast new G<String>();
 	}
 }
 ===
 [compile]
-P.hx:6: characters 2-50 : dotnet: overrides that change the signature are not supported yet
 P.hx:9: characters 2-12 : dotnet: interface variables are not supported yet
-P.hx:16: characters 15-28 : dotnet: B (left out: overrides that change the signature) is not supported yet
-P.hx:18: characters 18-24 : dotnet: a cast between instantiations of G is not supported yet
+P.hx:17: characters 18-38 : dotnet: a cast between instantiations of G is not supported yet
 
 --- struct-mutation-through-fields
 @:struct class Vec {
@@ -1492,7 +1489,6 @@ class P {
 ===
 [compile]
 P.hx:9: characters 10-16 : dotnet: a cast between instantiations of Box is not supported yet
-P.hx:13: characters 20-21 : dotnet: a cast between instantiations of Box is not supported yet
 P.hx:16: characters 28-36 : dotnet: a cast between instantiations of Array is not supported yet
 --- array-methods
 class P {
@@ -3949,3 +3945,408 @@ Default
 Default
 -1 1
 0 0 false
+--- std-isoftype-and-create-instance @gencs
+interface I {}
+class A implements I {
+	public var k = 5;
+	public function new() {}
+}
+class B extends A {
+	public function new() super();
+}
+class Opt {
+	public var x = 0;
+	public function new(?a:Int) if (a != null) x = a;
+}
+class Two {
+	public var s:String;
+	public function new(a:String, b:Float) s = a + b;
+}
+class P {
+	static function check(v:Dynamic, t:Dynamic):String return Std.isOfType(v, t) ? "y" : "n";
+	static function main() {
+		var vals:Array<Dynamic> = [1, 1.5, 2.0, -0.0, 2147483648.0, Math.NaN, "s", true, null, new A(), new B(), {x: 1}, new cs.system.Version(1, 2)];
+		var types:Array<Dynamic> = [Int, Float, Bool, String, Dynamic, A, B, I, null, cs.system.Object, cs.system.ValueType, cs.system.Version];
+		for (v in vals) Sys.println(Std.string(v) + ": " + [for (t in types) check(v, t)].join(""));
+		var dc:Dynamic = A;
+		var e:A = Type.createEmptyInstance(dc);
+		Sys.println(e.k);
+		var b:B = Type.createEmptyInstance(B);
+		Sys.println(b.k + " " + Std.isOfType(b, A));
+		var es:String = Type.createEmptyInstance(String);
+		Sys.println("[" + es + "]");
+		var n:A = Type.createInstance(A, []);
+		Sys.println(n.k);
+		var t:Two = Type.createInstance(Two, ["a", 2]);
+		Sys.println(t.s);
+		var s:String = Type.createInstance(String, ["str"]);
+		Sys.println(s);
+		var v = Type.createInstance(cs.system.Version, [1, 2]);
+		Sys.println(v.Major + " " + v.Minor);
+		// hxcs's Runtime.callMethod picks the constructor taking haxe.lang.EmptyObject for these.
+		try {
+			var o:Opt = Type.createInstance(Opt, [3]);
+			Sys.println("opt " + o.x);
+		} catch (e:Dynamic) Sys.println("Opt [3] throws " + Type.getClassName(Type.getClass(e)));
+		try {
+			var o:Opt = Type.createInstance(Opt, []);
+			Sys.println("opt " + o.x);
+		} catch (e:Dynamic) Sys.println("Opt [] throws " + Type.getClassName(Type.getClass(e)));
+	}
+}
+===
+[run]
+1: yynnynnnnyyn
+1.5: nynnynnnnyyn
+2: yynnynnnnyyn
+-0: yynnynnnnyyn
+2147483648: nynnynnnnyyn
+NaN: nynnynnnnyyn
+s: nnnyynnnnynn
+true: nnynynnnnyyn
+null: nnnnnnnnnnnn
+A: nnnnyynynynn
+B: nnnnyyyynynn
+[ x : 1 ]: nnnnynnnnynn
+1.2: nnnnynnnnyny
+0
+0 true
+[]
+5
+a2
+str
+1 2
+Opt [3] throws System.InvalidCastException
+Opt [] throws String
+--- std-string-formatting @gencs
+class WithStr {
+	public function new() {}
+	public function toString() return "WS";
+}
+class NoStr {
+	public var a = 1;
+	public function new() {}
+}
+class G<T> {
+	public function new() {}
+}
+class P {
+	static function main() {
+		var floats:Array<Float> = [0.0, -0.0, 1.0, 1.5, -2.25, 0.1, 1 / 3, 1e15, 1e16, 1e20, 1e21, 123456789012345680000.0, 1e-5, 0.000123, 1.7976931348623157e308, 5e-324, 0.30000000000000004, Math.PI, Math.NaN];
+		for (x in floats) Sys.println(Std.string(x) + " | " + x);
+		Sys.println(floats);
+		Sys.println([0, -1, 2147483647, -2147483648]);
+		Sys.println(Std.string(null) + " " + Std.string(true) + " " + Std.string(false));
+		var b:Dynamic = true;
+		Sys.println(Std.string(b));
+		Sys.println(Std.string({a: 1, b: "x", c: 1.5, d: null, e: [1, 2], f: {g: true}}));
+		Sys.println(Std.string({}));
+		Sys.println(Std.string(new WithStr()) + " " + Std.string(new NoStr()) + " " + Std.string(new G<Int>()) + " " + Std.string(new G<String>()));
+		Sys.println(Std.string([new WithStr(), null]) + " " + Std.string(["a", null, "b"]) + " " + Std.string([[1, 2], [3]]) + " " + Std.string([1.5, 2.0]) + " " + Std.string([true, false]));
+		var dyn:Array<Dynamic> = [1, 1.5, "s", null, true, {x: 1}];
+		Sys.println(Std.string(dyn));
+		var n:Null<Int> = null;
+		Sys.println(Std.string(n));
+		n = 5;
+		var nf:Null<Float> = 2.5;
+		Sys.println(Std.string(n) + " " + Std.string(nf));
+		var m = new Map<String, Int>();
+		m.set("k", 1);
+		var im = new Map<Int, String>();
+		im.set(1, "v");
+		var l = new List<Int>();
+		l.add(1);
+		l.add(2);
+		Sys.println(Std.string(m) + " " + Std.string(im) + " " + Std.string(l));
+		var sb = new StringBuf();
+		sb.add(1.5);
+		sb.add(true);
+		sb.add(null);
+		sb.addChar(65);
+		sb.add([1]);
+		sb.addSub("hello", 1, 3);
+		Sys.println(sb.toString() + " " + sb.length);
+		var d:Dynamic = 1;
+		d += 0.5;
+		var dd:Dynamic = 3.0;
+		Sys.println(Std.string(d) + " " + Std.string(dd) + " " + Std.string(Date.fromString("2001-02-03 04:05:06")));
+		Sys.println(Std.string((65 : cs.StdTypes.Char16)) + " " + Std.string((1.5 : Single)) + " " + Std.string(cs.system.Decimal.One) + " " + Std.string(cs.system.DayOfWeek.Friday));
+	}
+}
+===
+[run]
+0 | 0
+-0 | -0
+1 | 1
+1.5 | 1.5
+-2.25 | -2.25
+0.1 | 0.1
+0.3333333333333333 | 0.3333333333333333
+1000000000000000 | 1000000000000000
+10000000000000000 | 10000000000000000
+1E+20 | 1E+20
+1E+21 | 1E+21
+1.2345678901234568E+20 | 1.2345678901234568E+20
+1E-05 | 1E-05
+0.000123 | 0.000123
+1.7976931348623157E+308 | 1.7976931348623157E+308
+5E-324 | 5E-324
+0.30000000000000004 | 0.30000000000000004
+3.141592653589793 | 3.141592653589793
+NaN | NaN
+[0,-0,1,1.5,-2.25,0.1,0.3333333333333333,1000000000000000,10000000000000000,1E+20,1E+21,1.2345678901234568E+20,1E-05,0.000123,1.7976931348623157E+308,5E-324,0.30000000000000004,3.141592653589793,NaN]
+[0,-1,2147483647,-2147483648]
+null true false
+true
+[ b : x, d : null, e : [1,2], f : [ g : true ], a : 1, c : 1.5 ]
+[]
+WS NoStr G`1[System.Int32] G`1[System.String]
+[WS,null] [a,null,b] [[1,2],[3]] [1.5,2] [true,false]
+[1,1.5,s,null,true,[ x : 1 ]]
+null
+5 2.5
+[k => 1] [1 => v] {1, 2}
+1.5truenullA[1]ell 18
+1.5 3 2001-02-03 04:05:06
+65 1.5 1 Friday
+--- std-parse-and-int @gencs
+class P {
+	static function esc(s:String) return s.split("\t").join("\\t").split("\n").join("\\n");
+	static function main() {
+		var ins = ["0", "12", "-12", "+12", "  42", "\t\n7", "12abc", "abc", "", " ", "-", "+", "0x1F", "0X1f", "-0x10", "0x", "0xG", "2147483647", "2147483648", "-2147483648", "99999999999", "0xFFFFFFFF", "0x80000000", "1.9", "1e3", " -0", "00012"];
+		for (s in ins) {
+			var r = try Std.string(Std.parseInt(s)) catch (e:cs.system.OverflowException) "OverflowException";
+			Sys.println("parseInt('" + esc(s) + "') = " + r);
+		}
+		Sys.println(Std.parseInt(null));
+		var fs = ["0", "1.5", "-1.5", "+1.5", "  2.5", "1e3", "1E-3", "1e", "1e+", "1e-", "1.5e3x", ".5", "5.", "-.5", "abc", "", "1.2.3", "--1", "+-1", "1,5", "Infinity", "NaN", "0x10", "1e-400", "12abc", "\t3", " .", "e5", "-", "1_000"];
+		for (s in fs) Sys.println("parseFloat('" + esc(s) + "') = " + Std.parseFloat(s));
+		Sys.println(Std.parseFloat(null));
+		var xs:Array<Float> = [0.0, 2.5, -2.5, 2.9999, -2.9999, 2147483647.0, 2147483648.0, -2147483649.0, 1e20, -1e20, Math.NaN];
+		for (x in xs) Sys.println("int(" + x + ") = " + Std.int(x));
+		var ok = true;
+		for (i in 0...1000) {
+			var r = Std.random(10);
+			if (r < 0 || r >= 10) ok = false;
+			var f = Math.random();
+			if (f < 0 || f >= 1) ok = false;
+		}
+		Sys.println(ok + " " + Std.random(0) + " " + Std.random(-5) + " " + Std.random(1));
+	}
+}
+===
+[run]
+parseInt('0') = 0
+parseInt('12') = 12
+parseInt('-12') = -12
+parseInt('+12') = 12
+parseInt('  42') = 42
+parseInt('\t\n7') = 7
+parseInt('12abc') = 12
+parseInt('abc') = null
+parseInt('') = null
+parseInt(' ') = null
+parseInt('-') = null
+parseInt('+') = null
+parseInt('0x1F') = 31
+parseInt('0X1f') = 31
+parseInt('-0x10') = -16
+parseInt('0x') = null
+parseInt('0xG') = null
+parseInt('2147483647') = 2147483647
+parseInt('2147483648') = OverflowException
+parseInt('-2147483648') = OverflowException
+parseInt('99999999999') = OverflowException
+parseInt('0xFFFFFFFF') = -1
+parseInt('0x80000000') = -2147483648
+parseInt('1.9') = 1
+parseInt('1e3') = 1
+parseInt(' -0') = 0
+parseInt('00012') = 12
+
+parseFloat('0') = 0
+parseFloat('1.5') = 1.5
+parseFloat('-1.5') = -1.5
+parseFloat('+1.5') = 1.5
+parseFloat('  2.5') = 2.5
+parseFloat('1e3') = 1000
+parseFloat('1E-3') = 0.001
+parseFloat('1e') = 1
+parseFloat('1e+') = 1
+parseFloat('1e-') = 1
+parseFloat('1.5e3x') = 1500
+parseFloat('.5') = 0.5
+parseFloat('5.') = 5
+parseFloat('-.5') = -0.5
+parseFloat('abc') = NaN
+parseFloat('') = NaN
+parseFloat('1.2.3') = 1.2
+parseFloat('--1') = NaN
+parseFloat('+-1') = NaN
+parseFloat('1,5') = 1
+parseFloat('Infinity') = NaN
+parseFloat('NaN') = NaN
+parseFloat('0x10') = 0
+parseFloat('1e-400') = 0
+parseFloat('12abc') = 12
+parseFloat('\t3') = 3
+parseFloat(' .') = NaN
+parseFloat('e5') = NaN
+parseFloat('-') = NaN
+parseFloat('1_000') = 1
+NaN
+int(0) = 0
+int(2.5) = 2
+int(-2.5) = -2
+int(2.9999) = 2
+int(-2.9999) = -2
+int(2147483647) = 2147483647
+int(2147483648) = 2147483647
+int(-2147483649) = -2147483648
+int(1E+20) = 2147483647
+int(-1E+20) = -2147483648
+int(NaN) = 0
+true 0 0 0
+--- generic-from-dynamic @gencs
+class P {
+	static function main() {
+		var sm = new haxe.ds.StringMap<Dynamic>();
+		sm.set("a", 1);
+		var d:Dynamic = sm;
+		var v:haxe.ds.StringMap<Dynamic> = d;
+		for (k in v.keys()) Sys.println(k + "=" + v.get(k));
+		var l = new List<Dynamic>();
+		l.add(1);
+		d = l;
+		var lv:List<Dynamic> = d;
+		for (i in lv) Sys.println(i);
+		var im = new haxe.ds.IntMap<Dynamic>();
+		im.set(3, "x");
+		d = im;
+		var iv:haxe.ds.IntMap<Dynamic> = d;
+		for (k in iv.keys()) Sys.println(k);
+		var om = new haxe.ds.ObjectMap<Dynamic, Dynamic>();
+		om.set(sm, 2);
+		d = om;
+		var ov:haxe.ds.ObjectMap<Dynamic, Dynamic> = d;
+		for (k in ov.keys()) Sys.println(ov.get(k));
+		var none:haxe.ds.StringMap<Dynamic> = (null : Dynamic);
+		Sys.println(none == null);
+	}
+}
+===
+[run]
+a=1
+1
+3
+2
+True
+--- generic-from-dynamic-other-instantiation
+class P {
+	static function main() {
+		var d:Dynamic = new haxe.ds.StringMap<Int>();
+		try {
+			var v:haxe.ds.StringMap<Dynamic> = d;
+			Sys.println(v);
+		} catch (e:cs.system.NotSupportedException) {
+			Sys.println(e.Message);
+		}
+	}
+}
+===
+[run]
+hxc dotnet: converting a value to haxe.ds.StringMap<Dynamic> is not supported yet
+--- override-changes-signature
+class Shape {
+	public var n:Int;
+	public function new(n) this.n = n;
+}
+class Tree<K> {
+	public function new() {}
+	function compare(a:K, b:K):Int return 0;
+	public function cmp(a:K, b:K):Int return compare(a, b);
+}
+class ShapeTree<K:Shape> extends Tree<K> {
+	public function new() super();
+	override function compare(a:Shape, b:Shape):Int return a.n - b.n;
+}
+class P {
+	static function main() {
+		var t = new ShapeTree<Shape>();
+		Sys.println(t.cmp(new Shape(5), new Shape(2)));
+		var u:Tree<Shape> = t;
+		Sys.println(u.cmp(new Shape(1), new Shape(4)));
+	}
+}
+===
+[run]
+3
+-3
+--- override-changes-signature-shapes @gencs
+class Animal {
+	public var name:String;
+	public function new(n) name = n;
+}
+class Dog extends Animal {
+	public function new() super("dog");
+}
+class Tree<K> {
+	public function new() {}
+	function compare(a:K, b:K):Int return 0;
+	public function cmp(a:K, b:K):Int return compare(a, b);
+	public function pick(a:K, b:K):K return a;
+}
+class DynTree<K> extends Tree<K> {
+	public function new() super();
+	override function compare(a:Dynamic, b:Dynamic):Int return Reflect.compare(a, b);
+	override public function pick(a:K, b:Dynamic):K return b;
+}
+class Keeper {
+	public function new() {}
+	public function feed(d:Dog, times:Int):String return "keeper " + times;
+	public function call(d:Dog):String return feed(d, 1);
+	public function pet():Animal return new Animal("pet");
+}
+class Vet extends Keeper {
+	public function new() super();
+	override public function feed(a:Animal, times:Int):String return "vet " + a.name + " " + times;
+	override public function pet():Dog return new Dog();
+}
+class P {
+	static function params(c:Class<Dynamic>, name:String) {
+		var out = [];
+		for (m in cs.Lib.toNativeType(c).GetMethods()) if (m.Name == name && m.DeclaringType == cs.Lib.toNativeType(c)) {
+			var ps = [for (p in m.GetParameters()) p.ParameterType.Name + " " + p.Name];
+			out.push(m.ReturnType.Name + "(" + ps.join(", ") + ")" + (m.GetBaseDefinition() != m ? " override" : ""));
+		}
+		Sys.println(name + ": " + out.join(" / "));
+	}
+	static function main() {
+		var t = new DynTree<Int>();
+		Sys.println(t.cmp(5, 2));
+		var u:Tree<Int> = t;
+		Sys.println(u.cmp(1, 4) + " " + u.pick(1, 2) + " " + t.pick(3, 4));
+		var v = new Vet();
+		Sys.println(v.call(new Dog()));
+		Sys.println(v.feed(new Animal("cat"), 2));
+		var k:Keeper = v;
+		Sys.println(k.feed(new Dog(), 3));
+		Sys.println(v.pet().name + " " + k.pet().name);
+		params(DynTree, "compare");
+		params(DynTree, "pick");
+		params(Vet, "feed");
+		Sys.println(Type.getInstanceFields(Vet).join(","));
+	}
+}
+===
+[run]
+1
+-1 2 4
+vet dog 1
+vet cat 2
+vet dog 3
+dog dog
+compare: Int32(Object __temp_a1, Object __temp_b2) override
+pick: Object(Object a, Object __temp_b3) override
+feed: String(Dog __temp_a4, Int32 times) override / String(Animal a, Int32 times)
+feed,feed,pet,call

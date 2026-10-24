@@ -1310,7 +1310,9 @@ class Filters {
 			case "no": DceNo;
 			case other: throw new TypingError("Unknown DCE mode " + other, Position.nullPos);
 		};
-		hxc.optimization.Dce.stdPath = com.stdPath;
+		// With -D dotnet, hxc's own copy of the hxcs runtime is std too: its Std and Type are swept as
+		// cs/_std's are.
+		hxc.optimization.Dce.stdPath = com.stdPath.concat([for (p in com.classPath) if (hxc.codegen.dotnet.RuntimeSources.isVirtual(p)) p]);
 		stageMark("preDce"); memProbe("preDce");
 		hxc.optimization.Dce.run(com, dceMode);
 		stageMark("dce:done"); memProbe("dce:done");

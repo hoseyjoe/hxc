@@ -106,11 +106,35 @@ class TexprToIl {
 	// `!a.hasValue ? v : a.value`. An argument whose default is null needs nothing.
 	public function bindArgs(tf:TFunc, first:Int, sigs:Array<IlSigNorm>):Void {
 		for (i in 0...tf.args.length) bindArg(tf.args[i].v, first + i, sigs[i]);
+		defaultArgs(tf);
+	}
+
+	// Binds the arguments of an override that takes its slot's signature `sigs` (TclassToIl.OverrideShape):
+	// each one whose own type `own` differs goes into a new local of that type, converted, the last first,
+	// as gencs's FixOverrides declares them at the top of the body; then the default values.
+	public function bindOwnArgs(tf:TFunc, sigs:Array<IlSigNorm>, own:Array<IlSigNorm>):Void {
+		var i = tf.args.length;
+		while (i-- > 0) {
+			var v = tf.args[i].v;
+			if (IlPaths.sigEq(sigs[i], own[i])) {
+				bindArg(v, 1 + i, sigs[i]);
+				continue;
+			}
+			var local = {arg: false, index: code.addLocal(own[i]), sig: own[i]};
+			code.ldarg(1 + i);
+			convert(sigs[i], own[i]);
+			store(local);
+			slots.set(v.id, local);
+		}
+		defaultArgs(tf);
+	}
+
+	function defaultArgs(tf:TFunc):Void {
 		var i = tf.args.length;
 		while (i-- > 0) {
 			var a = tf.args[i];
 			if (a.c == null || isNullConst(a.c)) continue;
-			var arg = {arg: true, index: first + i, sig: sigs[i]};
+			var arg = slots.get(a.v.id);
 			if (isHaxeNull(arg.sig)) {
 				var own = sig(a.v.type);
 				var local = {arg: false, index: code.addLocal(own), sig: own};
@@ -325,6 +349,10 @@ class TexprToIl {
 		} else if (isReference(from) && isReference(to) && !to.match(LObject)) {
 			// An upcast needs nothing; anything else may narrow.
 			if (g.isUpcast(from, to) || from.match(LVector(_)) && isSystemArray(to)) return;
+			if (from.match(LObject) && g.isGenericHaxeClass(to)) {
+				checkedInstanceCast(to, "a value to " + g.haxeTypeOf(to));
+				return;
+			}
 			castTo(to);
 		}
 	}
@@ -471,12 +499,37 @@ class TexprToIl {
 	}
 
 	// Throws for a cast from `from` into an instantiation of a generic Haxe class that is not the same
-	// type or an upcast.
+	// type or an upcast. From Dynamic it is checked at run time (checkedInstanceCast).
 	function checkInstantiationCast(from:IlSigNorm, to:IlSigNorm):Void {
 		// haxe.lang.Null<T> converts through its value (nullConvert).
-		if (IlPaths.sigEq(from, to) || !g.isGenericHaxeClass(to) || isHaxeNull(to)) return;
+		if (IlPaths.sigEq(from, to) || !g.isGenericHaxeClass(to) || isHaxeNull(to) || from.match(LObject)) return;
 		if (g.isUpcast(from, to)) return;
 		throw instantiationCast(to);
+	}
+
+	// The object on the stack as the instantiation `to` of a generic Haxe class. gencs converts an object
+	// of another instantiation (a StringMap<Int> into a StringMap<Dynamic>) with __hx_cast, plan 3c; until
+	// then such a value is refused loudly rather than with an InvalidCastException: null or the same
+	// instantiation passes, anything else throws NotSupportedException("hxc dotnet: converting <what> is
+	// not supported yet").
+	public function checkedInstanceCast(to:IlSigNorm, what:String):Void {
+		var tmp = code.addLocal(LObject);
+		var isNull = code.newLabel(), done = code.newLabel();
+		code.stloc(tmp);
+		code.ldloc(tmp);
+		code.branch(IlOps.BRFALSE, isNull);
+		code.ldloc(tmp);
+		code.opToken(IlOps.ISINST, g.typeTokenOf(to), 1, 1);
+		code.op(IlOps.DUP, 1, 2);
+		code.branch(IlOps.BRTRUE, done);
+		code.op(IlOps.POP, 1, 0);
+		var ex = LClass({ns: ["System"], nested: [], name: "NotSupportedException"}, []);
+		code.opToken(IlOps.LDSTR, g.mb.userString("hxc dotnet: converting " + what + " is not supported yet"), 0, 1);
+		code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(ex), ".ctor", g.sigs.method(true, LVoid, [LString], 0)), 1, 1);
+		code.op(IlOps.THROW, 1, 0);
+		code.mark(isNull);
+		code.op(IlOps.LDNULL, 0, 1);
+		code.mark(done);
 	}
 
 	function castTo(to:IlSigNorm):Void {
