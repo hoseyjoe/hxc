@@ -1132,6 +1132,111 @@ type public beforefieldinit pack.Box`1<T> extends haxe.lang.HxObject
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor_pack_Box<T_c>(pack.Box`1<!!0>, !!0)
+--- constrained-generic-names @lib @module=pack.Keyed @dump=pack.Keyed`2,pack.Based`1
+package pack;
+class Base {
+	public function new() {}
+}
+class Keyed<K:{}, V> {
+	public var last:K;
+	public var keys:Array<K>;
+	public function new() {
+		keys = [];
+	}
+	public function add(k:K, v:V):Void {
+		keys.push(k);
+		last = k;
+	}
+	public function pick<S:Base>(s:S):S {
+		return s;
+	}
+}
+class Based<K:Base> {
+	public var k:K;
+	public function new(k:K) {
+		this.k = k;
+	}
+}
+===
+[dump]
+type public beforefieldinit pack.Keyed`2<K, V> extends haxe.lang.HxObject
+  field public !0 last
+  field public Array`1<!0> keys
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public virtual hidebysig newslot void add(!0, !1)
+  method public virtual hidebysig newslot !!0 pick<S>(!!0)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
+  method public virtual hidebysig object __hx_invokeField(string, int32, object[])
+  method public virtual hidebysig void __hx_getFields(Array`1<string>)
+  method family static hidebysig void __hx_ctor_pack_Keyed<K_c, V_c>(pack.Keyed`2<!!0, !!1>)
+type public beforefieldinit pack.Based`1<K> extends haxe.lang.HxObject
+  field public !0 k
+  method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
+  method public hidebysig specialname rtspecialname void .ctor(!0)
+  method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
+  method public virtual hidebysig void __hx_getFields(Array`1<string>)
+  method family static hidebysig void __hx_ctor_pack_Based<K_c>(pack.Based`1<!!0>, !!0)
+--- constrained-type-parameters @gencs
+class Base {
+	public var name:String;
+	public function new(name:String) { this.name = name; }
+	public function toString() return "Base " + name;
+}
+class Keyed<K:{}, V> {
+	var ks:Array<K>;
+	public var last:K;
+	var n:Int = 0;
+	public function new() { ks = []; }
+	public function add(k:K, v:V):Void { ks.push(k); last = k; n++; }
+	public function count():Int return n;
+	public function pick<S:Base>(s:S):S return s;
+}
+class Based<K:Base> {
+	public var k:K;
+	public var n:Int = 7;
+	public function new(k:K) { this.k = k; }
+	public function show():String return k.name + " " + n;
+}
+@:nativeGen class NG<K:{}> {
+	var n:Int = 2;
+	public function new() {}
+	public function count():Int return n;
+}
+class Num<K:Float> {
+	public var k:K;
+	public var s:String = "str";
+	public function new(k:K) { this.k = k; }
+	public function show():String return k + " " + s;
+}
+class P {
+	static function main() {
+		var g = new Keyed<String, Int>();
+		g.add("a", 1);
+		g.add("b", 2);
+		Sys.println(g.count() + " " + g.last);
+		var b = new Base("x");
+		Sys.println(g.pick(b));
+		var bd = new Based(b);
+		Sys.println(bd.show());
+		Sys.println(new NG<String>().count());
+		Sys.println(new Num<Float>(2.5).show());
+		Sys.println(new Num<Int>(3).show());
+		var d:Dynamic = bd;
+		Sys.println(d.n + " " + d.k);
+		Sys.println(Reflect.fields(g).join(","));
+		var m = new haxe.ds.ObjectMap<Base, Int>();
+		m.set(b, 3);
+		Sys.println(m.get(b) + " " + m.exists(new Base("y")));
+	}
+}
+===
 --- type-mapping @lib @module=pack.Sig @dump=pack.Sig
 package pack;
 class Sig {

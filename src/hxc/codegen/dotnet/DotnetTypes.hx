@@ -179,15 +179,23 @@ class DotnetTypes {
 		if (why != null) throw new Unsupported(key + " (left out: " + why + ")", false);
 	}
 
+	// Whether the type parameter `tp` is `c`. The typer keeps a constrained parameter's type behind a
+	// TLazy, so a structural match on the raw type misses it.
+	public static function isParam(tp:TypedTypeParam, c:TClass):Bool {
+		var t = tp.type;
+		while (t.match(TLazy(_))) switch (t) {
+			case TLazy(f): t = TypeFunctions.lazyType(f);
+			case _:
+		}
+		return switch (t) {
+			case TInst(c2, _): c2 == c;
+			case _: false;
+		}
+	}
+
 	function typeParam(c:TClass):IlSigNorm {
-		for (i in 0...classParams.length) switch (classParams[i].type) {
-			case TInst(c2, _) if (c2 == c): return LTypeParam(i);
-			case _:
-		}
-		for (i in 0...methodParams.length) switch (methodParams[i].type) {
-			case TInst(c2, _) if (c2 == c): return LMethodTypeParam(i);
-			case _:
-		}
+		for (i in 0...classParams.length) if (isParam(classParams[i], c)) return LTypeParam(i);
+		for (i in 0...methodParams.length) if (isParam(methodParams[i], c)) return LMethodTypeParam(i);
 		// A type parameter of a local function or one the signature does not declare.
 		return LObject;
 	}
@@ -239,10 +247,7 @@ class DotnetTypes {
 	public static function inferParams(params:TypeParams, declared:T, actual:T):Array<T> {
 		var bound:Array<Null<T>> = [for (_ in params) null];
 		function indexOf(c:TClass):Int {
-			for (i in 0...params.length) switch (params[i].type) {
-				case TInst(c2, _) if (c2 == c): return i;
-				case _:
-			}
+			for (i in 0...params.length) if (isParam(params[i], c)) return i;
 			return -1;
 		}
 		function walk(d:T, a:T, depth:Int):Void {
