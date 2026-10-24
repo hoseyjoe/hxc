@@ -59,7 +59,8 @@ package cs.internal;
 
 	public function toDynamic():Dynamic {
 		if (this.hasValue)
-			return value;
+			// hxc: a T inferred as Null<Int> holds a haxe.lang.Null, which Dynamic sees as its value.
+			return Runtime.__hx_boxTypeParam(value);
 		return null;
 	}
 

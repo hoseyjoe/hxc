@@ -359,9 +359,16 @@ class TexprToIl {
 
 	// The type parameter `s`'s value on the stack as an object. gencs erases a Null<Int> type argument
 	// to object, so what it boxes is the value or null; here the type argument stays haxe.lang.Null<Int>,
-	// and Runtime.__hx_boxTypeParam unwraps it. haxe.lang.Runtime's own code boxes, as its C# does.
+	// and Runtime.__hx_boxTypeParam unwraps it.
 	function boxTypeParam(s:IlSigNorm):Void {
-		if (inRuntimeClass()) code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1) else dyn.runtimeCall("__hx_boxTypeParam", null, [s]);
+		if (boxesPlainly()) code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1) else dyn.runtimeCall("__hx_boxTypeParam", null, [s]);
+	}
+
+	// haxe.lang.Runtime's own code boxes a type parameter plainly, as its C# does, and so does
+	// haxe.lang.Null<T>'s, so that its constructor's null check on an Int stays a box the JIT folds; a
+	// T inferred as Null<Int> is unwrapped by newNull before the constructor, and by toDynamic itself.
+	function boxesPlainly():Bool {
+		return inRuntimeClass() || cls != null && DotnetTypes.haxePath(TClassDecl(cls)) == "cs.internal._Null.Nullable";
 	}
 
 	// True when `a` is a .NET enum whose values are stored as `b`.
@@ -411,8 +418,18 @@ class TexprToIl {
 	}
 
 	// `new Null<T>(v, true)` with v on the stack: the constructor, which also checks a reference for null.
+	// A type parameter's value may itself be a haxe.lang.Null with no value (T inferred as Null<Int>),
+	// which gencs's object would hold as null: hasValue is then whether it boxes to null.
 	function newNull(s:IlSigNorm):Void {
-		code.ldcI4(1);
+		var a = nullArg(s);
+		if (a != null && isTypeParam(a) && !boxesPlainly()) {
+			code.op(IlOps.DUP, 1, 2);
+			boxTypeParam(a);
+			code.op(IlOps.LDNULL, 0, 1);
+			code.op(IlOps.CGT_UN, 2, 1);
+		} else {
+			code.ldcI4(1);
+		}
 		var token = g.mb.memberRef(g.typeTokenOf(s), ".ctor", g.sigs.method(true, LVoid, [LTypeParam(0), LBool], 0));
 		code.opToken(IlOps.NEWOBJ, token, 2, 1);
 	}
