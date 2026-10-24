@@ -8119,3 +8119,58 @@ class P {
 	}
 }
 ===
+--- dynamic-value-switch @gencs
+// haxeui's Canvas: a switch on a Dynamic with String and Int patterns.
+class P {
+	static function sw(item:Dynamic) {
+		switch (item.id) {
+			case "clear": Sys.println("clear");
+			case "moveTo" | "move-to": Sys.println("move");
+			default: Sys.println("other " + item.id);
+		}
+	}
+
+	static function num(d:Dynamic):String {
+		return switch (d) {
+			case 1: "one";
+			case 2 | 3: "few";
+			case 10 if (Std.isOfType(d, Int)): "ten";
+			case _: "many";
+		}
+	}
+
+	static function mixed(d:Dynamic):Int {
+		var r = 0;
+		switch (d) {
+			case "a": r = 1;
+			case 2: r = 2;
+		}
+		return r;
+	}
+
+	static var calls = 0;
+
+	static function subject(d:Dynamic):Dynamic {
+		calls++;
+		return d;
+	}
+
+	static function main() {
+		sw({id: "clear"});
+		sw({id: "move-to"});
+		sw({id: "moveTo"});
+		sw({id: 3});
+		sw({id: null});
+		sw({});
+		for (d in ([1, 2, 3, 10, 10.0, 11, "1", null, 2.0] : Array<Dynamic>))
+			Sys.println(num(d));
+		Sys.println(mixed("a") + mixed(2) + mixed("b") + mixed(null));
+		var s = switch (subject("x")) {
+			case "y": 1;
+			case "z": 2;
+			case _: 3;
+		}
+		Sys.println(s + " " + calls);
+	}
+}
+===

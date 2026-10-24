@@ -108,7 +108,9 @@ class TexprFlow {
 		// A Class or Enum value against types compares as `==` on them does (TexprOps.typeEquality).
 		var isType = ext == null && IlPaths.sigEq(st, TexprCalls.systemType) && Lambda.foreach(cases, c -> Lambda.foreach(c.values, TexprOps.isTypeCase));
 		// A Float compares as C#'s == does (gencs's SwitchToIf): NaN matches nothing, -0.0 matches 0.
-		if (ext == null && !isString && !isType && !st.match(LInt32 | LBool | LFloat64)) throw new Unsupported("switch on this type", false);
+		// A Dynamic compares with Runtime.eq, as gencs's `if (Runtime.eq(__temp_switch1, "clear"))`.
+		var isObject = ext == null && !isType && st.match(LObject);
+		if (ext == null && !isString && !isType && !isObject && !st.match(LInt32 | LBool | LFloat64)) throw new Unsupported("switch on this type", false);
 		var local:Null<Slot> = null;
 		switch (strip(subject).expr) {
 			case TLocal(v) if (!tl.isHaxeNull(own)): local = tl.slot(v);
@@ -136,6 +138,9 @@ class TexprFlow {
 				code.branch(IlOps.BRTRUE, bodies[i]);
 			} else if (isString) {
 				code.opToken(IlOps.CALL, eq, 2, 1);
+				code.branch(IlOps.BRTRUE, bodies[i]);
+			} else if (isObject) {
+				tl.dyn.runtimeCall("eq");
 				code.branch(IlOps.BRTRUE, bodies[i]);
 			} else {
 				code.branch(IlOps.BEQ, bodies[i]);
