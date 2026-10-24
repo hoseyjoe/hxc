@@ -8205,3 +8205,79 @@ class P {
 	}
 }
 ===
+--- null-type-argument-inference @gencs
+// Generic methods whose type argument the typer infers as Null<Int>, Null<Float> or Null<Bool>
+// (the server app's Lambda calls over Array<Null<Float>>): the type argument stays Null<T>, so a null stays null.
+class Box<T> {
+	public var v:T;
+
+	public function new(v:T) this.v = v;
+
+	public function map<U>(f:T->U):Box<U> return new Box(f(v));
+}
+
+class P {
+	static function id<T>(x:T):T return x;
+
+	static function isNull<T>(x:T):Bool return x == null;
+
+	static function first<T>(a:Array<T>):T return a[0];
+
+	static function pair<A, B>(a:A, b:B):String return a + "/" + b;
+
+	static function opt<T>(?x:T):String return "" + x;
+
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+
+	static function main() {
+		var g:Array<Null<Int>> = [1, null, 3];
+		t(() -> Lambda.exists(g, v -> v == null));
+		t(() -> Lambda.count(g, v -> v == null));
+		t(() -> Lambda.count(g));
+		t(() -> Lambda.fold(g, (v, acc:String) -> acc + "," + v, ""));
+		t(() -> Lambda.find(g, v -> v == null) == null);
+		t(() -> Lambda.find(g, v -> v != null && v > 1));
+		t(() -> Lambda.has(g, null));
+		t(() -> Lambda.has(g, 3));
+		t(() -> Lambda.has(g, 4));
+		t(() -> Lambda.array(g).join(","));
+		t(() -> Lambda.indexOf(g, null));
+		t(() -> Lambda.filter(g, v -> v == null).length);
+		var gf:Array<Null<Float>> = [null, 1.5];
+		t(() -> Lambda.exists(gf, v -> v == null));
+		t(() -> Lambda.count(gf, v -> v == null));
+		t(() -> Lambda.fold(gf, (v, acc:String) -> acc + "," + v, ""));
+		t(() -> Lambda.find(gf, v -> v == null) == null);
+		t(() -> Lambda.has(gf, null));
+		var gb:Array<Null<Bool>> = [null, false];
+		t(() -> Lambda.count(gb, v -> v == null));
+		t(() -> Lambda.has(gb, false));
+
+		var nn:Null<Int> = null, n5:Null<Int> = 5;
+		t(() -> id(nn) == null);
+		t(() -> id(n5) + 1);
+		t(() -> isNull(nn) + " " + isNull(n5));
+		var nf:Null<Float> = null;
+		t(() -> id(nf) == null);
+		t(() -> isNull(nf));
+		t(() -> first(g) + 1);
+		t(() -> first([null, 2]) == null);
+		t(() -> pair(nn, n5));
+		t(() -> pair(nf, 1));
+		var tb:Null<Bool> = true, nb:Null<Bool> = null;
+		t(() -> pair(tb, nb) + " " + Std.string(id(tb)) + " " + id(tb));
+		t(() -> opt(nn) + " " + opt(n5) + " " + opt());
+		t(() -> new Box(nn).map(v -> v == null).v);
+		t(() -> new Box(n5).map(v -> v == null ? null : v + 1).v);
+		// Typed calls with plain values keep Int.
+		t(() -> id(4) + id(1.5));
+		t(() -> isNull("s") + " " + isNull((null:String)));
+		t(() -> (id((null:Null<Int>)) : Null<Int>) == null);
+		t(() -> id((7:Int)));
+		t(() -> Lambda.count([1, 2, 3], v -> v > 1));
+		t(() -> Lambda.fold([1, 2], (v, acc:Int) -> acc + v, 0));
+	}
+}
+===

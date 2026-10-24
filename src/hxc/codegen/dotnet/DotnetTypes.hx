@@ -264,21 +264,42 @@ class DotnetTypes {
 	}
 
 	// The types `params` stand for where `declared`, written in terms of them, meets the applied type
-	// `actual`, as gencs infers a generic method's type arguments; Dynamic where nothing binds one.
+	// `actual`, as gencs infers a generic method's type arguments; Dynamic where nothing binds one. A
+	// parameter the typer bound to Null<Int> stays Null<Int> (haxe.lang.Null<int>), as the call's
+	// values are: binding Int would turn a null into 0 at the conversion to it.
 	public static function inferParams(params:TypeParams, declared:T, actual:T):Array<T> {
 		var bound:Array<Null<T>> = [for (_ in params) null];
 		function indexOf(c:TClass):Int {
 			for (i in 0...params.length) if (isParam(params[i], c)) return i;
 			return -1;
 		}
+		function nullArg(t:T):Null<T> {
+			return switch (t) {
+				case TAbstract(a, [t1]) if (a.path.pack.length == 0 && a.path.name == "Null"): t1;
+				case _: null;
+			}
+		}
 		function walk(d:T, a:T, depth:Int):Void {
 			if (depth > 20) return;
-			d = TypeFunctions.follow(d);
-			a = TypeFunctions.follow(a);
+			d = TypeFunctions.followWithoutNull(d);
+			a = TypeFunctions.followWithoutNull(a);
+			// A declared Null<X> meets the value inside a Null, or the value itself.
+			var dn = nullArg(d);
+			if (dn != null) {
+				var an = nullArg(a);
+				walk(dn, an != null ? an : a, depth + 1);
+				return;
+			}
 			switch (d) {
 				case TInst(c, []) if (c.kind.match(KTypeParameter(_)) && indexOf(c) >= 0):
 					var i = indexOf(c);
-					if (bound[i] == null && !a.match(TMono(_))) bound[i] = a;
+					var t = TypeFunctions.follow(a);
+					if (bound[i] == null && !t.match(TMono(_))) bound[i] = nullArg(a) != null ? a : t;
+					return;
+				case _:
+			}
+			a = TypeFunctions.follow(a);
+			switch (d) {
 				case TInst(c, dl):
 					switch (a) {
 						case TInst(c2, al) if (c2 == c && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], depth + 1);

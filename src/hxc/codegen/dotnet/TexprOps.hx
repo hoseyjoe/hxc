@@ -696,7 +696,8 @@ class TexprOps {
 				// Std.string, as gencs writes a Dynamic in a concatenation.
 				tl.dyn.stdString();
 			case LTypeParam(_) | LMethodTypeParam(_):
-				code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+				// A T inferred as Null<Bool> prints its value as gencs's object does ("true", not "True").
+				tl.boxTypeParam(s);
 				tl.dyn.stdString();
 			case LString:
 				var notNull = code.newLabel();

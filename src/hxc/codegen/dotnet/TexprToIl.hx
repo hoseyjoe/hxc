@@ -297,7 +297,7 @@ class TexprToIl {
 		if (to.match(LString) && !inRuntimeClass()) {
 			// Runtime.toString, as gencs converts anything that is not a String to one (outside
 			// haxe.lang.Runtime, whose code casts).
-			if (fromValue) code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
+			if (isTypeParam(from)) boxTypeParam(from) else if (fromValue) code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 			dyn.toSig(to);
 		} else if (fromValue && !toValue) {
 			// A struct boxes into an instantiation of a generic Haxe interface only when it implements it.
