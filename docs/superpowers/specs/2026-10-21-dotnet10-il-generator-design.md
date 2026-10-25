@@ -154,88 +154,203 @@ can see must behave like Haxe 4.3.7 gencs + hxcs:
   repo-wide grep of `cs/` for Haxe-generated names gives the full list; that list is the interop
   surface to keep.
 - Core type mapping, as gencs does it (confirm against Haxe 4.3.7's gencs and `std/cs`): `Int`→`int`,
-  `Float`→`double`, `Bool`→`bool`, `String`→`string`, `Dynamic`→`object`, `Array<T>` a real generic
-  class, `Null<T>` of a value type as `haxe.lang.Null<T>`, enums as classes deriving from the hxcs
-  enum base.
+  `Float`→`double`, `Bool`→`bool`, `String`→`string`, `Dynamic`→`object`, `Null<T>` of a value type
+  as `haxe.lang.Null<T>`, enums as classes deriving from the hxcs enum base. `Array<T>` and every
+  other Haxe generic class is a real generic class whose non-basic type arguments are erased to
+  `object` (`Array<C>` is ``Array`1<object>``), and an `X<Dynamic>` is typed as the class's companion
+  interface (`Array`). The next section has the rules.
 
 Where hxcs behavior is a bug that data depends on, reproduce it. Write each such case down as a known
-divergence from "correct" behavior. The one hxcs bug this generator fixes on purpose is Haxe issue
-8314 (next section), and the fix is shaped so serialized data doesn't change.
+divergence from "correct" behavior. This generator fixes two hxcs bugs on purpose: Haxe issue 8314,
+and the parent casts that always return `this` (next section). The fixes are shaped so serialized data
+doesn't change. The next section also lists the few paths where gencs throws and hxc works.
 
 ## Casts between generic instantiations (Haxe issue 8314)
 
-**What hxcs does.** gencs gives a Haxe generic class real CLR type arguments (`Array<Float>` is
-``Array`1<float64>``, `Array<Dynamic>` is ``Array`1<object>``), so a value's static type and its
-object's instantiation can disagree. `haxe.Json.parse` and `haxe.Unserializer` build every array as
-`Array<Dynamic>`. When such a value flows into a slot of another instantiation, gencs's
-`RealTypeParams` filter calls `__hx_cast`. That returns `this` when the type arguments match;
-otherwise it builds a new object and copies every field into it, converting native arrays element
-by element with `Runtime.genericCast`. So every read of an anonymous-structure field typed
-`Array<Float>` that holds an unserialized array returns a fresh copy, and writes through it are lost
-([HaxeFoundation/haxe#8314](https://github.com/HaxeFoundation/haxe/issues/8314), closed in favor of
-[#4872](https://github.com/HaxeFoundation/haxe/issues/4872), which the Haxe team said won't be fixed
-for C#). Going the other way (an `Array<Int>` passed as `Array<Dynamic>`) copies too, and so does
-every generic Haxe class, not only `Array`.
+**What hxcs does.** gencs gives a Haxe generic class real CLR type arguments only when they are
+"basic": `Int`, `Float`, `Bool`, `UInt`, `Single`, `Int64` and the other `cs` integers, `String`,
+abstracts over these, and .NET value types and enums. It erases every other argument to `object`:
+classes, interfaces, Haxe enums, anonymous structures, function types, `Any`, `Null<X>` of anything
+but `String`, and every generic instantiation. `Array<C>`, `Array<Null<Int>>`, `Array<Array<Int>>`,
+`Map<String,C>` and `List<C>` are all ``…`1<object>``, at every nesting level. An argument that is
+`Dynamic` (also through a typedef or `Null<>`) makes the static type the **companion interface** of
+the class (`global::Array`, `global::haxe.ds.StringMap`), and the `new` builds the ``<object>``
+instantiation. `Type.resolveClass("G")` and a class constant `G` give ``typeof(G`1<object>)``, found
+through the interface's `GenericInterface` attribute.
 
-The server app works around it. `haxe/src-shared/models/ClassNameMacro.hx` generates a `scrubArrays` for each
-data typedef that reads every top-level array field and writes it back; `DataSource_Json`,
-`DataSourceDBCache` and `RecordServer`'s undo/redo call it. Nested arrays, values from
-`Unserializer.run`, and arrays passed to `Array<Dynamic>` parameters aren't covered.
+A value's static type and its object's instantiation can still disagree. `haxe.Json.parse` and
+`haxe.Unserializer` build every array, map and generic object with `<object>`. When such a value
+flows into a typed slot, gencs's `RealTypeParams` filter calls `__hx_cast`. That returns `this` when
+the type arguments match; otherwise it builds a new object and copies the fields into it, converting
+native arrays element by element with `Runtime.genericCast`. Erasure decides which slots match:
 
-**Decided: the generator fixes it for `Array`.** The design is the one Nicolas Cannasse described in
-#4872, which HashLink implements (`hl.types.ArrayDyn`): an `Array<Dynamic>` is untyped until its
-first cast to a typed instantiation locks it, and from then on every reference shares one storage.
+- A slot of `Array<C>`, `Map<String,C>`, `G<Null<Int>>` or `Array<Array<Int>>` is ``<object>``, so
+  the cast is the identity. Unserialized data shares storage with such a field and writes persist.
+- A slot with a basic argument (`Array<Int>`, `Array<String>`, `StringMap<Int>`, `G<Float>`) gets a
+  copy. So every read of an anonymous-structure field typed `Array<Float>` that holds an unserialized
+  array returns a fresh copy, and writes through it are lost
+  ([HaxeFoundation/haxe#8314](https://github.com/HaxeFoundation/haxe/issues/8314), closed in favor of
+  [#4872](https://github.com/HaxeFoundation/haxe/issues/4872), which the Haxe team said won't be fixed
+  for C#).
+- In nested arrays the outer array is ``Array`1<object>`` and never converts. Each inner array is
+  cast when an element is read, so `h.aai[0][0] = 5` is lost.
 
-- **Only ``Array`1<object>`` forwards.** hxc's runtime copy of `Array.hx` gets one field: the typed
-  array this one stands for. A typed instantiation (``Array`1<int32>``, ``Array`1<string>``, …) never
-  forwards.
-- **Reinterpret once.** Casting a non-forwarding ``Array`1<object>`` to `Array<X>` converts its
-  elements into a new `Array<X>`, installs that as the forward target with a compare-and-swap, and
-  returns it. A thread that loses the race returns the winner's array. The old storage stays in
-  place, so a reader that raced the swap sees the same values. Later casts of the object to
-  `Array<X>` return that same `Array<X>`: `t.val == t.val` holds, and a write through either
-  reference shows through the other.
-- **A view the other way.** Casting a typed `Array<X>` to `Array<Dynamic>` returns a new
-  ``Array`1<object>`` that forwards to it, so a function taking `Array<Dynamic>` changes the
-  caller's array.
-- **Only lossless conversions.** An element converts when its value survives: an `Int`, or a
-  `Float` holding an `Int` value, into `Array<Int>`; any number into `Array<Float>`; a `Bool` into
-  `Array<Bool>`; `null` or an instance of `X` into a reference type `X`, and `null` into `Null<T>`;
-  an inner array into `Array<Array<…>>` by the same rules, all or nothing over the whole value. If
-  any element doesn't, the cast does what `__hx_cast` does: it copies, or throws where
-  `genericCast` throws. A stored `1.5` in an `Array<Int>` field, or a `null` in an `Array<Float>`, is
-  never rewritten just because code read it, so serialized data stays what hxcs writes.
-  (`Type.typeof` reports an `Int`-valued `Float` as `TInt`, so `Serializer` writes `1` and `1.0`
-  the same way.)
-- **A wrong-typed write converts.** A write through a forwarder or a view lands in the typed
-  storage, so it converts as `genericCast` does (`1.5` becomes `1` in an `Array<Int>`) or throws
-  where that throws. Under hxcs the same write would have gone into an untyped copy. Only code that
-  writes a value of the wrong type through `Dynamic` sees the difference.
+The other direction does not copy. A typed value passed to an `X<Dynamic>` slot is an upcast to the
+companion interface: the same object, so `ad == ai` holds and the callee's writes reach the caller.
+Members that mention a type parameter then go through `Runtime.callField`, which is why a wrong-typed
+write through it converts or throws inside the typed storage.
+
+The copy itself has details that data can see. `genericCast` into `Int` goes through
+`IConvertible.ToInt32`, which rounds half to even (`0.5` → `0`, `1.5` → `2`, `2.5` → `2`) and
+throws for strings, huge values and mismatched types; into `Int64` it truncates. A `null` element is
+skipped and stays `default(T)` (`0`, `0.0`, `false`). The map and `List` copy has a bug: `hashes`,
+`_keys` and `flags` are shared with the original, so a `set` through the copy makes its key appear in
+the original with a `null` value, and serializing the original then writes it. A `List` copies its
+node chain twice, so an `add` on the copy is lost from both. gencs also skips the cast in two places
+and throws instead: `return d` of a `Dynamic` as `Array<Int>` is a plain C# cast, and a closure call
+goes through reflection. Finally, every parent cast on a generic class (one for each generic
+interface it implements and one for its generic superclass) returns `this`, so a cast to another
+instantiation of a generic interface throws (see *Parent casts* below).
+
+The server app works around #8314. `haxe/src-shared/models/ClassNameMacro.hx` generates a `scrubArrays` for
+each data typedef that reads every top-level array field and writes it back; `DataSource_Json`,
+`DataSourceDBCache` and `RecordServer`'s undo/redo call it. Nested arrays and values from
+`Unserializer.run` aren't covered.
+
+**Decided: hxc adopts gencs's typing and casts, and fixes #8314 for `Array`.**
+
+*Typing.* hxc erases and types as gencs does. The rest depends on it: without erasure every
+class-typed array and map would need a cast, and `StringMap<C>` fields read from data would start
+losing writes that gencs keeps.
+
+- **Erasure.** Every non-basic type argument is `object`, in fields, locals, parameters, returns,
+  `new` and method instantiations. Type parameters stay. A generic class whose fields mention a
+  non-Haxe-generic generic type over its type parameters (`var l:List_1<T>`) is a "native generic",
+  like `@:nativeGen`: it keeps its real type arguments, has no companion and no casts, and
+  `Type.resolveClass` gives `null` for it. hxc runs gencs's scan for this.
+- **Companion interfaces.** Each generic Haxe class and interface `pack.X<T…>` gets a non-generic
+  interface `pack.X` (no arity), carrying `haxe.lang.GenericInterface(typeof(X<object…>))` and the
+  base interfaces `haxe.lang.IHxObject` and `haxe.lang.IGenericObject`. It declares `X_cast<T_c>()`,
+  the casts of the generic interfaces it implements and of its superclass, and every kept instance
+  method whose Haxe signature mentions no type parameter, in gencs's order and spelling. A generic
+  interface's static `__hx_cast` helper lives in `X__Statics_`. Cast methods are named
+  `<flatpath>_cast`, the helper `__hx_cast<T_c_c…>`.
+- **`X<Dynamic>` is the companion.** A typed value assigned or passed to it is the same object, with
+  no view and no copy. Member access through it follows gencs: members that don't mention a type
+  parameter are interface calls, the rest go through `Runtime.getField`/`setField`/`callField`.
+- **Casts are gencs's.** `X_cast` and `__hx_cast` are emitted as gencs does. A cast between typed
+  instantiations still copies, and so does a second reinterpretation of an array to a different type.
+  The map and `List` copy keeps its shared `hashes`/`_keys` and its lost `add`, because stored data
+  depends on it. A `Map` abstract's downcast to its specialization with the same type arguments (the
+  commonest shape in the server app) is the identity cast it is in gencs. `Type.resolveClass` of a generic
+  class returns ``typeof(X<object…>)``.
+- **The `Array` indexer is missing.** `Array`'s companion has an `object this[int]` indexer that comes
+  from hxcs's `@:classCode`, which is milestone 4. Until then element access on an `Array<Dynamic>`
+  goes through `Runtime.callField` `"__get"`/`"__set"`, as hxc already does for `Dynamic` arrays, and
+  `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`.
+
+*Parent casts.* gencs's `P_cast<…>() { return this.X_cast<own params>(); }` always returns `this`.
+`FallbackPromise<T> implements Thenable<T>` shows it. Given a `FallbackPromise<Dynamic>` in a
+`Dynamic`, a cast to `Thenable<Int>` calls `Thenable_cast<Int>()`, which runs
+`FallbackPromise_cast<T>()` with the object's own `T`, so it returns the object unchanged and the
+`castclass` after it throws `InvalidCastException`. The superclass case is the same code: `GSub<U>
+extends G<U>` throws on a cast to `G<Int>`, and so do the standard library's `StringMap` and
+`ObjectMap` casts to `IMap`. hxc emits the correct body, for interfaces and superclasses alike. The
+rule: take the parent as the class declares it, written in the class's type parameters after
+erasure, `P<a1…am>`. The body of `P_cast<P1_c…Pm_c>()` is `return this.X_cast<b1…bn>()`, where for
+each class parameter `Tk`, `bk` is `Pj_c` for the first `j` with `aj = Tk`, and `Tk` itself when no
+`aj` is `Tk`. So `Thenable_cast<T_c>()` calls `FallbackPromise_cast<T_c>()`, and `Perm<X,Y>
+implements I2<Y,X>` calls `Perm_cast<B_c, A_c>()`. When two `Pj_c` for one `Tk` would differ
+(`Both<T> implements I2<T,T>` cast to `I2<Int,String>`), no instance can satisfy the cast and the
+`castclass` throws, as gencs's does. This is a deliberate divergence like #8314.
+
+*The #8314 forward.* The design is the one Nicolas Cannasse described in #4872, which HashLink
+implements (`hl.types.ArrayDyn`): an ``Array`1<object>`` is untyped until its first cast to a typed
+instantiation locks it, and from then on every reference shares one storage.
+
+- **Only ``Array`1<object>`` forwards, and only to a basic-element array.** hxc's runtime copy of
+  `Array.hx` gets one field: the typed array this one stands for. Any cast of a non-forwarding
+  ``Array`1<object>`` to an `Array` of `Int`, `Float`, `Bool`, `String`, `UInt`, `Single`, `Int64`
+  or another basic element triggers it, whatever the static source of the value: a `Dynamic`, a type
+  parameter, an anonymous field read, or a typed ``Array`1<object>`` such as an `Array<Null<Int>>`.
+  A typed instantiation (``Array`1<int32>``, ``Array`1<string>``, …) never forwards. A typed array
+  held in an `Array<Dynamic>` slot is an upcast and needs nothing.
+- **Reinterpret once.** The cast converts the elements into a new `Array<X>`, installs it as the
+  forward target, and returns it. The install runs under `Monitor.Enter(this)`/`Exit(this)`, since
+  hxc has no `ref` arguments for `Interlocked.CompareExchange`. A thread that loses the race returns
+  the winner's array. The old storage stays in place, so a reader that raced the install sees the same
+  values. Later casts of the object to `Array<X>` return that same array: `t.val == t.val` holds, and
+  a write through either reference shows through the other.
+- **Only lossless conversions.** An element converts when its value survives: an `Int`, or a `Float`
+  holding an `Int` value, into `Array<Int>` (`-0.0` too: `genericCast` gives `0` and the Serializer
+  writes `z` for both); any number into `Array<Float>`; a `Bool` into `Array<Bool>`; a string or
+  `null` into `Array<String>`; a value that round-trips into `Array<Single>` or `Array<Int64>`.
+  Erasure leaves `String` as the only reference element type, so the list ends there. If any element
+  doesn't convert, the cast does what `__hx_cast` does: it copies, or throws where `genericCast`
+  throws. A stored `1.5` in an `Array<Int>` field, or a `null` in an `Array<Float>`, is never
+  rewritten just because code read it, so serialized data stays what hxcs writes. (`Type.typeof`
+  reports an `Int`-valued `Float` as `TInt`, so `Serializer` writes `1` and `1.0` the same way.)
+- **A wrong-typed write converts.** A write through a forwarder lands in the typed storage, so it
+  converts as `genericCast` does (`2.5` becomes `2` in an `Array<Int>`, by rounding) or throws where
+  that throws. Under hxcs the same write would have gone into an untyped copy. Typed code sees this
+  too, because erasure makes `Array<Null<Int>>`, `Array<C>` and `Array<Array<Int>>` all
+  ``Array`1<object>``: an `Array<Null<Int>>` view of a reinterpreted array turns `push(null)` into
+  `0`.
+- **Nested arrays.** The outer array is ``Array`1<object>`` and never converts. Each inner array
+  converts when an element read casts it, as above, so `h.aai[0][0] = 5` persists where gencs loses
+  it.
+- **`length` is a field kept in sync.** hxc can't emit CLR properties yet, and a field keeps C# that
+  reads `.length` compiling. A reinterpreted target keeps a back-reference `__hx_from` to its
+  forwarder and writes `__hx_from.length` wherever it writes its own `length`.
 - **Everything that reaches storage resolves the forward first**: every `Array` member, including
-  `length` and the members hxcs inlines into callers (`map`, `filter`, `__unsafe_get`, …), and the
-  dynamic paths in `cs.internal.Runtime`. *(My call:)* `length` becomes a property whose getter
-  checks the forward. It keeps its name, so C# in `cs/` that reads it still compiles.
+  the ones hxcs inlines into callers (`map`, `filter`, `iterator`, `__unsafe_get`, …), and the dynamic
+  paths in `cs.internal.Runtime`. The std readers of `__a` (`cs.Lib.nativeArray`, `haxe.Rest`)
+  resolve it too. `Reflect.field(a, "__a")` on a forwarder returns the stale storage, as gencs's
+  untyped original would.
 - **Equality sees one array.** `Runtime.eq`, `==` with an `Array<Dynamic>`, `Dynamic` or
   type-parameter operand, and `Equals`/`GetHashCode` overrides on `Array` compare forward targets.
   That keeps `indexOf`/`remove`/`contains` (which use `System.Array.IndexOf`) and `ObjectMap` keys
   consistent.
-- **Unchanged from hxcs:** a cast between two typed instantiations (`cast` from `Array<Int>` to
-  `Array<Float>`) still copies, and so does a second reinterpretation to a different type. Maps,
-  `List` and other generic classes keep `__hx_cast`'s copy. A search of the server app found no map read from
-  serialized data whose value type isn't `Any` (already `object`, so nothing converts), and no
-  generic class of its own besides `CSTools.IEnumerableIterator`. If one turns up, extend the
-  forward to the `haxe.ds` maps.
+- **Unchanged from hxcs:** maps, `List` and other generic classes keep `__hx_cast`'s copy, bugs
+  included. A search of the server app found no map read from serialized data with a basic value type, and no
+  generic class of its own besides `CSTools.IEnumerableIterator`. It also depends on
+  `amf3haxe.mx.collections.ArrayCollection<T>` and promhx's `Promise`, `Stream`, `Deferred` and
+  `AsyncBase<T>`; all of them are same-instantiation under gencs. If a map with a basic value type
+  turns up in data, extend the forward to the `haxe.ds` maps.
 - **The C# side keeps working.** `Array` stays a real generic class (`cs/SharedServer/Importer.cs`
-  builds `new Array<string>()`), and `Unserializer.run` still returns an ``Array`1<object>``
-  (`cs/SharedServer/ServerManager.cs` casts it to one).
+  builds `new Array<string>()` and reads `.length`), `Array<String>` stays ``Array`1<string>``, an
+  `Array` of a typedef stays ``Array`1<object>``, and `Unserializer.run` still returns an
+  ``Array`1<object>`` (`cs/SharedServer/ServerManager.cs` casts it to one).
 
-The differential suite records every case of this as a deliberate divergence from hxcs. The server app's
-`scrubArrays` behaves the same under both generators, so it can stay. Writes no longer depend on
-it, but it also turns a `null` array into `[]`, so removing it is the server app's call. Milestone 2 rejects
-these casts (a compile error in user code). Milestone 3 implements them, with cases for #8314's
-example, the `haxe.Json` example from its comments, #4872's `a == b` test, the view direction, the
+*Recorded divergences.* The differential suite records each of these as a deliberate divergence from
+hxcs, with gencs's output kept for contrast:
+
+1. **The #8314 forward**: a cast of an ``Array`1<object>`` to a basic-element `Array` shares storage
+   instead of copying, and writes through it convert.
+2. **Parent casts** return the right instantiation instead of `this`, so casts that throw in gencs
+   work.
+3. **Paths where gencs throws but this design works are left working**:
+   - `return d` of a `Dynamic` as `Array<Int>`, which skips `__hx_cast` in gencs;
+   - closure calls with an array argument that needs a cast;
+   - `map` and `filter` on a typed array held as `Array<Dynamic>` (gencs's inlined loops cast `__a`
+     to `object[]`, which fails for an `int[]`);
+   - an `Array<Int>` passed as `Array<Any>` (a C# compile error in gencs).
+4. **`Array`'s `object this[int]` indexer is missing** until milestone 4, so `get_Item` and
+   `set_Item` are absent from `getInstanceFields(Array)`.
+
+*Reproduced hxcs bugs.* These stay, because data depends on them: the map and `List` copy that shares
+`hashes`/`_keys` and gives the original a `k => null`; `getResponseHeaderValues` throwing a
+`NullReferenceException`; the Unserializer's `ArgumentException` on enum constructor arguments of
+array or map type; and Json printing `"Box_cast":null`.
+
+The server app's `scrubArrays` behaves the same under both generators, so it can stay. Writes no longer depend
+on it, but it also turns a `null` array into `[]`, so removing it is the server app's call. Milestone 2
+rejects these casts (a compile error in user code). Milestone 3 implements them, with cases for
+#8314's example, the `haxe.Json` example from its comments, #4872's `a == b` test, type-argument
+erasure and the companion interfaces, the parent casts (`FallbackPromise`, `GSub`, `IMap`), the
 lossless fallback (data with `1.5` in an `Array<Int>` field re-serializes to the same string), a
-wrong-typed write through `Dynamic`, nested arrays, and two threads casting one array at once.
+wrong-typed write through `Dynamic` and through an `Array<Null<Int>>` view, nested arrays, the map
+and `List` copy, and two threads casting one array at once.
 
 ## How it gets made (decided)
 
@@ -314,11 +429,15 @@ wrong-typed write through `Dynamic`, nested arrays, and two threads casting one 
    classes, statics, strings, arrays, exceptions. A cast between instantiations of a generic class
    is a compile error until milestone 3. **Exit:** runs on `dotnet`, ILVerify clean, deterministic.
 3. **Runtime parity.** hxc's runtime copy compiled through the generator; `Dynamic`, reflection,
-   enums, closures, anonymous objects, `Null<T>`, `Std`/`Type`/`Reflect`, Serializer, and `Array`
-   casts that share storage (*Casts between generic instantiations*). **Exit:** the differential
-   suite against Haxe 4.3.7 gencs passes, apart from the recorded issue-8314 divergences.
+   enums, closures, anonymous objects, `Null<T>`, `Std`/`Type`/`Reflect`, Serializer, and generic
+   instantiations as in *Casts between generic instantiations*: type-argument erasure, companion
+   interfaces, `X_cast` and `__hx_cast`, and `Array` casts that share storage (issue 8314).
+   **Exit:** the differential suite against Haxe 4.3.7 gencs passes, apart from the recorded
+   divergences (the 8314 forward, the parent casts, the paths left working, and the missing `Array`
+   indexer until milestone 4).
 4. **Interop.** `@:nativeGen`, attributes, properties, nullability, delegates/events, overloads,
-   generics that cross into referenced assemblies, the inline-C# subset, manifest resources.
+   generics that cross into referenced assemblies, the inline-C# subset, `Array`'s companion
+   indexer (hxcs's `@:classCode`), manifest resources.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
