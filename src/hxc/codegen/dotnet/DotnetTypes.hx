@@ -33,6 +33,14 @@ class Unsupported {
 	public function toString():String return "Unsupported(" + what + ")";
 }
 
+// How DotnetTypes.inferParams meets a position, as Haxe's unification: `Covariant` is unify(applied,
+// declared), `Contravariant` unify(declared, applied), `Invariant` type_eq (a type argument).
+private enum Variance {
+	Covariant;
+	Contravariant;
+	Invariant;
+}
+
 // Haxe types as CLR signatures, as gencs maps them.
 class DotnetTypes {
 	final ctx:Context;
@@ -264,13 +272,17 @@ class DotnetTypes {
 	}
 
 	// The types `params` stand for where `declared`, written in terms of them, meets the applied type
-	// `actual`, as gencs infers a generic method's type arguments; Dynamic where nothing binds one. As
-	// gencs's unification, a function type's return binds before its arguments, which bind in order,
-	// and the first binding stays. A parameter met as a plain T binds the typer's Null<Int> as Null<Int>
-	// (haxe.lang.Null<int>, gencs's object); one met inside a declared Null<T> binds what is inside
-	// every Null, Int: gencs's `wrap<int>(nn.@value)` for `wrap<T>(x:T):Null<T>`, where a null becomes
-	// 0 (an hxcs bug, kept).
-	public static function inferParams(params:TypeParams, declared:T, actual:T):Array<T> {
+	// `actual`, as gencs infers a generic method's type arguments; Dynamic where nothing binds one. gencs
+	// unifies, by Haxe's rules, each argument's applied type with its declared one and the return's
+	// likewise, the return first, and the first binding stays. A local generic function's whole function
+	// type is unified instead (`localFunction`), so its arguments are met as a function type's are. A
+	// plain T binds what it meets, so the typer's Null<Int> stays Null<Int> (haxe.lang.Null<int>, gencs's
+	// object). Where a declared Null<T> meets a Null<Int> depends on the position's variance: as an
+	// argument or a return, T binds Int (gencs's `wrap<int>(nn.@value)` for `wrap<T>(x:T):Null<T>`, where
+	// a null becomes 0, an hxcs bug kept); inside a function-typed argument's own arguments, Null<Int>
+	// (`cbn<object>` for `cbn<T>(f:Null<T>->Bool, x:T)`); inside a type argument, one Null level per side
+	// (`retNullArr<object>` for `retNullArr<T>(x:T):Array<Null<T>>`).
+	public static function inferParams(params:TypeParams, declared:T, actual:T, localFunction:Bool):Array<T> {
 		var bound:Array<Null<T>> = [for (_ in params) null];
 		function indexOf(c:TClass):Int {
 			for (i in 0...params.length) if (isParam(params[i], c)) return i;
@@ -282,52 +294,80 @@ class DotnetTypes {
 				case _: null;
 			}
 		}
-		function walk(d:T, a:T, depth:Int):Void {
+		// A Null<Null<Int>> binds as the one Null<Int> it stands for.
+		function bind(i:Int, a:T):Void {
+			var t = TypeFunctions.follow(a);
+			if (bound[i] != null || t.match(TMono(_))) return;
+			bound[i] = switch (a) {
+				case TAbstract(n, [_]) if (nullArg(a) != null): TAbstract(n, [t]);
+				case _: t;
+			}
+		}
+		function walk(d:T, a:T, v:Variance, depth:Int):Void {
 			if (depth > 20) return;
 			d = TypeFunctions.followWithoutNull(d);
 			a = TypeFunctions.followWithoutNull(a);
-			// A declared Null<X> meets the value inside every Null, or the value itself.
-			var dn = nullArg(d);
-			if (dn != null) {
-				walk(dn, TypeFunctions.follow(a), depth + 1);
-				return;
-			}
 			switch (d) {
 				case TInst(c, []) if (c.kind.match(KTypeParameter(_)) && indexOf(c) >= 0):
-					var i = indexOf(c);
-					var t = TypeFunctions.follow(a);
-					if (bound[i] == null && !t.match(TMono(_))) bound[i] = nullArg(a) != null ? a : t;
+					bind(indexOf(c), a);
 					return;
 				case _:
 			}
-			a = TypeFunctions.follow(a);
+			var dn = nullArg(d), an = nullArg(a);
+			switch (v) {
+				// unify takes every Null off its left side (the applied type when covariant, the declared one
+				// when contravariant) before the one on its right.
+				case Covariant if (an != null):
+					walk(d, an, v, depth + 1);
+					return;
+				case Contravariant if (dn != null):
+					walk(dn, a, v, depth + 1);
+					return;
+				// type_eq takes one Null off each side.
+				case _ if (dn != null || an != null):
+					walk(dn != null ? dn : d, an != null ? an : a, v, depth + 1);
+					return;
+				case _:
+			}
 			switch (d) {
 				case TInst(c, dl):
 					switch (a) {
-						case TInst(c2, al) if (c2 == c && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], depth + 1);
+						case TInst(c2, al) if (c2 == c && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], Invariant, depth + 1);
 						case _:
 					}
 				case TAbstract(x, dl):
 					switch (a) {
-						case TAbstract(x2, al) if (x2 == x && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], depth + 1);
+						case TAbstract(x2, al) if (x2 == x && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], Invariant, depth + 1);
 						case _:
 					}
 				case TEnum(x, dl):
 					switch (a) {
-						case TEnum(x2, al) if (x2 == x && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], depth + 1);
+						case TEnum(x2, al) if (x2 == x && al.length == dl.length): for (i in 0...dl.length) walk(dl[i], al[i], Invariant, depth + 1);
 						case _:
 					}
 				case TFun(ds):
+					// A function type's arguments unify the other way round.
+					var flipped = switch (v) {
+						case Covariant: Contravariant;
+						case Contravariant: Covariant;
+						case Invariant: Invariant;
+					}
 					switch (a) {
 						case TFun(as) if (as.args.length == ds.args.length):
-							walk(ds.ret, as.ret, depth + 1);
-							for (i in 0...ds.args.length) walk(ds.args[i].t, as.args[i].t, depth + 1);
+							walk(ds.ret, as.ret, v, depth + 1);
+							for (i in 0...ds.args.length) walk(ds.args[i].t, as.args[i].t, flipped, depth + 1);
 						case _:
 					}
 				case _:
 			}
 		}
-		walk(declared, actual, 0);
+		switch [TypeFunctions.followWithoutNull(declared), TypeFunctions.followWithoutNull(actual)] {
+			case [TFun(ds), TFun(as)] if (!localFunction && as.args.length == ds.args.length):
+				walk(ds.ret, as.ret, Covariant, 1);
+				for (i in 0...ds.args.length) walk(ds.args[i].t, as.args[i].t, Covariant, 1);
+			case _:
+				walk(declared, actual, Covariant, 0);
+		}
 		return [for (b in bound) b == null ? TypeFunctions.tDynamic : b];
 	}
 

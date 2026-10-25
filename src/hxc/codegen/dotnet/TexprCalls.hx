@@ -847,7 +847,7 @@ class TexprCalls {
 	function methodRef(plan:ClassPlan, owner:IlSigNorm, inst:Array<IlSigNorm>, target:TClassField, declared:T,
 			calleeType:T):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm} {
 		var token = g.memberOf(plan, owner, target);
-		var margs = [for (t in DotnetTypes.inferParams(target.params, declared, calleeType)) tl.sig(t)];
+		var margs = [for (t in DotnetTypes.inferParams(target.params, declared, calleeType, false)) tl.sig(t)];
 		if (margs.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec(margs));
 		var m = g.methodSigs.get(target);
 		return {
@@ -884,7 +884,7 @@ class TexprCalls {
 				case FInstance(_, params, _): TypeFunctions.applyParams(c.params, params, cf.type);
 				case _: cf.type;
 			}
-			margs = [for (t in DotnetTypes.inferParams(cf.params, declared, calleeType)) tl.sig(t)];
+			margs = [for (t in DotnetTypes.inferParams(cf.params, declared, calleeType, false)) tl.sig(t)];
 		}
 		var inst = instantiation(c, fa);
 		var parent = ExternMembers.subst(m.parent, inst);

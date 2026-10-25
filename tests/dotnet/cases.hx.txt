@@ -8351,3 +8351,155 @@ class P {
 ===
 [compile]
 P.hx:8: characters 23-24 : dotnet: a cast between instantiations of Array is not supported yet
+--- null-type-parameter-binding @gencs
+// gencs binds a generic method's type parameters by Haxe's unification of each argument's and the
+// return's applied type with the declared one: a Null<T> meeting a Null<Int> binds Int where the
+// applied type is on the left (an argument, the return), Null<Int> (gencs's object) inside a function
+// argument's own arguments, and one Null level per side inside a type argument (retOpt<object>). A
+// local generic function unifies its whole function type, so its arguments flip: le<int>, lz<object>.
+import haxe.ds.Option;
+
+class B<T> {
+	public var v:T;
+
+	public function new(v:T) this.v = v;
+
+	public function wrapC(x:T):Null<T> return x;
+
+	public function mapN<U>(f:T->U):Null<U> return f(v);
+
+	public function pick<U>(x:U, y:Null<U>):String return x + "|" + y + "|" + (y == null);
+}
+
+class K<T> {
+	public function new() {}
+
+	public function each<U>(f:Null<U>->Void, x:U):Void f(x);
+}
+
+class P {
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+
+	static function deep<T>(a:Array<Array<Null<T>>>):T return a[0][0];
+
+	static function cbn<T>(f:Null<T>->Bool, x:T):String return f(x) + "|" + x;
+
+	static function cbf<T>(f:T->Bool, x:Null<T>):String return f(x) + "|" + x;
+
+	static function cbr<T>(f:Void->Null<T>):T return f();
+
+	static function cbn4<T>(f:Null<T>->Void, x:T):Void f(x);
+
+	static function fm<T>(f:Null<T>->Bool, x:Null<T>):String return f(x) + "|" + x;
+
+	static function m1<T>(f:(Null<T>->Bool)->Void, x:T):String {
+		f(v -> v == null);
+		return "m1 " + x;
+	}
+
+	static function m3<T>(f:(Void->Null<T>)->Void, x:T):Void f(() -> x);
+
+	static function optArr<T>(x:Int, ?a:Array<T>):String return a == null ? "none" : a[1] + "|" + (a[1] == null);
+
+	static function retThunks<T>(x:T):Array<Void->Null<T>> return [() -> x];
+
+	static function retCb<T>(x:T):Null<T>->String return v -> v + "|" + x;
+
+	static function retOpt<T>(x:T):Option<Null<T>> return Some(x);
+
+	static function twoB<A, X>(f:A->X, a:A):Null<X> return f(a);
+
+	static function main() {
+		var nn:Null<Int> = null, n5:Null<Int> = 5;
+		var g:Array<Null<Int>> = [1, null, 3];
+		var dg:Array<Array<Null<Int>>> = [[null, 2]];
+		t(() -> deep(dg));
+		t(() -> cbn((v:Null<Int>) -> v == null, nn));
+		t(() -> cbn((v:Null<Int>) -> v == null, n5));
+		t(() -> cbf((v:Null<Int>) -> v == null, nn));
+		t(() -> cbr(() -> nn));
+		t(() -> cbr(() -> n5));
+		cbn4((v:Null<Int>) -> Sys.println("cbn4 " + v), nn);
+		new K<String>().each((v:Null<Int>) -> Sys.println("each " + v), nn);
+		t(() -> fm((v:Null<Int>) -> v == null, nn));
+		t(() -> m1((h:Null<Int>->Bool) -> Sys.println("m1 h " + h(nn)), nn));
+		m3((h:Void->Null<Int>) -> Sys.println("m3 " + h()), nn);
+		t(() -> optArr(1, g));
+		t(() -> optArr(1));
+		t(() -> retThunks(nn)[0]() == null);
+		t(() -> retCb(nn)(nn));
+		t(() -> switch (retOpt(nn)) {
+			case Some(v): "opt " + v;
+			case None: "none";
+		});
+		t(() -> twoB(v -> v, nn));
+		t(() -> twoB((v:Int) -> nn, 1));
+		var b = new B<Null<Int>>(null);
+		t(() -> b.wrapC(nn) == null);
+		t(() -> b.mapN(v -> v));
+		t(() -> b.mapN(v -> v) == null);
+		t(() -> b.pick(nn, nn) + " " + b.pick(n5, nn));
+		function lw<T>(x:T):Null<T> return x;
+		function lp<T>(x:T):T return x;
+		function le<T>(f:Null<T>->Void, x:T) f(x);
+		function lz<T>(x:Null<T>):String return "lz " + x;
+		function lb<T>(x:T, y:Null<T>):String return "lb " + x + "|" + y;
+		function ld<T>(f:(Null<T>->Void)->Void, x:T):Void f(v -> Sys.println("ld " + v + "|" + x));
+		t(() -> lw(nn));
+		t(() -> lw(nn) == null);
+		t(() -> lp(nn) == null);
+		le((v:Null<Int>) -> Sys.println("le " + v), nn);
+		t(() -> lz(nn));
+		t(() -> lb(nn, nn));
+		ld((h:Null<Int>->Void) -> h(nn), nn);
+		t(() -> haxe.Serializer.run(lw(nn)) + " " + haxe.Serializer.run(b.wrapC(nn)) + " " + haxe.Serializer.run(cbr(() -> nn)));
+	}
+}
+===
+--- null-type-parameter-binding-refusal
+// A Null<T> inside a type argument meets a Null<Int> one Null level per side, so T binds Null<Int>, as
+// gencs's retNullArr<object> and retMap<object>. hxc's Array<Null<T>> is then
+// Array<haxe.lang.Null<haxe.lang.Null<int>>>, which needs a cast between instantiations to the typer's
+// Array<Null<Int>> (gencs has Array<object> for both), plan 3c.
+class P {
+	static function retNullArr<T>(x:T):Array<Null<T>> return [x];
+
+	static function retMap<T>(x:T):Map<String, Null<T>> {
+		var m = new Map<String, Null<T>>();
+		m.set("a", x);
+		return m;
+	}
+
+	static function main() {
+		var nn:Null<Int> = null;
+		Sys.println(retNullArr(nn)[0] == null);
+		Sys.println(retMap(nn).get("a"));
+		Sys.println(retNullArr(5)[0]);
+	}
+}
+===
+[compile]
+P.hx:16: characters 15-29 : dotnet: a cast between instantiations of Array is not supported yet
+P.hx:17: characters 15-34 : dotnet: a cast between instantiations of haxe.ds.StringMap is not supported yet
+--- null-type-parameter-binding-local-refusal
+// A local generic function binds T = Null<Int> here, as gencs's P_lw2_11__Fun<object>. Its Array<Null<T>>
+// result, Array<haxe.lang.Null<haxe.lang.Null<int>>>, reaches the call through Dynamic and needs a cast
+// between instantiations to the typer's Array<Null<Int>>, plan 3c, so it throws NotSupportedException.
+class P {
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+
+	static function main() {
+		var nn:Null<Int> = null;
+		function lw2<T>(x:T):Array<Null<T>> return [x];
+		t(() -> lw2(nn)[0] == null);
+		t(() -> lw2(5)[0]);
+	}
+}
+===
+[run]
+EXC System.NotSupportedException
+5

@@ -265,7 +265,7 @@ class ClosuresToClass {
 	function newGeneric(v:TVar, c:TClass, vars:Array<TVar>, declared:T, e:TExpr):TExpr {
 		var own = v.extra.params;
 		var dynamics = [for (_ in own) TypeFunctions.tDynamic];
-		var bound = [for (t in DotnetTypes.inferParams(own, declared, e.type)) TypeFunctions.applyParams(own, dynamics, t)];
+		var bound = [for (t in DotnetTypes.inferParams(own, declared, e.type, true)) TypeFunctions.applyParams(own, dynamics, t)];
 		var params = [
 			for (tp in c.params) {
 				var t = tp.type;
