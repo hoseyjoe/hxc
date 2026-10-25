@@ -5,6 +5,7 @@ import hxc.context.Context;
 import hxc.core.Globals;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.codegen.dotnet.IlData;
 
 // Something the generator cannot compile yet. `what` names it for "dotnet: <what> is not supported
@@ -45,6 +46,8 @@ private enum Variance {
 class DotnetTypes {
 	final ctx:Context;
 	final mb:ModuleBuilder;
+	// The generation these types belong to, for HxGeneric; DotnetCtx sets it.
+	public var g:Null<DotnetCtx> = null;
 
 	// The types left out of the assembly, keyed by Haxe path, with the reason; GenerateDotnet fills it.
 	public final leftOut = new Map<String, String>();
@@ -391,6 +394,69 @@ class DotnetTypes {
 		return opt && takesNullOf(s) && !isNullOf(s) ? nullOf(s) : s;
 	}
 
+	// The CLR type arguments of the class `c` applied to `params`, as gencs's change_param_type gives
+	// them. An hxgeneric class's (HxGeneric) are erased by `typeArg`, all of them to object when one is
+	// Dynamic; any other generic's (a .NET one, a @:nativeGen or native generic Haxe class) keep their
+	// types, except that a Null<T> of a value type is object there too.
+	public function classArgs(c:TClass, params:Array<T>):Array<IlSigNorm> {
+		if (params.length == 0) return [];
+		if (!HxGeneric.isHxGeneric(g, c)) return [for (a in params) nativeArg(a)];
+		if (hasDynamicArg(params)) return [for (_ in params) LObject];
+		return [for (a in params) typeArg(a)];
+	}
+
+	// An argument of a generic that is not hxgeneric, or of a generic .NET method: its own type, but never
+	// a haxe.lang.Null.
+	public function nativeArg(t:T):IlSigNorm {
+		var s = toSig(t);
+		return isNullOf(s) ? LObject : s;
+	}
+
+	// Whether one of `params`, through typedefs and Null, is Dynamic, which makes gencs type the
+	// instantiation as its companion interface and instantiate it with object for every argument.
+	public static function hasDynamicArg(params:Array<T>):Bool {
+		for (p in params) switch (TypeFunctions.follow(p)) {
+			case TDynamic(_): return true;
+			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Dynamic"): return true;
+			case _:
+		}
+		return false;
+	}
+
+	// One type argument of an hxgeneric instantiation, as gencs erases it (types notes §1): a type
+	// parameter stays; a basic type is its CLR type (Int, Float, Bool, UInt, Single, the cs.StdTypes
+	// integers, Int64, an abstract over one of them, a .NET struct or enum, a @:nativeGen flat enum);
+	// String, Null<String> and an abstract over String are string; everything else is object, Null<Int>
+	// and every other Null<T> included.
+	public function typeArg(t:T):IlSigNorm {
+		return switch (t) {
+			case TMono(m): m.type == null ? LObject : typeArg(m.type);
+			case TLazy(f): typeArg(TypeFunctions.lazyType(f));
+			case TType(d, params): typeArg(TypeFunctions.applyTypedef(d, params));
+			case TDynamic(_) | TAnon(_) | TFun(_): LObject;
+			case TAbstract(a, [p]) if (a.path.pack.length == 0 && a.path.name == "Null"):
+				typeArg(p).match(LString) ? LString : LObject;
+			case TInst(c, _) if (c.kind.match(KTypeParameter(_))): typeParam(c);
+			case TInst(c, _) if (isPath(c.path, [], "String")): LString;
+			// A Haxe class is object, unless it is a struct.
+			case TInst(c, _) if (!TypeFunctions.hasClassFlag(c, CExtern) && !TypeFunctions.hasMeta(":struct", c.meta)): LObject;
+			// A Haxe enum is object, unless it is a CLR enum.
+			case TEnum(e, _) if (!e.isExtern && !HxGen.isClrEnum(e)): LObject;
+			// A non-core abstract stands for its underlying type.
+			case TAbstract(a, params) if (!TypeFunctions.hasMeta(":coreType", a.meta) && !isPath(a.path, ["cs", "_Flags"], "EnumUnderlying")):
+				typeArg(TypeFunctions.getUnderlyingType(a, params));
+			case _:
+				switch (toSig(t)) {
+					case s = LBool | LChar | LInt8 | LUInt8 | LInt16 | LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64 | LIntPtr | LUIntPtr:
+						s;
+					case s = LValueType(_, _) if (!isNullOf(s)): s;
+					case LString: LString;
+					case s = LTypeParam(_) | LMethodTypeParam(_): s;
+					case _: LObject;
+				}
+		}
+	}
+
 	public function toSig(t:T):IlSigNorm {
 		return switch (t) {
 			case TMono(m): m.type == null ? LObject : toSig(m.type);
@@ -421,14 +487,14 @@ class DotnetTypes {
 					var p = externPath(c);
 					var prim = primitive(p);
 					if (prim != null) return prim;
-					var args = [for (a in params) toSig(a)];
+					var args = classArgs(c, params);
 					defined(p);
 					// System.Enum extends System.ValueType, so it is a @:struct extern, but the CLR has it a class.
 					TypeFunctions.hasMeta(":struct", c.meta) && !isSystemEnum(p) ? LValueType(p, args) : LClass(p, args);
 				} else {
 					checkKept(TClassDecl(c));
 					var p = DotnetNames.typePath(TClassDecl(c));
-					var args = [for (a in params) toSig(a)];
+					var args = classArgs(c, params);
 					TypeFunctions.hasMeta(":struct", c.meta) ? LValueType(p, args) : LClass(p, args);
 				}
 			case TAbstract(a, params):

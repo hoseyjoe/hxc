@@ -1049,7 +1049,7 @@ class TclassToIl {
 			return;
 		}
 		if (owner != s.c) throw new Unsupported("inherited .NET constructors", true);
-		var inst = [for (p in s.params) g.types.toSig(p)];
+		var inst = g.types.classArgs(s.c, s.params);
 		code.ldarg(0);
 		if (TypeFunctions.hasClassFlag(s.c, CExtern)) {
 			var m = g.externs.method(s.c, origin);
@@ -1137,7 +1137,7 @@ class TclassToIl {
 		initStatements(lower, c, inits);
 		var s = c.superClass;
 		var superPlan = g.planOf.get(s.c);
-		var margs = [for (p in s.params) g.types.toSig(p)];
+		var margs = g.types.classArgs(s.c, s.params);
 		var stat = ctorOf(superPlan, hc.origin).stat;
 		for (i in 0...m.args.length) code.ldarg(i);
 		code.opToken(IlOps.CALL, staticCtorRef(g, superPlan, stat, margs), m.args.length, 0);

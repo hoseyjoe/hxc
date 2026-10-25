@@ -297,12 +297,12 @@ class TexprToIl {
 		if (to.match(LString) && !inRuntimeClass()) {
 			// Runtime.toString, as gencs converts anything that is not a String to one (outside
 			// haxe.lang.Runtime, whose code casts).
-			if (isTypeParam(from)) boxTypeParam(from) else if (fromValue) code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
+			if (fromValue) code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 			dyn.toSig(to);
 		} else if (fromValue && !toValue) {
 			// A struct boxes into an instantiation of a generic Haxe interface only when it implements it.
 			if (!isTypeParam(from) && g.isGenericHaxeClass(to) && !g.isUpcast(from, to)) throw instantiationCast(to);
-			if (isTypeParam(from)) boxTypeParam(from) else code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
+			code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 			// A boxed type parameter is an object, which may not be the reference type wanted.
 			if (isTypeParam(from) && !to.match(LObject)) castTo(to);
 		} else if (!fromValue && toValue) {
@@ -353,22 +353,13 @@ class TexprToIl {
 				checkedInstanceCast(to, "a value to " + g.haxeTypeOf(to));
 				return;
 			}
+			// A downcast to the one instantiation the source's type allows is no cast between instantiations.
+			if (g.isExactDowncast(from, to)) {
+				code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
+				return;
+			}
 			castTo(to);
 		}
-	}
-
-	// The type parameter `s`'s value on the stack as an object. gencs erases a Null<Int> type argument
-	// to object, so what it boxes is the value or null; here the type argument stays haxe.lang.Null<Int>,
-	// and Runtime.__hx_boxTypeParam unwraps it.
-	function boxTypeParam(s:IlSigNorm):Void {
-		if (boxesPlainly()) code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1) else dyn.runtimeCall("__hx_boxTypeParam", null, [s]);
-	}
-
-	// haxe.lang.Runtime's own code boxes a type parameter plainly, as its C# does, and so does
-	// haxe.lang.Null<T>'s, so that its constructor's null check on an Int stays a box the JIT folds; a
-	// T inferred as Null<Int> is unwrapped by newNull before the constructor, and by toDynamic itself.
-	function boxesPlainly():Bool {
-		return inRuntimeClass() || cls != null && DotnetTypes.haxePath(TClassDecl(cls)) == "cs.internal._Null.Nullable";
 	}
 
 	// True when `a` is a .NET enum whose values are stored as `b`.
@@ -418,18 +409,8 @@ class TexprToIl {
 	}
 
 	// `new Null<T>(v, true)` with v on the stack: the constructor, which also checks a reference for null.
-	// A type parameter's value may itself be a haxe.lang.Null with no value (T inferred as Null<Int>),
-	// which gencs's object would hold as null: hasValue is then whether it boxes to null.
 	function newNull(s:IlSigNorm):Void {
-		var a = nullArg(s);
-		if (a != null && isTypeParam(a) && !boxesPlainly()) {
-			code.op(IlOps.DUP, 1, 2);
-			boxTypeParam(a);
-			code.op(IlOps.LDNULL, 0, 1);
-			code.op(IlOps.CGT_UN, 2, 1);
-		} else {
-			code.ldcI4(1);
-		}
+		code.ldcI4(1);
 		var token = g.mb.memberRef(g.typeTokenOf(s), ".ctor", g.sigs.method(true, LVoid, [LTypeParam(0), LBool], 0));
 		code.opToken(IlOps.NEWOBJ, token, 2, 1);
 	}
@@ -523,11 +504,11 @@ class TexprToIl {
 	}
 
 	// Throws for a cast from `from` into an instantiation of a generic Haxe class that is not the same
-	// type or an upcast. From Dynamic it is checked at run time (checkedInstanceCast).
+	// type, an upcast or an exact downcast (DotnetCtx.isExactDowncast). From Dynamic it is checked at run time (checkedInstanceCast).
 	function checkInstantiationCast(from:IlSigNorm, to:IlSigNorm):Void {
 		// haxe.lang.Null<T> converts through its value (nullConvert).
 		if (IlPaths.sigEq(from, to) || !g.isGenericHaxeClass(to) || isHaxeNull(to) || from.match(LObject)) return;
-		if (g.isUpcast(from, to)) return;
+		if (g.isUpcast(from, to) || g.isExactDowncast(from, to)) return;
 		throw instantiationCast(to);
 	}
 
@@ -1175,7 +1156,7 @@ class TexprToIl {
 				var native = isNativeArray(e1.type);
 				var get = native ? null : calls.arrayAccessor(e1.type, "__get");
 				var set = native ? null : calls.arrayAccessor(e1.type, "__set");
-				var elem = native ? vectorElement(sig(e1.type)) : get.ret;
+				var elem = native ? vectorElement(calls.vectorSig(e1)) : get.ret;
 				var arr = -1, idx = -1;
 				function reload() {
 					code.ldloc(arr);
@@ -1185,7 +1166,7 @@ class TexprToIl {
 					sig: elem,
 					receiver: true,
 					prepare: () -> {
-						var arrSig = native ? sig(e1.type) : get.owner;
+						var arrSig = native ? calls.vectorSig(e1) : get.owner;
 						texpr(RValue(arrSig), e1);
 						arr = code.addLocal(arrSig);
 						code.stloc(arr);

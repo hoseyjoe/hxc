@@ -45,6 +45,9 @@ class DotnetCtx {
 	public final closureExprs = new ObjectMap<TClassField, TExpr>();
 	public final closureInits = new ObjectMap<TClass, TExpr>();
 	public final closureOwners = new ObjectMap<TClass, TClass>();
+	// What HxGeneric found for each generic class and enum it analysed.
+	public final hxGenericClasses = new ObjectMap<TClass, Bool>();
+	public final hxGenericEnums = new ObjectMap<TEnum, Bool>();
 	final closureClasses:Array<TClass> = [];
 
 	final stdRoots:Array<String>;
@@ -53,6 +56,7 @@ class DotnetCtx {
 		this.ctx = ctx;
 		this.mb = mb;
 		types = new DotnetTypes(ctx, mb);
+		types.g = this;
 		sigs = new SigWriter(mb.typeToken);
 		externs = new ExternMembers(ctx, types);
 		// hxc's own copy of the hxcs runtime is standard library too.
@@ -214,6 +218,64 @@ class DotnetCtx {
 			return false;
 		}
 		return reaches(c, args);
+	}
+
+	// The types a value of the class `from` is, through its superclasses and interfaces as Haxe declares
+	// them: `from` itself first.
+	function ancestors(from:IlSigNorm):Array<IlSigNorm> {
+		var r:Array<IlSigNorm> = [];
+		function visit(s:IlSigNorm, depth:Int) {
+			var c = switch (s) {
+				case LClass(p, _) | LValueType(p, _): classAt(p);
+				case _: null;
+			}
+			if (c == null || depth > 50) return;
+			var args = switch (s) {
+				case LClass(_, l) | LValueType(_, l): l;
+				case _: [];
+			}
+			r.push(s);
+			var supers = c.interfaces.copy();
+			if (c.superClass != null) supers.push(c.superClass);
+			for (sup in supers) {
+				var supSig = try types.withParams(c.params, [], () -> types.toSig(TInst(sup.c, sup.params))) catch (_:Unsupported) null;
+				if (supSig != null) visit(DotnetTypes.substitute(supSig, args, []), depth + 1);
+			}
+		}
+		visit(from, 0);
+		return r;
+	}
+
+	// Whether `to`, an instantiation of a generic Haxe class, is the only instantiation of its class that
+	// is a `from`: its class reaches `from` with each of its type parameters among the type arguments.
+	// A castclass from `from` to `to` then succeeds exactly where gencs's __hx_cast gives the object
+	// itself, as for the Map abstract's downcast of an IMap<String, V> to its StringMap<V>.
+	public function isExactDowncast(from:IlSigNorm, to:IlSigNorm):Bool {
+		if (!isGenericHaxeClass(to)) return false;
+		var open = switch (to) {
+			case LClass(p, l): LClass(p, [for (i in 0...l.length) LTypeParam(i)]);
+			case LValueType(p, l): LValueType(p, [for (i in 0...l.length) LTypeParam(i)]);
+			case _: return false;
+		}
+		var toArgs = switch (to) {
+			case LClass(_, l) | LValueType(_, l): l;
+			case _: [];
+		}
+		for (a in ancestors(open)) {
+			if (!IlPaths.sigEq(DotnetTypes.substitute(a, toArgs, []), from)) continue;
+			var args = switch (a) {
+				case LClass(_, l) | LValueType(_, l): l;
+				case _: [];
+			}
+			var all = true;
+			for (i in 0...toArgs.length) {
+				var found = false;
+				for (x in args) if (x.match(LTypeParam(_)) && IlPaths.sigEq(x, LTypeParam(i))) found = true;
+				if (!found) all = false;
+			}
+			if (all) return true;
+		}
+		return false;
 	}
 
 	// A class of hxc's runtime copy (haxe.lang.HxObject, IHxObject, ...) by its Haxe path, or null.

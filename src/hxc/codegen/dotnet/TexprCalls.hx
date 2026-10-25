@@ -49,7 +49,7 @@ class TexprCalls {
 	// The class type arguments a field access sees: a static one gets Dynamic for each.
 	function instantiation(c:TClass, fa:TFieldAccess):Array<IlSigNorm> {
 		return switch (fa) {
-			case FInstance(_, params, _): [for (p in params) tl.sig(p)];
+			case FInstance(_, params, _): g.types.classArgs(c, params);
 			case _: [for (_ in c.params) LObject];
 		}
 	}
@@ -299,7 +299,7 @@ class TexprCalls {
 
 	// A native array's Length: ldlen, then the native int as an Int.
 	function nativeLength(ret:Ret, obj:TExpr):Void {
-		tl.texpr(RValue(tl.sig(obj.type)), obj);
+		tl.texpr(RValue(vectorSig(obj)), obj);
 		code.op(IlOps.LDLEN, 1, 1);
 		code.op(IlOps.CONV_I4, 1, 1);
 		tl.coerce(LInt32, ret);
@@ -431,7 +431,7 @@ class TexprCalls {
 				if (TypeFunctions.hasClassFlag(target.c, CAbstract)) throw new Unsupported("Type.createEmptyInstance of an abstract class", false);
 				g.types.checkKept(TClassDecl(target.c));
 				var plan = g.planOf.get(target.c);
-				var owner = DotnetCtx.instanceOf(plan, [for (p in target.params) tl.sig(p)]);
+				var owner = DotnetCtx.instanceOf(plan, g.types.classArgs(target.c, target.params));
 				var token = plan.classParams.length == 0 ? plan.emptyCtor.token : g.mb.memberRef(g.typeTokenOf(owner), ".ctor",
 					g.sigs.method(true, LVoid, plan.emptyCtor.args, 0));
 				code.ldcI4(0);
@@ -825,7 +825,7 @@ class TexprCalls {
 			if (!TypeFunctions.isPhysicalField(cf)) throw new Unsupported("this kind of field access", false);
 			throw "internal error: no field " + Globals.sTypePath(c.path) + "." + cf.name;
 		}
-		var inst = [for (t in tl.ownerArgs(c, params, plan)) tl.sig(t)];
+		var inst = g.types.classArgs(plan.c, tl.ownerArgs(c, params, plan));
 		var owner = DotnetCtx.instanceOf(plan, inst);
 		return {token: g.memberOf(plan, owner, cf), sig: DotnetTypes.substitute(g.fieldSigs.get(cf), inst, []), owner: owner};
 	}
@@ -847,7 +847,7 @@ class TexprCalls {
 	function methodRef(plan:ClassPlan, owner:IlSigNorm, inst:Array<IlSigNorm>, target:TClassField, declared:T,
 			calleeType:T):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm} {
 		var token = g.memberOf(plan, owner, target);
-		var margs = [for (t in DotnetTypes.inferParams(target.params, declared, calleeType, false)) tl.sig(t)];
+		var margs = [for (t in DotnetTypes.inferParams(target.params, declared, calleeType, false)) g.types.typeArg(t)];
 		if (margs.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec(margs));
 		var m = g.methodSigs.get(target);
 		return {
@@ -864,7 +864,7 @@ class TexprCalls {
 		var plan = g.ownerOf.get(target);
 		if (plan == null || !g.methodTokens.exists(target)) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
 		var hxArgs = tl.ownerArgs(c, params, plan);
-		var inst = [for (t in hxArgs) tl.sig(t)];
+		var inst = g.types.classArgs(plan.c, hxArgs);
 		var owner = DotnetCtx.instanceOf(plan, inst);
 		var declared = plan.c == null ? target.type : TypeFunctions.applyParams(plan.c.params, hxArgs, target.type);
 		var m = methodRef(plan, owner, inst, target, declared, calleeType);
@@ -884,7 +884,7 @@ class TexprCalls {
 				case FInstance(_, params, _): TypeFunctions.applyParams(c.params, params, cf.type);
 				case _: cf.type;
 			}
-			margs = [for (t in DotnetTypes.inferParams(cf.params, declared, calleeType, false)) tl.sig(t)];
+			margs = [for (t in DotnetTypes.inferParams(cf.params, declared, calleeType, false)) g.types.nativeArg(t)];
 		}
 		var inst = instantiation(c, fa);
 		var parent = ExternMembers.subst(m.parent, inst);
@@ -917,7 +917,7 @@ class TexprCalls {
 		if (r == null) throw "internal error: no constructor of " + Globals.sTypePath(c.path) + " fits";
 		if (r.c != c) throw new Unsupported("inherited .NET constructors", true);
 		var m = g.externs.method(c, r.cf);
-		var parent = ExternMembers.subst(m.parent, [for (p in params) tl.sig(p)]);
+		var parent = ExternMembers.subst(m.parent, g.types.classArgs(c, params));
 		var parentArgs = switch (parent) {
 			case LClass(_, l) | LValueType(_, l): l;
 			case _: [];
@@ -936,7 +936,7 @@ class TexprCalls {
 		g.types.checkKept(TClassDecl(c));
 		var plan = g.planOf.get(c);
 		if (plan == null) throw "internal error: no plan for " + Globals.sTypePath(c.path);
-		var inst = [for (p in params) tl.sig(p)];
+		var inst = g.types.classArgs(c, params);
 		var owner = DotnetCtx.instanceOf(plan, inst);
 		var m:Null<MethodPlan> = null;
 		if (plan.ctors != null) {
@@ -972,7 +972,7 @@ class TexprCalls {
 			var r = OverloadResolution.maybeResolveConstructorOverload(s.c, s.params, args);
 			if (r == null) throw "internal error: no constructor of " + Globals.sTypePath(s.c.path) + " fits";
 			var stat = TclassToIl.ctorOf(plan, r.cf).stat;
-			var margs = [for (p in s.params) tl.sig(p)];
+			var margs = g.types.classArgs(s.c, s.params);
 			code.ldarg(0);
 			pushArgs(args, [for (i in 1...stat.args.length) DotnetTypes.substitute(stat.args[i], [], margs)]);
 			code.opToken(IlOps.CALL, TclassToIl.staticCtorRef(g, plan, stat, margs), args.length + 1, 0);
@@ -1070,9 +1070,22 @@ class TexprCalls {
 		return haxeMethod(a.c, a.params, cf, [], cf.type);
 	}
 
+	// The type of the native array `e` as it is read. A variable of a generic Haxe class holds the array
+	// of its erased instantiation, whatever the access's Haxe type says: Array<C>'s __a, inlined from
+	// hxcs's Array, is an object[], whose elements convert as they are read, as in gencs's C#.
+	function vectorSig(e:TExpr):IlSigNorm {
+		switch (strip(e).expr) {
+			case TField(_, FInstance(c, params, cf)) if (!isExtern(c) && cf.kind.match(Var(_))):
+				var s = try instanceField(c, params, cf).sig catch (_:Unsupported) null;
+				if (s != null && s.match(LVector(_))) return s;
+			case _:
+		}
+		return tl.sig(e.type);
+	}
+
 	// Pushes a native array and an index into it; returns the element type.
 	function pushArrayAndIndex(e1:TExpr, e2:TExpr):IlSigNorm {
-		var vec = tl.sig(e1.type);
+		var vec = vectorSig(e1);
 		tl.texpr(RValue(vec), e1);
 		tl.nullOperand(RValue(indexSig(e2)), e2, false);
 		return vectorElement(vec);
@@ -1113,7 +1126,7 @@ class TexprCalls {
 		if (a == null) throw new Unsupported("array literals", true);
 		g.types.checkKept(TClassDecl(a.c));
 		var plan = g.planOf.get(a.c);
-		var elem = tl.sig(a.params[0]);
+		var elem = g.types.classArgs(a.c, a.params)[0];
 		var owner = DotnetCtx.instanceOf(plan, [elem]);
 		var ctor = null;
 		for (m in plan.methods) if (m.name == ".ctor" && m.args.length == 1 && IlPaths.sigEq(m.args[0], LVector(LTypeParam(0)))) ctor = m;

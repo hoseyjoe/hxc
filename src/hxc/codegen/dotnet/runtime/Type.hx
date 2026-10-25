@@ -333,11 +333,9 @@ enum ValueType {
 
 	public static function allEnums<T>(e:Enum<T>):Array<T> {
 		var ctors = getEnumConstructs(e);
-		var ret:Array<T> = [];
+		var ret = [];
 		for (ctor in ctors) {
-			// hxc: tested before the cast to T. gencs instantiates T as object, hxc as the enum class, which
-			// a constructor's closure would not cast to.
-			var v:Dynamic = Reflect.field(e, ctor);
+			var v = Reflect.field(e, ctor);
 			if (Std.isOfType(v, e))
 				ret.push(v);
 		}
