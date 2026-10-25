@@ -142,10 +142,15 @@ The Serializer still differs from gencs where a generic class is involved, becau
 erase type arguments as gencs does: `Type.resolveClass` cannot find a generic class by name, so
 `Array` as a value (`Ay5:Array`) and instances of a generic class such as `Box<T>` cannot be read
 back, and a value whose instantiation is not the one the Serializer's code names (a
-`Map<String, Int>` to write, or an `Array<Null<Int>>` field to read into) fails to convert. A class's or a
-generic method's type parameter that holds `Null<Int>`, `Null<Float>` or `Null<Bool>` (an
-`Array<Null<Int>>`, a `Box<Null<Int>>`, `Lambda.exists` over an `Array<Null<Int>>`) reaches
-`Dynamic`, reflection, string concatenation and the Serializer as gencs's boxed value or `null`.
+`Map<String, Int>` to write, or an `Array<Null<Int>>` field to read into) fails to convert. A
+class's or a generic method's type parameter that holds `Null<Int>`, `Null<Float>` or `Null<Bool>`
+(an `Array<Null<Int>>`, a `Box<Null<Int>>`, `Lambda.exists` over an `Array<Null<Int>>`) reaches
+`Dynamic`, reflection, string concatenation and the Serializer as gencs's boxed value or `null`. A
+generic method's type parameter met first inside a declared `Null<T>` (a `Null<T>` return such as
+`Lambda.find`'s, which binds before the arguments, or an earlier `Null<T>` or optional argument) is
+bound to the basic type instead, as gencs binds it, so a null `Null<Int>` passed there becomes 0 as
+it does under gencs; with an `Array<Null<Int>>` argument that needs a cast between instantiations,
+which is not supported yet.
 
 Constructs not supported yet are compile errors in user code (`dotnet: ... not supported yet`). The
 list is not complete; among others it has assignments to `Dynamic` array elements, `return`, `break`
