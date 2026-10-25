@@ -202,8 +202,10 @@ write through it converts or throws inside the typed storage.
 
 The copy itself has details that data can see. `genericCast` into `Int` goes through
 `IConvertible.ToInt32`, which rounds half to even (`0.5` → `0`, `1.5` → `2`, `2.5` → `2`) and
-throws for strings, huge values and mismatched types; into `Int64` it truncates. A `null` element is
-skipped and stays `default(T)` (`0`, `0.0`, `false`). The map and `List` copy has a bug: `hashes`,
+converts numeric strings (`"7"` → `7`) and `Bool`s, throws `FormatException` for other strings
+(`"1.5"`, `"ab"`), `OverflowException` for `NaN` and values out of range, and `NullReferenceException`
+for an object, a `Date` or an enum value; into `Int64` it truncates. A `null` element is skipped and
+stays `default(T)` (`0`, `0.0`, `false`). The map and `List` copy has a bug: `hashes`,
 `_keys` and `flags` are shared with the original, so a `set` through the copy makes its key appear in
 the original with a `null` value, and serializing the original then writes it. A `List` copies its
 node chain twice, so an `add` on the copy is lost from both. gencs also skips the cast in two places
@@ -262,7 +264,9 @@ each class parameter `Tk`, `bk` is `Pj_c` for the first `j` with `aj = Tk`, and 
 `aj` is `Tk`. So `Thenable_cast<T_c>()` calls `FallbackPromise_cast<T_c>()`, and `Perm<X,Y>
 implements I2<Y,X>` calls `Perm_cast<B_c, A_c>()`. When two `Pj_c` for one `Tk` would differ
 (`Both<T> implements I2<T,T>` cast to `I2<Int,String>`), no instance can satisfy the cast and the
-`castclass` throws, as gencs's does. This is a deliberate divergence like #8314.
+`castclass` throws, as gencs's does. When the parent doesn't mention a class parameter `Tk`
+(`Fixed<T> implements I1<Int>`), `Tk` stays itself, so the body is still `this.Fixed_cast<T>()` and
+the cast returns `this`, as gencs's does. This is a deliberate divergence like #8314.
 
 *The #8314 forward.* The design is the one Nicolas Cannasse described in #4872, which HashLink
 implements (`hl.types.ArrayDyn`): an ``Array`1<object>`` is untyped until its first cast to a typed
