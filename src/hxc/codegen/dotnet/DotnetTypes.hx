@@ -284,9 +284,9 @@ class DotnetTypes {
 	// argument or a return, T binds Int (gencs's `wrap<int>(nn.@value)` for `wrap<T>(x:T):Null<T>`, where
 	// a null becomes 0, an hxcs bug kept); inside a function-typed argument's own arguments, Null<Int>
 	// (`cbn<object>` for `cbn<T>(f:Null<T>->Bool, x:T)`); inside a type argument, one Null level per side
-	// (`retNullArr<object>` for `retNullArr<T>(x:T):Array<Null<T>>`).
-	public static function inferParams(params:TypeParams, declared:T, actual:T, localFunction:Bool):Array<T> {
-		var bound:Array<Null<T>> = [for (_ in params) null];
+	// (`retNullArr<object>` for `retNullArr<T>(x:T):Array<Null<T>>`). What `given` binds already stays.
+	public static function inferParams(params:TypeParams, declared:T, actual:T, localFunction:Bool, ?given:Array<Null<T>>):Array<T> {
+		var bound:Array<Null<T>> = given != null ? given.copy() : [for (_ in params) null];
 		function indexOf(c:TClass):Int {
 			for (i in 0...params.length) if (isParam(params[i], c)) return i;
 			return -1;

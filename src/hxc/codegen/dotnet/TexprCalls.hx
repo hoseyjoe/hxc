@@ -463,7 +463,7 @@ class TexprCalls {
 				var target = pickOverload(c, [], cf, args, true);
 				var plan = g.ownerOf.get(target);
 				if (plan == null || !g.methodTokens.exists(target)) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
-				var m = methodRef(plan, staticOwner(plan), [], target, target.type, callee.type);
+				var m = methodRef(plan, staticOwner(plan), [], target, target.type, callee.type, receiverArgs(c, target, args));
 				pushArgs(args, m.args);
 				code.opToken(IlOps.CALL, m.token, args.length, m.ret.match(LVoid) ? 0 : 1);
 				tl.coerce(m.ret, ret);
@@ -843,11 +843,11 @@ class TexprCalls {
 
 	// A method's token as a call reaches it, with a MethodSpec for a generic method, and its argument
 	// and return types there. `declared` is the method's type with the class's type arguments applied;
-	// the call's `calleeType` gives the method's own.
+	// the call's `calleeType` gives the method's own, those `given` binds aside.
 	function methodRef(plan:ClassPlan, owner:IlSigNorm, inst:Array<IlSigNorm>, target:TClassField, declared:T,
-			calleeType:T):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm} {
+			calleeType:T, ?given:Array<Null<T>>):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm} {
 		var token = g.memberOf(plan, owner, target);
-		var margs = [for (t in DotnetTypes.inferParams(target.params, declared, calleeType, false)) g.types.typeArg(t)];
+		var margs = [for (t in DotnetTypes.inferParams(target.params, declared, calleeType, false, given)) g.types.typeArg(t)];
 		if (margs.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec(margs));
 		var m = g.methodSigs.get(target);
 		return {
@@ -855,6 +855,27 @@ class TexprCalls {
 			args: [for (a in m.args) DotnetTypes.substitute(a, inst, margs)],
 			ret: DotnetTypes.substitute(m.ret, inst, margs)
 		};
+	}
+
+	// What a call of an abstract's member method `cf` binds of its type parameters before the call's
+	// types do: the abstract's own, which come last (GenerateDotnet.addAbstractParams), from the receiver,
+	// the first argument. `listInts().then(f)` with a Pr<Int> receiver is `then<R,int>`. hxc's typer
+	// types the call of an implicit member `@:to` cast without the abstract's type arguments applied, so
+	// the call's type cannot give them there; Haxe's applies them, and gencs has `toArr<int>`. Null where
+	// the receiver is not of the abstract's type (`this1` inside the abstract), which the call's types
+	// then bind.
+	static function receiverArgs(c:TClass, cf:TClassField, args:Array<TExpr>):Null<Array<Null<T>>> {
+		var a = switch (c.kind) {
+			case KAbstractImpl(a) if (a.params.length > 0 && args.length > 0 && GenerateDotnet.isAbstractMember(cf)): a;
+			case _: return null;
+		}
+		var first = cf.params.length - a.params.length;
+		if (first < 0 || cf.params[first] != a.params[0]) return null;
+		return switch (TypeFunctions.follow(args[0].type)) {
+			case TAbstract(a2, tl) if (a2 == a && tl.length == a.params.length):
+				[for (i in 0...cf.params.length) i < first || TypeFunctions.follow(tl[i - first]).match(TMono(_)) ? null : tl[i - first]];
+			case _: null;
+		}
 	}
 
 	// A Haxe class's instance method, the overload the call reaches.

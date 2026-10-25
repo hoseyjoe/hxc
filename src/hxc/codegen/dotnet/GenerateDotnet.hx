@@ -387,6 +387,7 @@ class GenerateDotnet {
 				case _:
 			}
 		}
+		for (c in candidates) addAbstractParams(c);
 		// Local functions become classes of their own, declared like any other.
 		for (c in ClosuresToClass.run(g, candidates)) candidates.push(c);
 
@@ -503,6 +504,29 @@ class GenerateDotnet {
 			var ef = e.constrs.get(name);
 			var f = mb.field(token, FieldAttrs.PUBLIC | FieldAttrs.STATIC | FieldAttrs.LITERAL | FieldAttrs.HAS_DEFAULT, name, self);
 			mb.constant(f, IInt(ef.index));
+		}
+	}
+
+	// gencommon's AbstractImplementationFix: an abstract's constructor and its member methods are generic
+	// over the abstract's type parameters as well, after their own: `Pr<T>`'s `then<R>` is
+	// `Pr_Impl_.then<R,T>(Th<T> this1, …)`. Its static methods are left as they are. A second generation
+	// over the same types finds them added already.
+	static function addAbstractParams(c:TClass):Void {
+		var a = switch (c.kind) {
+			case KAbstractImpl(a) if (a.params.length > 0): a;
+			case _: return;
+		}
+		for (cf in c.orderedStatics)
+			if ((cf.name == "_new" || isAbstractMember(cf)) && cf.params.indexOf(a.params[0]) < 0) cf.params = cf.params.concat(a.params);
+	}
+
+	// Whether `cf`, a static of an abstract's implementation class, is one of the abstract's member
+	// methods: it takes `this` first.
+	public static function isAbstractMember(cf:TClassField):Bool {
+		if (!TypeFunctions.hasClassFieldFlag(cf, CfImpl)) return false;
+		return switch (cf.expr) {
+			case {expr: TFunction(tf)} if (tf.args.length > 0): TypeFunctions.hasMeta(":this", tf.args[0].v.meta);
+			case _: false;
 		}
 	}
 

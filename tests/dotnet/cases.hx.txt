@@ -9329,3 +9329,52 @@ class P {
 	}
 }
 ===
+--- abstract-impl-type-parameters @gencs
+// An abstract's constructor and member methods are its implementation's statics, generic over their
+// own type parameters and then the abstract's, Pr_Impl_.then<R,T>(Th<T> this1, …): a call binds the
+// abstract's T from the receiver, as gencs's then<object,int>((Th<int>) listInts()), the implicit
+// @:to cast's toArr<int> too. Ds is shaped like haxeui's DataSource: a generic @:from static and a
+// function-typed T (each<object>).
+interface Th<T> { function then<R>(f:T->R):Th<R>; }
+class FP<T> implements Th<T> {
+	var v:T;
+	public function new(v:T) this.v = v;
+	public function then<R>(f:T->R):Th<R> return new FP<R>(f(v));
+}
+abstract Pr<T>(Th<T>) from Th<T> to Th<T> {
+	public function then<R>(f:T->R):Pr<R> return this.then(f);
+}
+abstract Ds<T>(Th<T>) from Th<T> {
+	@:from static function fromValue<T>(v:T):Ds<T> return new FP(v);
+	public function each(f:T->Void):Void this.then(x -> { f(x); return null; });
+}
+abstract Bx<T>(Th<T>) {
+	public function new(x:Th<T>) this = x;
+	public function wrap():Array<T> return [];
+	@:to public function toArr():Array<T> return [];
+	@:op(A + B) public function add(o:Bx<T>):Bx<T> return new Bx(this);
+	public function later():Void->Array<T> return () -> new Array<T>();
+	public function count():Int return wrap().length + 1;
+}
+class Folder { public var id:String; public function new(id) this.id = id; }
+class P {
+	static function listFolders():Pr<Array<Folder>> return new FP([new Folder("a")]);
+	static function listInts():Pr<Int> return new FP(1);
+	static function main() {
+		listInts().then(x -> { Sys.println(x); return null; });
+		listFolders().then(l -> { Sys.println(l[0].id); return null; });
+		listFolders().then(l -> { Sys.println(l.length); return 1; });
+		var d:Ds<Int->Int> = (x -> x + 1);
+		d.each(g -> Sys.println(g(2)));
+		var b = new Bx(new FP(1));
+		Sys.println(Type.getClass(b.wrap()));
+		var a:Array<Int> = b;
+		Sys.println(Type.getClass(a));
+		Sys.println(Type.getClass((b + b).wrap()));
+		Sys.println(Type.getClass(b.later()()));
+		Sys.println(b.count());
+		var bs = new Bx(new FP("s"));
+		Sys.println(Type.getClass(bs.wrap()));
+	}
+}
+===
