@@ -7,6 +7,7 @@ import hxc.core.TexprTools;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
 import hxc.core.TypeUnification;
+import hxc.codegen.dotnet.CompanionToIl;
 import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.EnumToIl;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
@@ -44,6 +45,10 @@ enum MethodKind {
 	MEnum(e:TEnum, member:EnumMember);
 	// An interface method the class implements with a method of other types (InterfaceBridge).
 	MInterfaceBridge(b:InterfaceBridge);
+	// One of the cast members of an hxgeneric class or its companion (CompanionToIl).
+	MCast(c:TClass, body:CastBody);
+	// A member of a class's companion interface, which has no body.
+	MCompanionMember;
 }
 
 // How an override takes the slot of the method it overrides, as gencs's FixOverrides fixes one whose
@@ -161,15 +166,15 @@ class FieldAttrs {
 
 // A Haxe class as a TypeDef with its fields and methods. Every member is public, as gencs makes
 // them. Members come as instance fields, static fields, .ctor (for a class in gencs's model the
-// EmptyObject one first), instance methods, ToString, the static constructors, static methods, each
-// in declaration order, then Main() and .cctor.
+// EmptyObject one first), the cast members of a generic class (CompanionToIl), instance methods,
+// ToString, the static constructors, static methods, each in declaration order, then Main() and .cctor.
 
 class TclassToIl {
 	static final objectPath:IlPath = {ns: ["System"], nested: [], name: "Object"};
 	static final valueTypePath:IlPath = {ns: ["System"], nested: [], name: "ValueType"};
 	static inline final initFlagName = "__hx_init_called";
 
-	static function functionSig(g:DotnetCtx, t:T):{args:Array<IlSigNorm>, names:Array<String>, ret:IlSigNorm} {
+	public static function functionSig(g:DotnetCtx, t:T):{args:Array<IlSigNorm>, names:Array<String>, ret:IlSigNorm} {
 		return switch (TypeFunctions.follow(t)) {
 			case TFun(sig): {
 					args: [for (a in sig.args) g.types.argSig(a.t, a.opt)],
@@ -265,6 +270,8 @@ class TclassToIl {
 			for (f in [cf].concat(cf.overloads)) try {
 				var isAbstract = isInterface || TypeFunctions.hasClassFieldFlag(f, CfAbstract);
 				if (f.expr == null && !isAbstract) continue;
+				// A generic interface's method that mentions no type parameter is its companion's.
+				if (isInterface && CompanionToIl.isMember(g, c, f)) continue;
 				var sig = g.types.withParams(c.params, f.params, () -> functionSig(g, f.type));
 				if (isCtor && isStruct && sig.args.length == 0) {
 					// As in gencs, a struct's constructor without arguments is the default one; it must be empty.
@@ -276,7 +283,7 @@ class TclassToIl {
 				var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG;
 				if (isStatic) flags |= MethodAttrs.STATIC;
 				else if (isCtor) flags |= MethodAttrs.SPECIAL_NAME | MethodAttrs.RT_SPECIAL_NAME;
-				else flags |= virtuality(c, f, isStruct, implementing.exists(f), !shape.match(OOverload(_)));
+				else flags |= virtuality(c, f, isStruct, implementing.exists(f) || CompanionToIl.isMember(g, c, f), !shape.match(OOverload(_)));
 				var name = isCtor ? ".ctor" : DotnetNames.fieldName(c, f.name);
 				var generics = [for (p in f.params) p.name];
 				if (!shape.match(OSame) && TypeFunctions.hasClassFieldFlag(f, CfAbstract))
@@ -391,6 +398,7 @@ class TclassToIl {
 			checkParameterlessBase(g, c);
 			methods.push(implicitCtor(c.pos, TypeFunctions.hasClassFlag(c, CAbstract)));
 		}
+		for (m in CompanionToIl.castMethods(g, c)) methods.push(m);
 		// gencs adds each bridge in front of the class's fields, so the last one made comes first.
 		if (impls != null) for (b in impls.bridges) {
 			if (isStruct) throw new Unsupported("interface methods implemented with other types", true);
@@ -456,7 +464,7 @@ class TclassToIl {
 			path: DotnetNames.typePath(TClassDecl(c)),
 			flags: flags,
 			superSig: superSig,
-			interfaces: [for (i in interfaces) i.sig],
+			interfaces: CompanionToIl.addInterfaces(g, c, [for (i in interfaces) i.c], [for (i in interfaces) i.sig]),
 			fields: fields,
 			methods: methods,
 			classParams: c.params,
@@ -857,7 +865,7 @@ class TclassToIl {
 		};
 	}
 
-	static function implicitCtor(pos:Position, isAbstract:Bool):MethodPlan {
+	public static function implicitCtor(pos:Position, isAbstract:Bool):MethodPlan {
 		return {
 			kind: MImplicitCtor,
 			name: ".ctor",
@@ -978,6 +986,8 @@ class TclassToIl {
 			case MBridge(cf): cf.name;
 			case MEnum(_, member): EnumToIl.label(member);
 			case MInterfaceBridge(b): b.im.name;
+			case MCast(_, _): m.name;
+			case MCompanionMember: m.name;
 		}
 	}
 
@@ -1221,7 +1231,10 @@ class TclassToIl {
 			lower.convert(ret, m.ret);
 			code.op(IlOps.RET, 1, 0);
 		}
-		var decl = b.iface.c.params.length == 0 ? im.token : g.mb.memberRef(g.typeTokenOf(b.iface.sig), im.name, g.sigs.method(true, im.ret, im.args, 0));
+		// A method a generic interface's companion declares is no member of the interface's instantiation.
+		var imOwner = g.ownerOf.get(b.im);
+		var decl = if (b.iface.c.params.length == 0 || imOwner != null && imOwner.classParams.length == 0) im.token;
+			else g.mb.memberRef(g.typeTokenOf(b.iface.sig), im.name, g.sigs.method(true, im.ret, im.args, 0));
 		g.mb.methodImpl(plan.token, m.token, decl);
 	}
 
@@ -1348,6 +1361,10 @@ class TclassToIl {
 					g.types.inParams(plan.classParams, cf.params, () -> bridgeBody(g, plan, m, cf, code, lower));
 				case MInterfaceBridge(b):
 					interfaceBridgeBody(g, plan, m, b, code, lower);
+				case MCast(c, body):
+					CompanionToIl.emitCast(g, plan, m, c, body, code);
+				case MCompanionMember:
+					throw "internal error: a companion member with a body";
 				case MEntryPoint:
 					var boot = g.bootInit();
 					if (boot != null) code.opToken(IlOps.CALL, boot, 0, 0);

@@ -124,7 +124,7 @@ class HxGeneric {
 	}
 
 	// has_type_params: whether a type parameter occurs in `t`, through type arguments and function types.
-	static function hasTypeParams(t:T):Bool {
+	public static function hasTypeParams(t:T):Bool {
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, _) if (c.kind.match(KTypeParameter(_))): true;
 			case TInst(_, l) | TEnum(_, l) | TAbstract(_, l):

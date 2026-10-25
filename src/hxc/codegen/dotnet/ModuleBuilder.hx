@@ -98,6 +98,12 @@ class ModuleBuilder {
 		tables.methodImpl.push([row(typeDefToken), coded(T.IMethodDefOrRef, body), coded(T.IMethodDefOrRef, declaration)]);
 	}
 
+	// A CustomAttribute row on `parent` (a TypeDef, MethodDef, ... token): the attribute's constructor
+	// (a MethodDef or MemberRef token) and its value blob. The table is sorted when it is written.
+	public function customAttribute(parent:Int, ctor:Int, value:Bytes):Void {
+		tables.customAttribute.push([coded(T.IHasCustomAttribute, parent), coded(T.ICustomAttributeType, ctor), heaps.blobs.add(value)]);
+	}
+
 	public function field(owner:Int, flags:Int, name:String, sig:Bytes):Int {
 		tables.field.push([flags, heaps.strings.add(name), heaps.blobs.add(sig)]);
 		fieldOwners.push(row(owner));

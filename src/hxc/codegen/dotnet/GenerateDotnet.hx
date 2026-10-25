@@ -6,6 +6,7 @@ import hxc.context.Context;
 import hxc.core.Globals;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.codegen.dotnet.CompanionToIl;
 import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.EnumToIl;
 import hxc.codegen.dotnet.IlData;
@@ -47,6 +48,11 @@ class DotnetCtx {
 	public final closureOwners = new ObjectMap<TClass, TClass>();
 	// What HxGeneric found for each generic class it analysed.
 	public final hxGenericClasses = new ObjectMap<TClass, Bool>();
+	// CompanionToIl's plans: each hxgeneric class's or interface's companion interface, an interface's
+	// `__Statics_` class, and the classes with a companion in the order they were declared.
+	public final companionPlans = new ObjectMap<TClass, ClassPlan>();
+	public final staticsPlans = new ObjectMap<TClass, ClassPlan>();
+	public var companionOrder:Array<TClass> = [];
 	final closureClasses:Array<TClass> = [];
 
 	final stdRoots:Array<String>;
@@ -145,6 +151,18 @@ class DotnetCtx {
 		return mb.memberRef(typeTokenOf(owner), DotnetNames.fieldName(plan.c, cf.name), sigs.field(fieldSigs.get(cf)));
 	}
 
+	// The companion interface of the hxgeneric class or interface `c` (CompanionToIl).
+	public function companionOf(c:TClass):IlSigNorm {
+		return CompanionToIl.companionSig(c);
+	}
+
+	// The token of the hxgeneric class's or interface's static `__hx_cast<T_c_c…>(X me):object`, on the
+	// class's instantiation with object for each parameter, or for an interface on its `__Statics_`
+	// class; a MethodSpec of it gives the type arguments.
+	public function castHelperOf(c:TClass):Int {
+		return CompanionToIl.castHelperOf(this, c);
+	}
+
 	// The type of `plan`'s class with these type arguments.
 	public static function instanceOf(plan:ClassPlan, args:Array<IlSigNorm>):IlSigNorm {
 		if (plan.classParams.length == 0) return plan.thisSig;
@@ -201,6 +219,8 @@ class DotnetCtx {
 			return try types.withParams(c.params, [], () -> types.toSig(t)) catch (_:Unsupported) null;
 		}
 		function reaches(c:TClass, args:Array<IlSigNorm>):Bool {
+			// Every instantiation of an hxgeneric class or interface is its companion.
+			if (CompanionToIl.hasCompanion(this, c) && IlPaths.sigEq(CompanionToIl.companionSig(c), to)) return true;
 			var s = open(c, TInst(c, TypeFunctions.extractParamTypes(c.params)));
 			if (s == null) return false;
 			if (IlPaths.sigEq(DotnetTypes.substitute(s, args, []), to)) return true;
@@ -433,6 +453,9 @@ class GenerateDotnet {
 			// A class left out in the last round must not stay planned for the classes that refer to it.
 			g.planOf.clear();
 			g.enumPlans.clear();
+			g.companionPlans.clear();
+			g.staticsPlans.clear();
+			g.companionOrder = [];
 			// Enums first, so the classes that refer to one see whether it was left out.
 			for (e in hxEnums) {
 				var mt = TEnumDecl(e);
@@ -449,6 +472,7 @@ class GenerateDotnet {
 				if (g.types.leftOut.exists(DotnetTypes.haxePath(mt))) continue;
 				try {
 					TclassToIl.declare(g, c);
+					CompanionToIl.declare(g, c);
 				} catch (u:Unsupported) {
 					leaveOut(g, mt, c.pos, u);
 					changed = true;
@@ -466,6 +490,7 @@ class GenerateDotnet {
 		// CLR enums come after the classes, their fields after the classes' fields.
 		var enumTokens = [for (e in enums) mb.typeDef(TypeAttrs.PUBLIC | TypeAttrs.SEALED, DotnetNames.typePath(TEnumDecl(e)))];
 		for (p in plans) TclassToIl.write(g, p);
+		for (c in g.companionOrder) CompanionToIl.emit(g, c);
 		EnumToIl.written(g);
 		for (i in 0...enums.length) writeEnum(g, enums[i], enumTokens[i]);
 		// GenericParam rows go in owner order, a TypeDef's before its methods'.
