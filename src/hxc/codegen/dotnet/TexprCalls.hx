@@ -1003,6 +1003,14 @@ class TexprCalls {
 			// new NativeArray<T>(n): newarr.
 			if (args.length != 1) throw "internal error: NativeArray takes one argument";
 			var elem = tl.sig(params[0]);
+			// Where the array becomes an erased instantiation's storage, as hxcs's inlined Array.alloc makes
+			// it for map (`new Array<object>((object[]) new object[n])` in gencs's C#), it is an object[]:
+			// gencs erases the inlined method's type parameter there. A NativeArray<C> made for itself stays
+			// a C[].
+			switch (ret) {
+				case RValue(LVector(LObject)) if (!elem.match(LObject)): elem = LObject;
+				case _:
+			}
 			tl.texpr(RValue(LInt32), args[0]);
 			code.opToken(IlOps.NEWARR, g.typeTokenOf(elem), 1, 1);
 			tl.coerce(LVector(elem), ret);

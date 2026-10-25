@@ -496,8 +496,19 @@ class TclassToIl {
 		return r;
 	}
 
-	// A method's CLR name and signature, in terms of the class's type parameters and its own.
+	// A method's CLR signature as the instantiation of `owner` with `ownerArgs` (in terms of the class's
+	// type parameters) has it: its own signature, in terms of its class's type parameters and its own,
+	// with that instantiation's CLR type arguments put in. Erasure can make it differ from the Haxe types
+	// applied: G<C>'s `get():T` is ``G`1<object>``'s `object get()`, the slot an override takes.
 	static function methodSig(g:DotnetCtx, owner:TClass, ownerArgs:Array<T>, cf:TClassField):{args:Array<IlSigNorm>, ret:IlSigNorm} {
+		var inst = g.types.classArgs(owner, ownerArgs);
+		var f = g.types.withParams(owner.params, cf.params, () -> functionSig(g, cf.type));
+		return {args: [for (a in f.args) DotnetTypes.substitute(a, inst, [])], ret: DotnetTypes.substitute(f.ret, inst, [])};
+	}
+
+	// A method's signature with the Haxe types `ownerArgs` applied, in terms of the class's type
+	// parameters and its own.
+	static function haxeMethodSig(g:DotnetCtx, owner:TClass, ownerArgs:Array<T>, cf:TClassField):{args:Array<IlSigNorm>, ret:IlSigNorm} {
 		var f = g.types.withParams(g.types.currentClassParams(), cf.params, () -> functionSig(g, TypeFunctions.applyParams(owner.params, ownerArgs, cf.type)));
 		return {args: f.args, ret: f.ret};
 	}
@@ -553,6 +564,11 @@ class TclassToIl {
 					} else {
 						name = DotnetNames.fieldName(i.c, f.name);
 						want = methodSig(g, i.c, i.params, f);
+						// gencs implements an interface whose type arguments erasure changes (`IQ<C>` is
+						// ``IQ`1<object>``) with overloads of the interface's signature, plan 3c.
+						if (!sameSig(want, haxeMethodSig(g, i.c, i.params, f)))
+							throw new Unsupported("implementations of generic interfaces whose type arguments are erased (" + DotnetTypes.haxePath(TClassDecl(i.c))
+								+ "." + f.name + ")", true);
 					}
 					var other = findImplementation(g, c, f.name, name, want, own);
 					if (other == null) continue;

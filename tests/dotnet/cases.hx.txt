@@ -9166,6 +9166,8 @@ True
 --- generic-subclass-construction @gencs
 // Review focus 4: generic subclasses after erasure, each built through gencs's __hx_ctor__G<T_c> helper
 // with its own type arguments (G<object>.__hx_ctor__G<U_c>, <int>, <object>), field initializers included.
+// Overrides in a subclass of an erased instantiation take the base's CLR slot (SubC's `object get()`,
+// `set(object __temp_x1)`), as gencs's FixOverrides gives them, and so does a BalancedTree compare.
 class C {
 	public var n:Int;
 	public function new(n:Int) this.n = n;
@@ -9180,6 +9182,8 @@ class G<T> {
 		this.v = v;
 		seen.push(v);
 	}
+	public function get():T return v;
+	public function set(x:T):Void v = x;
 }
 class Sub<U> extends G<U> {
 	public var extra:Array<U> = [];
@@ -9188,14 +9192,32 @@ class Sub<U> extends G<U> {
 		super(u);
 		extra.push(u);
 	}
+	override public function get():U return extra[0];
+	override public function set(x:U):Void {
+		extra.push(x);
+		super.set(x);
+	}
 }
 class SubI extends G<Int> {
 	public var z:Int = 3;
 	public function new(x:Int) super(x + 1);
+	override public function get():Int return v * 100;
+	override public function set(x:Int):Void v = x + 1000;
 }
 class SubC extends G<C> {
 	public var w:String = "w";
 	public function new(c:C) super(c);
+	override public function get():C return new C(v.n * 10);
+	override public function set(x:C):Void v = new C(x.n + 100);
+}
+class Key {
+	public var id:Int;
+	public function new(id:Int) this.id = id;
+	public function toString() return "K" + id;
+}
+class KeyTree extends haxe.ds.BalancedTree<Key, String> {
+	public function new() super();
+	override function compare(k1:Key, k2:Key):Int return k1.id - k2.id;
 }
 class P {
 	static function show(label:String, x:Dynamic) {
@@ -9227,6 +9249,83 @@ class P {
 		var gi:G<Int> = i;
 		var gc:G<C> = c;
 		Sys.println(gi.v + " " + gc.v.n);
+		// Overrides, called directly, through the base instantiation and through Dynamic.
+		Sys.println(gc.get().n + " " + c.get().n);
+		gc.set(new C(1));
+		Sys.println(c.v.n + " " + gc.get().n);
+		var dc:Dynamic = c;
+		dc.set(new C(2));
+		Sys.println(dc.get().n + " " + c.v.n);
+		Sys.println(gi.get() + " " + i.get());
+		gi.set(6);
+		Sys.println(i.v + " " + gi.get());
+		var gsc:G<C> = sc;
+		gsc.set(new C(9));
+		Sys.println(gsc.get() + " " + sc.v + " " + sc.extra);
+		var gsi:G<Int> = si;
+		gsi.set(8);
+		var dsi:Dynamic = si;
+		dsi.set(7);
+		Sys.println(gsi.get() + " " + si.v + " " + si.extra + " " + dsi.get());
+		var t = new KeyTree();
+		t.set(new Key(3), "c");
+		t.set(new Key(1), "a");
+		t.set(new Key(2), "b");
+		t.set(new Key(1), "A");
+		Sys.println(t.get(new Key(1)));
+		Sys.println(t.get(new Key(2)));
+		Sys.println(t.exists(new Key(4)) + " " + [for (k in t.keys()) k.id]);
+		var bt:haxe.ds.BalancedTree<Key, String> = t;
+		Sys.println(bt.get(new Key(3)));
+		Sys.println(bt.remove(new Key(3)) + " " + bt.exists(new Key(3)));
+	}
+}
+===
+--- erased-interface-implementation-refusal
+// A class implementing a generic interface whose type arguments erasure changes (IQ<C> is IQ`1<object>)
+// needs gencs's overloads of the interface's signature, plan 3c; until then it is refused, never left
+// to fail when the CLR loads the type.
+class C { public var n = 1; public function new() {} }
+interface IQ<T> { function g(x:T):Void; function h():T; }
+class Q implements IQ<C> { public function new() {} public function g(x:C):Void Sys.println(x.n); public function h():C return new C(); }
+class P {
+	static function main() {
+		var q:IQ<C> = new Q();
+		q.g(new C());
+		Sys.println(q.h().n);
+	}
+}
+===
+[compile]
+P.hx:6: characters 1-138 : dotnet: implementations of generic interfaces whose type arguments are erased (IQ.g) are not supported yet
+P.hx:9: characters 17-24 : dotnet: Q (left out: implementations of generic interfaces whose type arguments are erased (IQ.g)) is not supported yet
+--- inlined-alloc-storage @gencs
+// hxcs's inlined Array.alloc makes map's storage an object[] behind Array<object>, as gencs erases the
+// inlined method's type parameter there (`new Array<object>((object[]) new object[n])`), so other
+// values can be stored into it; a NativeArray<C> made for itself stays a C[].
+class C { public function new() {} }
+class D extends C { public function new() super(); }
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var n = new cs.NativeArray<C>(2);
+		Sys.println((cast n : cs.system.Object).GetType().ToString());
+		var a = [new C()];
+		var dd = a.map(x -> new D());
+		var ac:Array<C> = cast dd;
+		t("setC", () -> { ac[0] = new C(); ac.length; });
+		var b = a.map(x -> x);
+		var d:Dynamic = b;
+		t("dynset", () -> { d.__set(0, "s"); d.length; });
+		var any:Array<Any> = cast a.map(x -> x);
+		t("anyset", () -> { any[0] = 5; any.length; });
+		var ni:Array<Null<Int>> = [1, null];
+		var nm = ni.map(x -> x);
+		Sys.println(nm + " " + Type.getClass(nm));
+		var dn:Dynamic = nm;
+		t("nullset", () -> { dn.__set(0, "s"); dn[0]; });
 	}
 }
 ===

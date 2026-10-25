@@ -45,9 +45,8 @@ class DotnetCtx {
 	public final closureExprs = new ObjectMap<TClassField, TExpr>();
 	public final closureInits = new ObjectMap<TClass, TExpr>();
 	public final closureOwners = new ObjectMap<TClass, TClass>();
-	// What HxGeneric found for each generic class and enum it analysed.
+	// What HxGeneric found for each generic class it analysed.
 	public final hxGenericClasses = new ObjectMap<TClass, Bool>();
-	public final hxGenericEnums = new ObjectMap<TEnum, Bool>();
 	final closureClasses:Array<TClass> = [];
 
 	final stdRoots:Array<String>;
@@ -220,8 +219,9 @@ class DotnetCtx {
 		return reaches(c, args);
 	}
 
-	// The types a value of the class `from` is, through its superclasses and interfaces as Haxe declares
-	// them: `from` itself first.
+	// The Haxe-declared types a value of the class `from` is, through its superclasses and interfaces as
+	// Haxe declares them: `from` itself first. .NET types are left out: a variant .NET interface
+	// (IEnumerable_1<T>) can hold other instantiations.
 	function ancestors(from:IlSigNorm):Array<IlSigNorm> {
 		var r:Array<IlSigNorm> = [];
 		function visit(s:IlSigNorm, depth:Int) {
@@ -229,7 +229,7 @@ class DotnetCtx {
 				case LClass(p, _) | LValueType(p, _): classAt(p);
 				case _: null;
 			}
-			if (c == null || depth > 50) return;
+			if (c == null || TypeFunctions.hasClassFlag(c, CExtern) || depth > 50) return;
 			var args = switch (s) {
 				case LClass(_, l) | LValueType(_, l): l;
 				case _: [];
