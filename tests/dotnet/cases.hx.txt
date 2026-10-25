@@ -8281,3 +8281,73 @@ class P {
 	}
 }
 ===
+--- null-return-type-inference @gencs
+// gencs binds a type parameter met inside a declared Null<T> (a Null<T> return, binding first, or a
+// Null<T> or optional argument) to the basic type: Lambda.find<int>, wrap<int>(nn.@value). A null
+// Null<Int> argument then becomes 0, an hxcs bug this keeps. A plain T binds object, as before.
+class P {
+	static function wrap<T>(x:T):Null<T> return x;
+
+	static function idt<T>(x:T):T return x;
+
+	static function p2<T>(a:Null<T>, b:T):String return a + "|" + b;
+
+	static function p3<T>(b:T, a:Null<T>):String return a + "|" + b;
+
+	static function opt<T>(x:Int, ?y:T):String return x + ":" + y;
+
+	static function retFn<T>(x:T):Void->Null<T> return () -> x;
+
+	static function nullArr<T>(a:Array<Null<T>>):T return a[0];
+
+	static function two<A, B>(a:A, b:B):Null<B> return b;
+
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+
+	static function main() {
+		var g:Array<Null<Int>> = [1, null, 3];
+		var gf:Array<Null<Float>> = [null, 2.5];
+		t(() -> Lambda.find(g, v -> v != 1));
+		t(() -> Lambda.find(g, v -> v != 1) == null);
+		t(() -> Lambda.find(g, v -> v == 3));
+		t(() -> Lambda.find(g, v -> v == 9));
+		t(() -> Lambda.find(g, v -> v == 9) == null);
+		t(() -> Lambda.find(gf, v -> true));
+		t(() -> Lambda.find(gf, v -> v == null) == null);
+		t(() -> Lambda.find(gf, v -> v != null) * 2);
+		var d:Dynamic = Lambda.find(g, v -> v != 1);
+		t(() -> Type.typeof(d));
+		var nn:Null<Int> = null, n5:Null<Int> = 5;
+		t(() -> wrap(nn));
+		t(() -> wrap(nn) == null);
+		t(() -> wrap(n5) + 1);
+		t(() -> wrap(4));
+		t(() -> idt(nn) == null);
+		t(() -> p2(nn, nn) + " " + p3(nn, nn) + " " + p2(nn, 3) + " " + p3(4, nn));
+		t(() -> opt(1, nn) + " " + opt(2, n5) + " " + opt(3));
+		t(() -> retFn(nn)());
+		t(() -> nullArr(g));
+		t(() -> two(nn, nn));
+		t(() -> haxe.Serializer.run(Lambda.find(g, v -> v != 1)));
+		t(() -> haxe.Serializer.run(Lambda.find(g, v -> v == 9)));
+		t(() -> haxe.Serializer.run(wrap(nn)));
+	}
+}
+===
+--- null-return-type-inference-refusal
+// A Null<T> return binds T to Int, as gencs's firstOr<int>; an Array<Null<Int>> argument then needs
+// gencs's Array<object>.__hx_cast<int>, a cast between instantiations that waits for plan 3c.
+class P {
+	static function firstOr<T>(a:Array<T>):Null<T> return a.length > 0 ? a[0] : null;
+
+	static function main() {
+		var g:Array<Null<Int>> = [1, null];
+		Sys.println(firstOr(g));
+		Sys.println(firstOr([1, 2]));
+	}
+}
+===
+[compile]
+P.hx:8: characters 23-24 : dotnet: a cast between instantiations of Array is not supported yet

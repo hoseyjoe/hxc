@@ -264,9 +264,12 @@ class DotnetTypes {
 	}
 
 	// The types `params` stand for where `declared`, written in terms of them, meets the applied type
-	// `actual`, as gencs infers a generic method's type arguments; Dynamic where nothing binds one. A
-	// parameter the typer bound to Null<Int> stays Null<Int> (haxe.lang.Null<int>), as the call's
-	// values are: binding Int would turn a null into 0 at the conversion to it.
+	// `actual`, as gencs infers a generic method's type arguments; Dynamic where nothing binds one. As
+	// gencs's unification, a function type's return binds before its arguments, which bind in order,
+	// and the first binding stays. A parameter met as a plain T binds the typer's Null<Int> as Null<Int>
+	// (haxe.lang.Null<int>, gencs's object); one met inside a declared Null<T> binds what is inside
+	// every Null, Int: gencs's `wrap<int>(nn.@value)` for `wrap<T>(x:T):Null<T>`, where a null becomes
+	// 0 (an hxcs bug, kept).
 	public static function inferParams(params:TypeParams, declared:T, actual:T):Array<T> {
 		var bound:Array<Null<T>> = [for (_ in params) null];
 		function indexOf(c:TClass):Int {
@@ -283,11 +286,10 @@ class DotnetTypes {
 			if (depth > 20) return;
 			d = TypeFunctions.followWithoutNull(d);
 			a = TypeFunctions.followWithoutNull(a);
-			// A declared Null<X> meets the value inside a Null, or the value itself.
+			// A declared Null<X> meets the value inside every Null, or the value itself.
 			var dn = nullArg(d);
 			if (dn != null) {
-				var an = nullArg(a);
-				walk(dn, an != null ? an : a, depth + 1);
+				walk(dn, TypeFunctions.follow(a), depth + 1);
 				return;
 			}
 			switch (d) {
@@ -318,8 +320,8 @@ class DotnetTypes {
 				case TFun(ds):
 					switch (a) {
 						case TFun(as) if (as.args.length == ds.args.length):
-							for (i in 0...ds.args.length) walk(ds.args[i].t, as.args[i].t, depth + 1);
 							walk(ds.ret, as.ret, depth + 1);
+							for (i in 0...ds.args.length) walk(ds.args[i].t, as.args[i].t, depth + 1);
 						case _:
 					}
 				case _:
