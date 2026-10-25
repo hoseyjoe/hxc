@@ -63,6 +63,16 @@ class CompanionToIl {
 		return LClass(companionPath(c), []);
 	}
 
+	// The companion of `c` as code may name it; Unsupported for an hxgeneric class without one (a struct or
+	// a local function's class), whose instantiations share no CLR type.
+	public static function companionOf(g:DotnetCtx, c:TClass):IlSigNorm {
+		if (!hasCompanion(g, c)) {
+			var what = TypeFunctions.hasMeta(":struct", c.meta) ? "a generic struct" : "a local function's generic class";
+			throw new Unsupported(what + " as " + DotnetTypes.haxePath(TClassDecl(c)) + "<Dynamic>", false);
+		}
+		return companionSig(c);
+	}
+
 	// `<flatpath>_cast`: the path, @:native's if it has one, with its dots as underscores
 	// (`haxe_ds_StringMap_cast`, `pk_Nat_cast` for @:native("pk.Nat")).
 	public static function castName(c:TClass):String {
@@ -101,6 +111,8 @@ class CompanionToIl {
 	// class has parent casts for, in gencs's order: its own interfaces, then its superclass's list, then
 	// its superclass; a parent reached twice keeps its last place.
 	static function parents(g:DotnetCtx, c:TClass):Array<Parent> {
+		var known = g.castParents.get(c);
+		if (known != null) return known;
 		var r:Array<Parent> = [];
 		function add(p:TClass, params:Array<T>) {
 			for (i in 0...r.length) if (r[i].c == p) {
@@ -119,6 +131,7 @@ class CompanionToIl {
 			for (p in parents(g, s.c)) add(p.c, [for (t in p.params) apply(s.c, s.params, t)]);
 			if (hasCompanion(g, s.c)) add(s.c, s.params);
 		}
+		g.castParents.set(c, r);
 		return r;
 	}
 
@@ -132,15 +145,17 @@ class CompanionToIl {
 		return [for (p in all) if (isInterface(p.c) && inherited.indexOf(castName(p.c)) < 0) p];
 	}
 
-	// The names of the cast members a class has, declared or inherited.
+	// The names of the cast members a class has, declared or inherited. Each class asks for its
+	// superclass's, so they are remembered for the round, as parents are.
 	static function castNames(g:DotnetCtx, c:TClass):Array<String> {
+		if (TypeFunctions.hasClassFlag(c, CExtern)) return [];
+		var known = g.castNames.get(c);
+		if (known != null) return known;
 		var r = [];
-		var cur = c;
-		while (cur != null && !TypeFunctions.hasClassFlag(cur, CExtern)) {
-			if (hasCompanion(g, cur)) r.push(castName(cur));
-			for (p in declaredParents(g, cur)) r.push(castName(p.c));
-			cur = cur.superClass == null ? null : cur.superClass.c;
-		}
+		if (hasCompanion(g, c)) r.push(castName(c));
+		for (p in declaredParents(g, c)) r.push(castName(p.c));
+		if (c.superClass != null) r = r.concat(castNames(g, c.superClass.c));
+		g.castNames.set(c, r);
 		return r;
 	}
 
@@ -148,14 +163,14 @@ class CompanionToIl {
 		return [for (p in c.params) p.name + suffix];
 	}
 
-	static function method(kind:MethodKind, name:String, flags:Int, hasThis:Bool, args:Array<IlSigNorm>, argNames:Array<String>,
+	static function method(kind:MethodKind, name:String, flags:Int, hasThis:Bool, ret:IlSigNorm, args:Array<IlSigNorm>, argNames:Array<String>,
 			generics:Array<String>, pos:hxc.ast.Position):MethodPlan {
 		return {
 			kind: kind,
 			name: name,
 			flags: flags,
 			hasThis: hasThis,
-			ret: LObject,
+			ret: ret,
 			args: args,
 			argNames: argNames,
 			generics: generics,
@@ -165,7 +180,7 @@ class CompanionToIl {
 	}
 
 	static function helper(c:TClass):MethodPlan {
-		return method(MCast(c, CHelper(c)), "__hx_cast", MethodAttrs.PUBLIC | MethodAttrs.STATIC | MethodAttrs.HIDE_BY_SIG, false, [companionSig(c)],
+		return method(MCast(c, CHelper(c)), "__hx_cast", MethodAttrs.PUBLIC | MethodAttrs.STATIC | MethodAttrs.HIDE_BY_SIG, false, LObject, [companionSig(c)],
 			["me"], castGenerics(c, "_c_c"), c.pos);
 	}
 
@@ -185,11 +200,11 @@ class CompanionToIl {
 		var r:Array<MethodPlan> = [];
 		if (hasCompanion(g, c)) {
 			r.push(helper(c));
-			r.push(method(MCast(c, COwn), castName(c), flags(castName(c)), true, [], [], castGenerics(c, "_c"), c.pos));
+			r.push(method(MCast(c, COwn), castName(c), flags(castName(c)), true, LObject, [], [], castGenerics(c, "_c"), c.pos));
 		}
 		for (p in declaredParents(g, c)) {
 			var body = hasCompanion(g, c) ? CParent(parentArgs(g, c, p)) : CThis;
-			r.push(method(MCast(c, body), castName(p.c), flags(castName(p.c)), true, [], [], castGenerics(p.c, "_c"), c.pos));
+			r.push(method(MCast(c, body), castName(p.c), flags(castName(p.c)), true, LObject, [], [], castGenerics(p.c, "_c"), c.pos));
 		}
 		return r;
 	}
@@ -241,20 +256,11 @@ class CompanionToIl {
 		return LClass(g.types.stdClassPath("cs.internal.IHxObject", "generic classes without haxe.lang.IHxObject", true), []);
 	}
 
+	// A member of a companion interface.
 	static function abstractMethod(kind:MethodKind, name:String, ret:IlSigNorm, args:Array<IlSigNorm>, argNames:Array<String>, generics:Array<String>,
 			pos:hxc.ast.Position):MethodPlan {
-		return {
-			kind: kind,
-			name: name,
-			flags: MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.VIRTUAL | MethodAttrs.NEW_SLOT | MethodAttrs.ABSTRACT,
-			hasThis: true,
-			ret: ret,
-			args: args,
-			argNames: argNames,
-			generics: generics,
-			pos: pos,
-			token: 0
-		};
+		var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.VIRTUAL | MethodAttrs.NEW_SLOT | MethodAttrs.ABSTRACT;
+		return method(kind, name, flags, true, ret, args, argNames, generics, pos);
 	}
 
 	static function castDecl(c:TClass, pos:hxc.ast.Position):MethodPlan {
@@ -292,14 +298,28 @@ class CompanionToIl {
 			}
 		}
 		bases.push(genericObjectSig(g));
-		var path = companionPath(c);
-		var companion:ClassPlan = {
+		var companion = typePlan(plan, "companion", companionPath(c), TypeAttrs.PUBLIC | TypeAttrs.INTERFACE | TypeAttrs.ABSTRACT, bases, methods);
+		g.plans.insert(g.plans.indexOf(plan), companion);
+		g.companionPlans.set(c, companion);
+		g.companionOrder.push(c);
+		if (isInterface(c)) {
+			var statics = typePlan(plan, "statics", staticsPath(c), TypeAttrs.PUBLIC | TypeAttrs.BEFORE_FIELD_INIT, [],
+				[helper(c), TclassToIl.implicitCtor(c.pos, false)]);
+			g.plans.insert(g.plans.indexOf(plan) + 1, statics);
+			g.staticsPlans.set(c, statics);
+		}
+	}
+
+	// A TypeDef that belongs to the class of `plan` and has no Haxe class of its own: its companion or its
+	// `__Statics_` class.
+	static function typePlan(plan:ClassPlan, what:String, path:IlPath, flags:Int, interfaces:Array<IlSigNorm>, methods:Array<MethodPlan>):ClassPlan {
+		return {
 			c: null,
-			hxPath: plan.hxPath + " (companion)",
+			hxPath: plan.hxPath + " (" + what + ")",
 			path: path,
-			flags: TypeAttrs.PUBLIC | TypeAttrs.INTERFACE | TypeAttrs.ABSTRACT,
+			flags: flags,
 			superSig: null,
-			interfaces: bases,
+			interfaces: interfaces,
 			fields: [],
 			methods: methods,
 			classParams: [],
@@ -311,32 +331,6 @@ class CompanionToIl {
 			emptyCtor: null,
 			token: 0
 		};
-		g.plans.insert(g.plans.indexOf(plan), companion);
-		g.companionPlans.set(c, companion);
-		g.companionOrder.push(c);
-		if (isInterface(c)) {
-			var spath = staticsPath(c);
-			var statics:ClassPlan = {
-				c: null,
-				hxPath: plan.hxPath + " (statics)",
-				path: spath,
-				flags: TypeAttrs.PUBLIC | TypeAttrs.BEFORE_FIELD_INIT,
-				superSig: null,
-				interfaces: [],
-				fields: [],
-				methods: [helper(c), TclassToIl.implicitCtor(c.pos, false)],
-				classParams: [],
-				isStd: plan.isStd,
-				thisSig: LClass(spath, []),
-				isStruct: false,
-				initFlag: false,
-				ctors: null,
-				emptyCtor: null,
-				token: 0
-			};
-			g.plans.insert(g.plans.indexOf(plan) + 1, statics);
-			g.staticsPlans.set(c, statics);
-		}
 	}
 
 	// What comes after the TypeDef rows are written: the companion's GenericInterface attribute, whose
@@ -406,15 +400,8 @@ class CompanionToIl {
 				code.opToken(IlOps.CALLVIRT, ownCast(g, plan, c, args), 1, 1);
 				code.op(IlOps.RET, 1, 0);
 			case COwn:
-				if (TypeFunctions.hasClassFlag(c, CAbstract)) {
-					// An abstract class cannot be instantiated: gencs's body calls itself with the class's own
-					// type arguments; every instance is a subclass's, which overrides it.
-					code.ldarg(0);
-					code.opToken(IlOps.CALLVIRT, ownCast(g, plan, c, [for (i in 0...c.params.length) LTypeParam(i)]), 1, 1);
-					code.op(IlOps.RET, 1, 0);
-				} else {
-					new CastCopy(g, plan, c, code).emit();
-				}
+				var copy = new CastCopy(g, plan, c, code);
+				if (TypeFunctions.hasClassFlag(c, CAbstract)) copy.emitAbstract() else copy.emit();
 		}
 	}
 
@@ -463,10 +450,7 @@ private class CastCopy {
 	}
 
 	function staticOf(hxPath:String, name:String, what:String):{token:Int, sig:{ret:IlSigNorm, args:Array<IlSigNorm>}} {
-		var cls = switch (g.types.typeNamed(hxPath)) {
-			case TClassDecl(x): x;
-			case _: null;
-		}
+		var cls = g.runtimeClass(hxPath);
 		if (cls == null) throw new Unsupported(what, false, c.pos);
 		g.types.checkKept(TClassDecl(cls));
 		var cf = cls.statics.get(name);
@@ -482,24 +466,39 @@ private class CastCopy {
 		code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(systemType), "GetTypeFromHandle", g.sigs.method(false, systemType, [handle], 0)), 1, 1);
 	}
 
+	// if (Runtime.eq(typeof(T), typeof(T_c)) && …) return this; then `other`.
+	function sameArgsReturnThis(other:Label):Void {
+		var eq = staticOf("cs.internal.Runtime", "eq", "generic classes without haxe.lang.Runtime.eq");
+		for (i in 0...c.params.length) {
+			typeOf(LTypeParam(i));
+			typeOf(LMethodTypeParam(i));
+			code.opToken(IlOps.CALL, eq.token, 2, 1);
+			code.branch(IlOps.BRFALSE, other);
+		}
+		code.ldarg(0);
+		code.op(IlOps.RET, 1, 0);
+		code.mark(other);
+	}
+
+	// An abstract class's own cast, which only a subclass that is not generic inherits (a generic one
+	// overrides it): `this` for its own type arguments, else an InvalidCastException. gencs's body,
+	// `return this.X_cast<T…>()`, calls itself until the stack overflows for any type arguments; a
+	// deliberate divergence (decision 4 of plan 3c).
+	public function emitAbstract():Void {
+		sameArgsReturnThis(code.newLabel());
+		var ex = LClass({ns: ["System"], nested: [], name: "InvalidCastException"}, []);
+		code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(ex), ".ctor", g.sigs.method(true, LVoid, [], 0)), 0, 1);
+		code.op(IlOps.THROW, 1, 0);
+	}
+
 	public function emit():Void {
 		var what = "generic classes without Reflect.fields, field and setField";
-		var eq = staticOf("cs.internal.Runtime", "eq", "generic classes without haxe.lang.Runtime.eq");
 		var fields = staticOf("Reflect", "fields", what);
 		var field = staticOf("Reflect", "field", what);
 		var setField = staticOf("Reflect", "setField", what);
 		if (plan.emptyCtor == null) throw "internal error: " + plan.hxPath + " has no empty constructor";
 
-		var copy = code.newLabel();
-		for (i in 0...c.params.length) {
-			typeOf(LTypeParam(i));
-			typeOf(LMethodTypeParam(i));
-			code.opToken(IlOps.CALL, eq.token, 2, 1);
-			code.branch(IlOps.BRFALSE, copy);
-		}
-		code.ldarg(0);
-		code.op(IlOps.RET, 1, 0);
-		code.mark(copy);
+		sameArgsReturnThis(code.newLabel());
 
 		var newSig = DotnetCtx.instanceOf(plan, margs);
 		var newMe = code.addLocal(newSig);
@@ -517,10 +516,7 @@ private class CastCopy {
 		code.stloc(index);
 		var name = code.addLocal(LString);
 
-		var arrayClass = switch (g.types.typeNamed("Array")) {
-			case TClassDecl(x): x;
-			case _: null;
-		}
+		var arrayClass = g.runtimeClass("Array");
 		var arrayPlan = arrayClass == null ? null : g.planOf.get(arrayClass);
 		var lengthCf = arrayClass == null ? null : arrayClass.fields.get("length");
 		var storeCf = arrayClass == null ? null : arrayClass.fields.get("__a");
@@ -604,15 +600,10 @@ private class CastCopy {
 
 	// Null<T> after typedefs, which gencs leaves to the default case.
 	static function isNull(t:T):Bool {
-		var cur = t;
-		for (_ in 0...50) switch (cur) {
-			case TAbstract(a, [_]) if (a.path.pack.length == 0 && a.path.name == "Null"): return true;
-			case TType(d, params): cur = TypeFunctions.applyTypedef(d, params);
-			case TMono(m) if (m.type != null): cur = m.type;
-			case TLazy(f): cur = TypeFunctions.lazyType(f);
-			case _: return false;
+		return switch (TypeFunctions.followWithoutNull(t)) {
+			case TAbstract(a, [_]): a.path.pack.length == 0 && a.path.name == "Null";
+			case _: false;
 		}
-		return false;
 	}
 
 	// The field as an instance of the class with the type arguments `selfArgs` reaches it (`this`: the

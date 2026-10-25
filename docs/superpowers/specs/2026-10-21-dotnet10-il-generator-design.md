@@ -236,7 +236,9 @@ losing writes that gencs keeps.
   the casts of the generic interfaces it implements and of its superclass, and every kept instance
   method whose Haxe signature mentions no type parameter, in gencs's order and spelling. A generic
   interface's static `__hx_cast` helper lives in `X__Statics_`. Cast methods are named
-  `<flatpath>_cast`, the helper `__hx_cast<T_c_c…>`.
+  `<flatpath>_cast`, the helper `__hx_cast<T_c_c…>`. A generic `@:struct` gets no companion, and the
+  casts of its generic interfaces return `this`: gencs's C# for one (`struct Cell<T> :
+  haxe.lang.HxObject`) doesn't compile, so there is nothing to match.
 - **`X<Dynamic>` is the companion.** A typed value assigned or passed to it is the same object, with
   no view and no copy. Member access through it follows gencs: members that don't mention a type
   parameter are interface calls, the rest go through `Runtime.getField`/`setField`/`callField`.

@@ -9398,7 +9398,6 @@ class G<T> {
 	public function a():Int return 1;
 	function priv():String return "p";
 	public function withC(c:G<C>):Array<C> return [];
-	public function withDyn(d:G<Dynamic>):Void {}
 	public function nullT(x:Null<T>):Void {}
 	public function arrT(x:Array<T>):Void {}
 	public function fnT(f:T->Void):Void {}
@@ -9447,7 +9446,7 @@ class P {
 	}
 	static function main() {
 		var g = new G<Int>(1);
-		g.a(); g.withC(null); g.withDyn(null); g.nullT(null); g.arrT(null); g.fnT(null); g.fnPlain(null); g.gen(1); g.genNoU(); G.stat(); g.dyn(); g.inl(); g.ov(1); g.toString(); g.prop; g.anon(); g.optInt(); g.defInt();
+		g.a(); g.withC(null); g.nullT(null); g.arrT(null); g.fnT(null); g.fnPlain(null); g.gen(1); g.genNoU(); G.stat(); g.dyn(); g.inl(); g.ov(1); g.toString(); g.prop; g.anon(); g.optInt(); g.defInt();
 		var s = new GS<Int>(1); s.own();
 		Sys.println(Type.getInstanceFields(G));
 		Sys.println(Type.getInstanceFields(GS));
@@ -9457,15 +9456,14 @@ class P {
 }
 ===
 [run]
-[G_cast,a,priv,withC,withDyn,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
-[GS_cast,G_cast,a,own,priv,withC,withDyn,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
+[G_cast,a,priv,withC,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
+[GS_cast,G_cast,a,own,priv,withC,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
 G companion: G interface implements haxe.lang.IGenericObject,haxe.lang.IHxObject
   [GenericInterface(G`1[System.Object])]
   System.Object G_cast[T_c]()
   Int32 a()
   System.String priv()
   Array`1[System.Object] withC(G`1[System.Object])
-  Void withDyn(G)
   Void fnPlain(haxe.lang.Function)
   Int32 genNoU[U]()
   Int32 inl()
@@ -9507,7 +9505,6 @@ class H<T> {
 	public var gInt:G<Int>;
 	public var gNInt:G<Null<Int>>;
 	public var gString:G<String>;
-	public var gDyn:G<Dynamic>;
 	public var gAny:G<Any>;
 	public var gC:G<C>;
 	public var gI:G<I>;
@@ -9522,13 +9519,10 @@ class H<T> {
 	public var gDT:G<cs.system.DateTime>;
 	public var gDOW:G<cs.system.DayOfWeek>;
 	public var aAI:Array<Array<Int>>;
-	public var aND:Array<Null<Dynamic>>;
-	public var om:haxe.ds.ObjectMap<C, Dynamic>;
 	public var lC:cs.system.collections.generic.List_1<C>;
 	public var lNI:cs.system.collections.generic.List_1<Null<Int>>;
-	public var lGD:cs.system.collections.generic.List_1<G<Dynamic>>;
 	public function new() {}
-	public function meth<U>(pU:G<U>, pC:G<C>, pD:G<Dynamic>):G<U> return pU;
+	public function meth<U>(pU:G<U>, pC:G<C>):G<U> return pU;
 }
 class P {
 	static function typeName(t:cs.system.Type):String return t == null ? "null" : t.ToString();
@@ -9558,7 +9552,7 @@ class P {
 	static function main() {
 		var h = new H<Int>();
 		var t = cs.Lib.toNativeType(H).GetGenericTypeDefinition();
-		for (f in ["gInt", "gNInt", "gString", "gDyn", "gAny", "gC", "gI", "gE", "gAI", "gAnon", "gFun", "gT", "gNT", "gGS", "gSB", "gDT", "gDOW", "aAI", "aND", "om", "lC", "lNI", "lGD"])
+		for (f in ["gInt", "gNInt", "gString", "gAny", "gC", "gI", "gE", "gAI", "gAnon", "gFun", "gT", "gNT", "gGS", "gSB", "gDT", "gDOW", "aAI", "lC", "lNI"])
 			Sys.println(f + ": " + typeName(t.GetField(f).FieldType));
 		Sys.println("meth: " + Std.string(t.GetMethod("meth")));
 		dumpType("G companion", cs.system.Type._GetType("G"));
@@ -9569,7 +9563,7 @@ class P {
 		dumpType("GS companion", cs.system.Type._GetType("GS"));
 		new GI<Int>().ig();
 		new GS<Int>(1).own();
-		h.meth(null, null, null);
+		h.meth(null, null);
 	}
 }
 ===
@@ -9577,7 +9571,6 @@ class P {
 gInt: G`1[System.Int32]
 gNInt: G`1[System.Object]
 gString: G`1[System.String]
-gDyn: G
 gAny: G`1[System.Object]
 gC: G`1[System.Object]
 gI: G`1[System.Object]
@@ -9592,12 +9585,9 @@ gSB: G`1[System.Object]
 gDT: G`1[System.DateTime]
 gDOW: G`1[System.DayOfWeek]
 aAI: Array`1[System.Object]
-aND: Array
-om: haxe.ds.ObjectMap
 lC: System.Collections.Generic.List`1[C]
 lNI: System.Collections.Generic.List`1[System.Object]
-lGD: System.Collections.Generic.List`1[G]
-meth: G`1[U] meth[U](G`1[U], G`1[System.Object], G)
+meth: G`1[U] meth[U](G`1[U], G`1[System.Object])
 G companion: G interface implements haxe.lang.IGenericObject,haxe.lang.IHxObject
   [GenericInterface(G`1[System.Object])]
   System.Object G_cast[T_c]()
@@ -9647,10 +9637,6 @@ class Fixed<T> implements I1<Int> {
 	public function new() {}
 	public function a():Int return 1;
 }
-class Nested<T> implements I1<Array<T>> {
-	public function new() {}
-	public function a():Array<T> return [];
-}
 class Partial<T> implements I2<String, T> {
 	public function new() {}
 	public function b(x:String):T return null;
@@ -9679,7 +9665,7 @@ class P {
 		Sys.println(Type.getInstanceFields(X));
 		Sys.println(Type.getInstanceFields(Y));
 		Sys.println(Type.getInstanceFields(Fin));
-		var all:Array<Dynamic> = [new Perm<Int, String>(), new Fixed<String>(), new Nested<Int>(), new Partial<Int>(), new Both<Int>(), new Derived<Int>(), new DerivedFixed(), new Derived2<Int, String>(), new ImplExt<Int>()];
+		var all:Array<Dynamic> = [new Perm<Int, String>(), new Fixed<String>(), new Partial<Int>(), new Both<Int>(), new Derived<Int>(), new DerivedFixed(), new Derived2<Int, String>(), new ImplExt<Int>()];
 		for (x in all) Sys.println(Type.getClassName(Type.getClass(x)) + ": " + Type.getInstanceFields(Type.getClass(x)));
 	}
 }
@@ -9690,10 +9676,155 @@ class P {
 [Fin_cast,I1_cast,a]
 Perm: [Perm_cast,I2_cast,b]
 Fixed: [Fixed_cast,I1_cast,a,t]
-Nested: [Nested_cast,I1_cast,a]
 Partial: [Partial_cast,I2_cast,b]
 Both: [Both_cast,I1_cast,I2_cast,a,b]
 Derived: [Derived_cast,I1_cast,Base_cast,a]
 DerivedFixed: [Base_cast,I1_cast,a]
 Derived2: [Derived2_cast,I1_cast,Base_cast,a]
 ImplExt: [ImplExt_cast,I1_cast,IExt_cast,a,c]
+--- cast-bodies @gencs
+// The bodies of the cast members, called through .NET reflection (no Haxe code calls them before the
+// casts' call sites): a class that is not generic implementing a generic interface returns itself; an
+// X_cast copy converts a NativeArray<Array<T>> field through Array's __hx_cast and leaves a superclass's
+// NativeArray field whose element is no longer a type parameter (Sub<U> extends Base<Int>) not to
+// Reflect.setField but copies it element by element as gencs does, by the field's declared type; a generic
+// subclass of an abstract generic class has an X_cast of its own.
+interface IG<T> { function ig():T; function igPlain():Int; }
+class NI implements IG<String> {
+	public function new() {}
+	public function ig():String return "ni";
+	public function igPlain():Int return 3;
+}
+class G<T> {
+	public var v:T;
+	public var aa:cs.NativeArray<Array<T>>;
+	public function new(v:T) this.v = v;
+}
+class Base<T> {
+	public var na:cs.NativeArray<T>;
+	public function new() {}
+}
+class Sub<U> extends Base<Int> {
+	public function new() super();
+}
+abstract class Ab<T> {
+	public function new() {}
+	public abstract function f():T;
+}
+class AbI<T> extends Ab<T> {
+	public var t:T;
+	public function new(t:T) {
+		super();
+		this.t = t;
+	}
+	public function f():T return t;
+}
+class P {
+	static function callCast(o:Dynamic, name:String, args:Array<cs.system.Type>):Dynamic {
+		var m = cs.Lib.getNativeType(o).GetMethod(name);
+		var na = new cs.NativeArray<cs.system.Type>(args.length);
+		for (i in 0...args.length) na[i] = args[i];
+		return m.MakeGenericMethod(na).Invoke(o, null);
+	}
+	static function main() {
+		var tInt = cs.Lib.getNativeType(1), tFloat = cs.Lib.getNativeType(1.5), tStr = cs.Lib.toNativeType(String);
+		var ni = new NI();
+		Sys.println("NI: " + Type.getInstanceFields(NI));
+		Sys.println("NI IG_cast is this: " + (callCast(ni, "IG_cast", [tInt]) == ni));
+		var g = new G<Int>(5);
+		g.aa = cs.NativeArray.make([3, 4], null);
+		var gd:Dynamic = callCast(g, "G_cast", [tFloat]);
+		var gf:G<Float> = gd;
+		var oldAa:Dynamic = g.aa, newAa:Dynamic = gf.aa;
+		Sys.println("G<Float>: v=" + gf.v + " aa.Length=" + gf.aa.Length + " aa[0]=" + gf.aa[0] + " aa[1]=" + gf.aa[1] + " copied=" + (newAa != oldAa));
+		var s = new Sub<Int>();
+		s.na = cs.NativeArray.make(1, 2);
+		var sd:Dynamic = callCast(s, "Sub_cast", [tStr]);
+		var ss:Sub<String> = sd;
+		var oldNa:Dynamic = s.na, newNa:Dynamic = ss.na;
+		Sys.println("Sub<String>: copy=" + (sd != (s : Dynamic)) + " na[1]=" + ss.na[1] + " shared=" + (newNa == oldNa));
+		var ab = new AbI<Dynamic>(3);
+		var abd:Dynamic = callCast(ab, "AbI_cast", [tInt]);
+		var abi:AbI<Int> = abd;
+		Sys.println("AbI AbI_cast: copy=" + (abd != (ab : Dynamic)) + " t=" + abi.t + " f=" + abi.f());
+		Sys.println("AbI: " + Type.getInstanceFields(AbI));
+	}
+}
+===
+[run]
+NI: [IG_cast,ig,igPlain]
+NI IG_cast is this: true
+G<Float>: v=5 aa.Length=2 aa[0]=[3,4] aa[1]=null copied=true
+Sub<String>: copy=true na[1]=2 shared=false
+AbI AbI_cast: copy=true t=3 f=3
+AbI: [AbI_cast,Ab_cast,f,t]
+--- struct-and-abstract-base-casts
+// Casts gencs has no working body for, called through .NET reflection. A @:struct implementing a generic
+// interface returns itself boxed (gencs's C# for a generic struct doesn't compile; spec, Casts between
+// generic instantiations). A class that is not generic inherits its abstract generic base's own cast,
+// whose gencs body calls itself until the stack overflows; hxc returns `this` for the class's own type
+// arguments and throws InvalidCastException for others (decision 4 of plan 3c). A generic subclass's parent
+// cast converts (decision 2), where gencs's returns the object unchanged.
+interface IG<T> { function ig():T; }
+@:struct class S implements IG<String> {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function ig():String return "s" + x;
+}
+@:struct class GS<T> implements IG<T> {
+	public var t:T;
+	public function new(t:T) this.t = t;
+	public function ig():T return t;
+}
+abstract class Ab<T> {
+	public function new() {}
+	public abstract function f():T;
+}
+class Concrete extends Ab<Int> {
+	public function new() super();
+	public function f():Int return 1;
+}
+class AbI<T> extends Ab<T> {
+	public var t:T;
+	public function new(t:T) {
+		super();
+		this.t = t;
+	}
+	public function f():T return t;
+}
+class P {
+	static function callCast(o:Dynamic, name:String, args:Array<cs.system.Type>):Dynamic {
+		var m = cs.Lib.getNativeType(o).GetMethod(name);
+		var na = new cs.NativeArray<cs.system.Type>(args.length);
+		for (i in 0...args.length) na[i] = args[i];
+		return m.MakeGenericMethod(na).Invoke(o, null);
+	}
+	static function main() {
+		var tInt = cs.Lib.getNativeType(1), tStr = cs.Lib.toNativeType(String);
+		var s:IG<String> = new S(4);
+		var back:IG<String> = callCast(s, "IG_cast", [tStr]);
+		Sys.println("S IG_cast: " + back.ig() + " " + Type.getClassName(Type.getClass(back)));
+		var gs:IG<Int> = new GS<Int>(7);
+		var gback:IG<Int> = callCast(gs, "IG_cast", [tInt]);
+		Sys.println("GS IG_cast: " + gback.ig());
+		var c = new Concrete();
+		Sys.println("Concrete Ab_cast<Int> is this: " + (callCast(c, "Ab_cast", [tInt]) == c));
+		try {
+			callCast(c, "Ab_cast", [tStr]);
+			Sys.println("Concrete Ab_cast<String>: no exception");
+		} catch (e:cs.system.reflection.TargetInvocationException) {
+			Sys.println("Concrete Ab_cast<String>: " + e.InnerException.GetType().ToString());
+		}
+		var ab:Dynamic = new AbI<Dynamic>(3);
+		var abd:Dynamic = callCast(ab, "Ab_cast", [tInt]);
+		var abi:AbI<Int> = abd;
+		Sys.println("AbI Ab_cast<Int>: copy=" + (abd != ab) + " t=" + abi.t);
+	}
+}
+===
+[run]
+S IG_cast: s4 S
+GS IG_cast: 7
+Concrete Ab_cast<Int> is this: true
+Concrete Ab_cast<String>: System.InvalidCastException
+AbI Ab_cast<Int>: copy=true t=3

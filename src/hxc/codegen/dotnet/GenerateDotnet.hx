@@ -53,6 +53,9 @@ class DotnetCtx {
 	public final companionPlans = new ObjectMap<TClass, ClassPlan>();
 	public final staticsPlans = new ObjectMap<TClass, ClassPlan>();
 	public var companionOrder:Array<TClass> = [];
+	// CompanionToIl's parent casts and cast names of each class, remembered for the round.
+	public final castParents = new ObjectMap<TClass, Array<{c:TClass, params:Array<T>}>>();
+	public final castNames = new ObjectMap<TClass, Array<String>>();
 	final closureClasses:Array<TClass> = [];
 
 	final stdRoots:Array<String>;
@@ -151,9 +154,15 @@ class DotnetCtx {
 		return mb.memberRef(typeTokenOf(owner), DotnetNames.fieldName(plan.c, cf.name), sigs.field(fieldSigs.get(cf)));
 	}
 
-	// The companion interface of the hxgeneric class or interface `c` (CompanionToIl).
+	// Whether the hxgeneric class or interface `c` has a companion interface: not a struct, nor a local
+	// function's class (CompanionToIl).
+	public function hasCompanion(c:TClass):Bool {
+		return CompanionToIl.hasCompanion(this, c);
+	}
+
+	// The companion interface of the hxgeneric class or interface `c`; Unsupported when it has none.
 	public function companionOf(c:TClass):IlSigNorm {
-		return CompanionToIl.companionSig(c);
+		return CompanionToIl.companionOf(this, c);
 	}
 
 	// The token of the hxgeneric class's or interface's static `__hx_cast<T_c_c…>(X me):object`, on the
@@ -456,6 +465,8 @@ class GenerateDotnet {
 			g.companionPlans.clear();
 			g.staticsPlans.clear();
 			g.companionOrder = [];
+			g.castParents.clear();
+			g.castNames.clear();
 			// Enums first, so the classes that refer to one see whether it was left out.
 			for (e in hxEnums) {
 				var mt = TEnumDecl(e);
