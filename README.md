@@ -146,11 +146,16 @@ back, and a value whose instantiation is not the one the Serializer's code names
 class's or a generic method's type parameter that holds `Null<Int>`, `Null<Float>` or `Null<Bool>`
 (an `Array<Null<Int>>`, a `Box<Null<Int>>`, `Lambda.exists` over an `Array<Null<Int>>`) reaches
 `Dynamic`, reflection, string concatenation and the Serializer as gencs's boxed value or `null`. A
-generic method's type parameter met first inside a declared `Null<T>` (a `Null<T>` return such as
-`Lambda.find`'s, which binds before the arguments, or an earlier `Null<T>` or optional argument) is
-bound to the basic type instead, as gencs binds it, so a null `Null<Int>` passed there becomes 0 as
-it does under gencs; with an `Array<Null<Int>>` argument that needs a cast between instantiations,
-which is not supported yet.
+generic method's type parameters are bound as gencs binds them, by Haxe's unification of each
+argument and the return (first) with the declared types. Where a declared `Null<T>` itself is an
+argument or the return (`Lambda.find`'s `Null<T>` return, a `Null<T>` or optional argument, a
+callback's return), T is bound to the basic type, so a null `Null<Int>` passed there becomes 0 as
+it does under gencs. A `Null<T>` among a callback's arguments (`f:Null<T>->Bool`) keeps T a
+`Null<Int>`, and so does one inside a type argument (`Array<Null<T>>`, `Option<Null<T>>`) met by a
+`Null<Null<Int>>`. A local generic function's arguments bind the other way round, as gencs's closure
+classes do. A call whose bound type parameter then needs a cast between instantiations (an
+`Array<Null<Int>>` argument to an `Array<T>` parameter of a method with a `Null<T>` return, an
+`Array<Null<T>>` or `Map<String, Null<T>>` result with T a `Null<Int>`) is not supported yet.
 
 Constructs not supported yet are compile errors in user code (`dotnet: ... not supported yet`). The
 list is not complete; among others it has assignments to `Dynamic` array elements, `return`, `break`
