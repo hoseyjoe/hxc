@@ -522,18 +522,23 @@ and `List` copy, and two threads casting one array at once.
    - An `@:overload` override that changes only the return type is refused. gencs compiles it as a C#
      covariant-return override, which needs `newslot`, a MethodImpl row and
      `PreserveBaseOverridesAttribute`.
-   - **Interop divergences from gencs.** Where gencs's output fails at run time or its C# does not
-     compile, hxc either refuses cleanly or does better. Each case that does better is a test with a
-     `[gencs]` section showing what gencs does, and each is listed here.
-     - A `Nullable<Int>` stored in a `Map` value or in a `Null<Nullable<Int>>` is read back as the
-       value (`netlib-nullable-better`). gencs boxes it as an `Int32` and then fails on `.HasValue` with
-       `Method "get_HasValue" not found on type System.Int32`.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
    (built with `-D dotnet-debug-jit`), and `.hx` line numbers in exception stack traces from an
    optimized build.
 6. **The server app acceptance.** The two-way test database migration described in Success.
+
+### Interop divergences from gencs (milestone 4)
+
+Where gencs's output fails at run time or its C# does not compile, hxc either refuses cleanly or does
+better. Each case that does better is a test with a `[gencs]` section that shows what gencs does, and
+each is listed here.
+
+- `HasValue` and `Value` on a `Nullable<Int>` read out of a `Map<String, Nullable<Int>>` work in hxc
+  (`netlib-nullable-better`). gencs throws at that first read: `Method "get_HasValue" not found on type
+  System.Int32`. The same case also reads through a `Null<Nullable<Int>>` in hxc; gencs never gets
+  that far, so the case does not show what it does there.
 
 ## Left to the builder
 

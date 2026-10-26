@@ -24,9 +24,9 @@
 # the csproj gencs's output is built with. Only the named libraries are passed, but every fixture .dll is
 # copied beside hxc's output (after the determinism check) and beside gencs's, so a library that is
 # referenced and not passed is found as a user's would be (LibA references LibB). The fixtures are built
-# once per run into $HXC_TEST_TMP/netlib (dotnet build -c Release -o), and the build is skipped while a
-# hash of their sources and the .NET SDK version is unchanged. That hash is part of the gencs cache key
-# of every @netlib case.
+# once per run into $HXC_TEST_TMP/netlib-<hash> (dotnet build -c Release -o), where the hash covers their
+# sources and the .NET SDK version, so a directory already there is reused and a changed fixture gets a
+# new one. That hash is part of the gencs cache key of every @netlib case.
 # A @serial case is a @gencs case whose program takes `gen <file>` and `rt <in> <file>`: gen writes
 # `name<TAB>serialized` lines to <file> and prints them, rt unserializes each line of <in>, serializes
 # it again, writes the lines to <file> and prints them. Both builds run gen (the [run] comparison
@@ -155,9 +155,9 @@ paths() {
 	esac
 }
 
-# The fixture libraries of @netlib cases: built into $netlibdir by netlib_build, which sets $netlib_hash.
-netlibdir="$tmproot/netlib"
-netlibdir_m="$tmproot_m/netlib"
+# The fixture libraries of @netlib cases: built into $netlibdir by netlib_build, which sets these.
+netlibdir=""
+netlibdir_m=""
 netlib_hash=""
 
 # Sets $netlibs to the names of the fixture libraries that tags $1 pass: ValLib for @netlib,
@@ -175,21 +175,32 @@ netlib_names() {
 	netlibs="${netlibs# }"
 }
 
-# Builds the fixture libraries into $netlibdir, unless the hash of their sources and of the .NET SDK
-# version is still the one the last build stored there. The projects build from a copy of their
-# sources, so the checkout gets no obj directories, and the finished directory replaces $netlibdir in
-# one move. LibA references LibB, so building LibA already puts LibB.dll in the output.
+# Builds the fixture libraries into $netlibdir, $tmproot/netlib-<hash>, where the hash covers their
+# sources and the .NET SDK version, and sets $netlibdir, $netlibdir_m and $netlib_hash. A directory
+# that is already there is complete and is kept, since nothing writes to it once it exists. The
+# projects build from a copy of their sources, so the checkout gets no obj directories, and the
+# finished directory is moved into place in one rename. Two runs building it at once both build, the
+# first rename wins, and the other run deletes its own copy. LibA references LibB, so building LibA
+# already puts LibB.dll in the output.
 netlib_build() {
-	local stamp="" src="$tmproot/netlib-src.$$" out="$tmproot/netlib-out.$$" p log
+	local src="$tmproot/netlib-src.$$" out="$tmproot/netlib-out.$$" p log
 	netlib_hash="$({
 		cd "$here/netlib" && find . -type f \( -name '*.cs' -o -name '*.csproj' \) | LC_ALL=C sort | xargs sha1sum
 		dotnet --version
 	} | sha1sum)"
 	netlib_hash="${netlib_hash%% *}"
-	[ -f "$netlibdir/.hash" ] && read -r stamp < "$netlibdir/.hash"
-	[ "$stamp" = "$netlib_hash" ] && return 0
+	netlibdir="$tmproot/netlib-$netlib_hash"
+	netlibdir_m="$tmproot_m/netlib-$netlib_hash"
+	# Directories of fixtures no run has used for 30 days go, by their exact names, never the current one.
+	find "$tmproot" -maxdepth 1 -regex '.*/netlib-[0-9a-f]\{40\}' ! -name "netlib-$netlib_hash" -mtime +30 -exec rm -rf {} + 2> /dev/null
+	if [ -f "$netlibdir/.hash" ]; then
+		touch "$netlibdir" 2> /dev/null
+		return 0
+	fi
 	rm -rf "$src" "$out"
-	mkdir "$src" && cp -R "$here"/netlib/* "$src/" && rm -rf "$src"/*/obj "$src"/*/bin || return 1
+	mkdir "$src" || { echo "could not create $src for the fixtures' sources"; return 1; }
+	cp -R "$here"/netlib/* "$src/" || { echo "could not copy $here/netlib to $src"; rm -rf "$src"; return 1; }
+	rm -rf "$src"/*/obj "$src"/*/bin
 	for p in "$src"/*/*.csproj; do
 		if ! log="$(dotnet build "$p" -c Release -o "$out" -nologo -v q 2>&1)"; then
 			printf '%s\n' "$log"
@@ -198,9 +209,10 @@ netlib_build() {
 		fi
 	done
 	printf '%s\n' "$netlib_hash" > "$out/.hash"
-	rm -rf "$netlibdir"
-	mv "$out" "$netlibdir"
+	# mv -T never moves $out inside an existing $netlibdir: it fails, and that copy is not needed.
+	mv -T "$out" "$netlibdir" 2> /dev/null || rm -rf "$out"
 	rm -rf "$src"
+	[ -f "$netlibdir/.hash" ]
 }
 
 # Sets $norm to $1 with line endings as \n, directory $2 (by default the case directory) as $CASE,

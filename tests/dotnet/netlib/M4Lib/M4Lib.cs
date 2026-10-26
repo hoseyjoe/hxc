@@ -1,4 +1,4 @@
-// Shapes for milestone 4a's members area (D:/_hxc4a/members). netstandard2.0 so Haxe 4.3.7's net-lib reads it.
+// Shapes for milestone 4a's members area. netstandard2.0 so Haxe 4.3.7's net-lib reads it.
 using System;
 using System.Collections.Generic;
 namespace M4 {
