@@ -168,16 +168,18 @@ it does under gencs. A `Null<T>` among a callback's arguments (`f:Null<T>->Bool`
 classes do.
 
 Constructs not supported yet are compile errors in user code (`dotnet: ... not supported yet`). The
-list is not complete; among others it has assignments to `Dynamic` array elements, `return`, `break`
-and `continue` inside expressions, casts between instantiations of a generic class that has no
-companion interface (a generic `@:struct`) and `Std.isOfType` or enum constructor arguments with one,
+list is not complete; among others it has compound assignments to `Dynamic` array elements
+(`d[i] += v`, `d[i]++`; a plain `d[i] = v` works), `return`, `break` and `continue` inside
+expressions, casts between instantiations of a generic class that has no companion interface (a
+generic `@:struct`) and `Std.isOfType` or enum constructor arguments with one,
 inline C# (`untyped __cs__`, `cs.Syntax.code`, `@:classCode`, `@:functionCode`), and .NET interop
 beyond calling referenced assemblies (properties of .NET interfaces, generic .NET methods,
 `Nullable<T>`, delegates, indexers, types that a `--net-lib` assembly's own references define).
 `Array` has no `object this[int]` indexer yet (hxcs adds it with `@:classCode`), so C# code cannot index
 an `Array` and `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`.
-`-resource` is not supported yet: with `-D dotnet` it is a compile error, since `haxe.Resource`
-would find nothing. The next step for the .NET generator is .NET interop, which also brings these.
+Embedded resources (`-resource` or `Context.addResource`) are not supported yet: with `-D dotnet` they
+are a compile error, since `haxe.Resource` would find nothing. The next step for the .NET generator
+is .NET interop, which also brings these.
 Until then, standard-library code that needs them compiles to stubs: `Thread.create`,
 `EReg.matched`, `Socket.select` and `Socket.setTimeout`, `Sys.command` and `sys.io.Process` among
 them.

@@ -163,7 +163,11 @@ can see must behave like Haxe 4.3.7 gencs + hxcs:
 Where hxcs behavior is a bug that data depends on, reproduce it. Write each such case down as a known
 divergence from "correct" behavior. This generator fixes two hxcs bugs on purpose: Haxe issue 8314,
 and the parent casts that always return `this` (next section). The fixes are shaped so serialized data
-doesn't change. The next section also lists the few paths where gencs throws and hxc works.
+doesn't change, with two exceptions, both from the #8314 forward (*Recorded divergences*, item 1): the
+Serializer's cache writes an array and its forward once, the second as a back-reference `r` where gencs
+writes the array again, and a write past `length` through a forward fills the gap with the target type's
+default, which serializes as `z` where gencs writes `u`. The next section also lists the few paths where
+gencs throws and hxc works.
 
 ## Casts between generic instantiations (Haxe issue 8314)
 
@@ -276,7 +280,10 @@ implements I2<Y,X>` calls `Perm_cast<B_c, A_c>()`. When two `Pj_c` for one `Tk` 
 (`Both<T> implements I2<T,T>` cast to `I2<Int,String>`), no instance can satisfy the cast and the
 `castclass` throws, as gencs's does. When the parent doesn't mention a class parameter `Tk`
 (`Fixed<T> implements I1<Int>`), `Tk` stays itself, so the body is still `this.Fixed_cast<T>()` and
-the cast returns `this`, as gencs's does. This is a deliberate divergence like #8314.
+the cast returns `this`, as gencs's does. A class that is not generic and lists the interface itself
+keeps gencs's cast that returns `this`, so a cast to another instantiation throws, as gencs's does; one
+that only inherits a generic superclass's cast (`class NS extends GB<String>`, `GB<T> implements IG<T>`)
+gets the superclass's copy, a `GB<X>`, not an `NS`. This is a deliberate divergence like #8314.
 
 *The #8314 forward.* The design is the one Nicolas Cannasse described in #4872, which HashLink
 implements (`hl.types.ArrayDyn`): an ``Array`1<object>`` is untyped until its first cast to a typed
@@ -284,9 +291,13 @@ instantiation locks it, and from then on every reference shares one storage.
 
 - **Only ``Array`1<object>`` forwards, and only to a basic-element array.** hxc's runtime copy of
   `Array.hx` gets one field: the typed array this one stands for. Any cast of a non-forwarding
-  ``Array`1<object>`` to an `Array` of `Int`, `Float`, `Bool`, `String`, `UInt`, `Single`, `Int64`
-  or another basic element triggers it, whatever the static source of the value: a `Dynamic`, a type
-  parameter, an anonymous field read, or a typed ``Array`1<object>`` such as an `Array<Null<Int>>`.
+  ``Array`1<object>`` to an `Array` of `String` or a value type tries it, whatever the static source
+  of the value: a `Dynamic`, a type parameter, an anonymous field read, or a typed ``Array`1<object>``
+  such as an `Array<Null<Int>>`. It forwards when every element survives the conversion (*Only
+  lossless conversions* below), and only `Int`, `Float`, `Bool`, `String`, `Single` and `Int64`
+  elements convert (`Array.hx`'s `__hx_lossless`). Into `UInt` and the small integer types (`Int8`,
+  `Int16`, `UInt8`, `UInt16`) nothing converts: the cast forwards only when every element already has
+  that CLR type, which unserialized data never gives, and otherwise copies.
   A typed instantiation (``Array`1<int32>``, ``Array`1<string>``, …) never forwards. A typed array
   held in an `Array<Dynamic>` slot is an upcast and needs nothing.
 - **Reinterpret once.** The cast converts the elements into a new `Array<X>`, installs it as the
@@ -362,7 +373,9 @@ hxcs, with gencs's output kept for contrast:
    forward as one array where gencs sees two: `==` and `!=`, `indexOf`/`lastIndexOf`/`contains`/
    `remove`, `ObjectMap` keys, `Reflect.compareMethods(a.join, b.join)`, `Type.enumEq(W(a), W(b))`, and
    `Equals` on two `haxe.lang.Closure`s of the pair as C# sees them, all true where gencs gives false
-   (cases `cast-4872-eq`, `cast-array-forward-eq`).
+   (cases `cast-4872-eq`, `cast-array-forward-eq`). The Serializer's cache (`useCache = true`) finds the
+   pair through `==` too, so it writes the second as a back-reference `r` where gencs writes the array
+   again, and read back the two share storage (case `cast-array-forward-storage`).
 2. **Parent casts** return the right instantiation instead of `this`, so casts that throw in gencs
    work.
 3. **Paths where gencs throws but this design works are left working**:
@@ -381,7 +394,11 @@ hxcs, with gencs's output kept for contrast:
      until the stack overflows, hxc's calls the inherited method (case
      `erased-interface-inherited-implementation`);
    - `class Q implements I<Dynamic>` returning `Array<Dynamic>` for `I`'s `Array<T>` (a C# compile
-     error in gencs, CS0738; case `erased-interface-dynamic-argument`).
+     error in gencs, CS0738; case `erased-interface-dynamic-argument`);
+   - an abstract generic class's own cast, which a subclass that is not generic inherits: gencs's body
+     `return this.X_cast<T…>()` calls itself until the stack overflows, hxc's returns `this` for the
+     object's own type arguments and throws `InvalidCastException` for others (case
+     `struct-and-abstract-base-casts`).
 4. **`Array`'s `object this[int]` indexer is missing** until milestone 4, so `get_Item` and
    `set_Item` are absent from `getInstanceFields(Array)`. An element write through a companion-typed
    `Array` (`a[i] = v` on an `Array<Dynamic>` holding an `Array<Int>`) converts `v` as a `Dynamic`
@@ -447,7 +464,8 @@ and `List` copy, and two threads casting one array at once.
   identical; `ai.tools` gets non-null `string`, other namespaces unchanged.
 - **Attributes**: `@:strict(...)` and `@:meta(...)` become CustomAttribute rows with properly encoded
   blobs, typed against the referenced assemblies.
-- **Resources**: Haxe `-resource` files become manifest resources, named so `haxe.Resource` works.
+- **Resources**: Haxe `-resource` files and a macro's `Context.addResource` resources become manifest
+  resources, named so `haxe.Resource` works.
   A `-D dotnet-embed=<file>@<name>` define (repeatable) embeds a raw file under an exact manifest
   name, so `TutorialTools.hx` keeps finding `coach.bin` / `tutorials.bin` through
   `GetManifestResourceNames()`. *(My call.)*
@@ -487,7 +505,8 @@ and `List` copy, and two threads casting one array at once.
    indexer until milestone 4).
 4. **Interop.** `@:nativeGen`, attributes, properties, nullability, delegates/events, overloads,
    generics that cross into referenced assemblies, the inline-C# subset, `Array`'s companion
-   indexer (hxcs's `@:classCode`), manifest resources (`-resource` is a compile error until then).
+   indexer (hxcs's `@:classCode`), manifest resources (embedded resources, `-resource` or
+   `Context.addResource`, are a compile error until then).
    - The first measurement step re-measures the server app classes that milestone 3 leaves out,
      once the IChatHandler (properties of .NET interfaces) and `ToolPlugin.ToolFunction` (a type from
      a `--net-lib` assembly's own references) causes are fixed. A class whose declaration fails gets
@@ -498,6 +517,11 @@ and `List` copy, and two threads casting one array at once.
      `ExternMembers.method`'s match is refused: haxeui-cs's `UIImage.DeviceScale(Visual)`, whose
      converted `Avalonia.Visual` parameter does not match the metadata's (the desktop app's probe), and
      `InputElement.Focus()` called without its optional arguments.
+   - gencs renames a method type parameter that shadows another (`sh<T,T1>`) where hxc emits
+     `sh<T,T>`. Only reflection on generic-parameter names can see it.
+   - An `@:overload` override that changes only the return type is refused. gencs compiles it as a C#
+     covariant-return override, which needs `newslot`, a MethodImpl row and
+     `PreserveBaseOverridesAttribute`.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code

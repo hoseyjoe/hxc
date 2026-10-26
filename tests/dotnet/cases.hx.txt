@@ -57,8 +57,9 @@ class P {
 ===
 [compile]
 dotnet: -D dotnet-version must be a whole number, 10 or later, like 11 (not net11.0)
-# -resource is not embedded yet (manifest resources are milestone 4), so it is one error, without a
-# position since it comes from the command line, collected with the build's other errors.
+# Embedded resources (-resource, or a macro's Context.addResource) are not supported yet (manifest
+# resources are milestone 4), so they are one error, without a position, collected with the build's
+# other errors.
 --- resource-is-an-error + --resource P.hx@first --resource P.hx@second
 class P {
 	static function main() {
@@ -67,7 +68,7 @@ class P {
 }
 ===
 [compile]
-dotnet: -resource is not supported with -D dotnet until milestone 4
+dotnet: embedded resources (-resource or Context.addResource) are not supported with -D dotnet until milestone 4
 P.hx:3: characters 11-22 : dotnet: untyped code is not supported yet
 --- hello @gencs @stress-fieldlookup
 class P {
@@ -10233,11 +10234,12 @@ Derived2: [Derived2_cast,I1_cast,Base_cast,a]
 ImplExt: [ImplExt_cast,I1_cast,IExt_cast,a,c]
 --- cast-bodies @gencs
 // The bodies of the cast members, called through .NET reflection (no Haxe code calls them before the
-// casts' call sites): a class that is not generic implementing a generic interface returns itself; an
-// X_cast copy converts a NativeArray<Array<T>> field through Array's __hx_cast and leaves a superclass's
-// NativeArray field whose element is no longer a type parameter (Sub<U> extends Base<Int>) not to
-// Reflect.setField but copies it element by element as gencs does, by the field's declared type; a generic
-// subclass of an abstract generic class has an X_cast of its own.
+// casts' call sites). A class that is not generic implementing a generic interface returns itself from
+// IG_cast. An X_cast copy converts each element of a NativeArray<Array<T>> field through Array's __hx_cast,
+// a null element staying null. A superclass's NativeArray field whose element is no longer a type parameter
+// (Sub<U> extends Base<Int>) is still copied element by element, by the field's declared type, as gencs does,
+// so the copy does not share it. A generic subclass of an abstract generic class has an X_cast of its own,
+// which copies its fields.
 interface IG<T> { function ig():T; function igPlain():Int; }
 class NI implements IG<String> {
 	public function new() {}
@@ -12981,14 +12983,15 @@ True
 3 0
 1
 # Recorded #8314 divergence 1 (spec, equality), sibling of cast-4872-eq. Not @gencs: gencs's C# can't compile the
-# first two lines' comparisons (CS0019, `==` on Array<object> and Array<int>), and on the last two it gives
-# `false false` for an array and its forward. Expected [run]: hxc's output.
+# first two lines' comparisons (CS0019, `==` on Array<object> and Array<int>), and on the last three it gives
+# `false false` for an array and its forward (compareMethods, enumEq, Equals). Expected [run]: hxc's output.
 --- cast-array-forward-eq
 // Equality across an Array and its forward besides #4872's Array<Dynamic>. A typed Array`1<object> (an
 // Array<Null<Int>>, an Array<Any>) against an Array of a basic element compares through Runtime.eq, as an
 // Array<Dynamic> does; two unrelated arrays and two of one CLR type stay a comparison of references. `cast ni`
 // back to Array<Null<Int>> copies, in gencs too, so that comparison is false. A closure compares its object
-// with refEq and an enum argument with Equals, so Reflect.compareMethods and Type.enumEq see one array.
+// with refEq and an enum argument with Equals, so Reflect.compareMethods and Type.enumEq see one array, and so
+// does haxe.lang.Closure's Equals override, which compares the objects through Runtime.eq.
 enum E {
 	W(a:Dynamic);
 }
@@ -13009,6 +13012,8 @@ class P {
 		var c:Array<Dynamic> = haxe.Unserializer.run("ai1i2i3h");
 		Sys.println("compareMethods " + Reflect.compareMethods(a.join, b.join) + " " + Reflect.compareMethods(a.join, c.join));
 		Sys.println("enumEq " + Type.enumEq(W(a), W(b)) + " " + Type.enumEq(W(a), W(c)));
+		var ja:Dynamic = a.join, jb:Dynamic = b.join, jc:Dynamic = c.join;
+		Sys.println("Equals " + ja.Equals(jb) + " " + ja.Equals(jc));
 	}
 }
 ===
@@ -13018,6 +13023,7 @@ any true true false false
 plain false false true
 compareMethods true false
 enumEq true false
+Equals true false
 # gencs's Array has no Equals nor GetHashCode field, and neither has hxc's: its overrides, which the #8314
 # forward adds, call methods Haxe code doesn't see. gencs: the same errors.
 --- array-equals-not-a-field
@@ -13068,7 +13074,9 @@ EXC System.FormatException
 // forward fills the gap with the target type's default, so the record serializes `zz` where gencs (whose write
 // lands in the untyped original) writes `u2`. Converted elements keep their value but take the target's CLR
 // type: on [2.0, 3] from Json, reinterpreted as Array<Int>, indexOf(2.0) goes from 0 to -1 and indexOf(2) from
-// -1 to 0 (System.Array.IndexOf compares with Equals); contains (Runtime.eq) is unchanged. @gencs.
+// -1 to 0 (System.Array.IndexOf compares with Equals); contains (Runtime.eq) is unchanged. The Serializer's cache
+// (useCache) finds an array and its forward through ==, so the pair serializes as the array and a back-reference
+// `r1` where gencs writes the array again, and read back the two share storage. @gencs.
 typedef TI = {val:Array<Int>};
 
 class P {
@@ -13082,6 +13090,14 @@ class P {
 		Sys.println(a.indexOf(2.0) + " " + a.indexOf(2) + " " + a.contains(2.0) + " " + a.contains(2));
 		var r:Array<Int> = cast a;
 		Sys.println(a.indexOf(2.0) + " " + a.indexOf(2) + " " + a.contains(2.0) + " " + a.contains(2) + " " + Std.string(r));
+		var u:Array<Dynamic> = haxe.Unserializer.run("ai1i2h");
+		var ut:Array<Int> = cast u;
+		var s = new haxe.Serializer();
+		s.useCache = true;
+		s.serialize([u, ut]);
+		var back:Array<Dynamic> = haxe.Unserializer.run(s.toString());
+		(back[0] : Array<Dynamic>).push(9);
+		Sys.println(s.toString() + " " + Std.string(back));
 	}
 }
 ===
@@ -13089,10 +13105,12 @@ class P {
 [1,2,0,0,7] oy3:valai1i2zzi7hg
 0 -1 true true
 -1 0 true true [2,3]
+aai1i2hr1h [[1,2,9],[1,2,9]]
 [gencs]
 [1,2,null,null,7] oy3:valai1i2u2i7hg
 0 -1 true true
 0 -1 true true [2,3]
+aai1i2hai1i2hh [[1,2,9],[1,2]]
 # Recorded #8314 divergence (casts notes §6.14). gencs: `[[1],[2]] [[1],[2]] false`, `[[1,2],[3]]`.
 # Expected [run]: the hxc output casts §6.14 states.
 --- cast-array-nested

@@ -411,10 +411,11 @@ class GenerateDotnet {
 			else
 				version = v;
 		}
-		// -resource files would be manifest resources, which come with milestone 4; until then haxe.Resource
-		// would find none, so it is an error rather than ignored. It comes from the command line: no position.
+		// Resources (-resource files, or a macro's Context.addResource) would be manifest resources, which come
+		// with milestone 4; until then haxe.Resource would find none, so it is an error rather than ignored.
+		// No one position names them all: none.
 		if (ctx.resources.keys().hasNext())
-			g.error("-resource is not supported with -D dotnet until milestone 4", Position.nullPos);
+			g.error("embedded resources (-resource or Context.addResource) are not supported with -D dotnet until milestone 4", Position.nullPos);
 		var identities = new Map<String, ModuleBuilder.AssemblyIdentity>();
 		mb.externScope = function(path:IlPath) {
 			for (lib in ctx.netLibs) if (lib.definesType(path)) {
@@ -583,8 +584,9 @@ class GenerateDotnet {
 
 	// gencommon's AbstractImplementationFix: an abstract's constructor and its member methods are generic
 	// over the abstract's type parameters as well, after their own: `Pr<T>`'s `then<R>` is
-	// `Pr_Impl_.then<R,T>(Th<T> this1, …)`. Its static methods are left as they are. A second generation
-	// over the same types finds them added already.
+	// `Pr_Impl_.then<R,T>(Th<T> this1, …)`. Its static methods are left as they are. The check that they
+	// are not there already is defensive: the compilation server's saveClassState snapshot, taken before
+	// generation, restores each field's params, so a later generation over the same types starts without them.
 	static function addAbstractParams(c:TClass):Void {
 		var a = switch (c.kind) {
 			case KAbstractImpl(a) if (a.params.length > 0): a;

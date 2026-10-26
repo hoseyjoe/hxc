@@ -718,13 +718,8 @@ private class CastCopy {
 			var genericCast = staticOf("cs.internal.Runtime", "genericCast", "generic classes without haxe.lang.Runtime.genericCast");
 			code.opToken(IlOps.CALL, g.mb.methodSpec(genericCast.token, g.sigs.methodSpec([newElem])), 1, 1);
 		} else {
-			var args = switch (newElem) {
-				case LClass(_, l) | LValueType(_, l): l;
-				case _: throw "internal error: a NativeArray of " + newElem;
-			}
-			code.opToken(IlOps.CASTCLASS, g.typeTokenOf(CompanionToIl.companionSig(f.elem)), 1, 1);
-			code.opToken(IlOps.CALL, g.mb.methodSpec(CompanionToIl.castHelperOf(g, f.elem), g.sigs.methodSpec(args)), 1, 1);
-			code.opToken(IlOps.CASTCLASS, g.typeTokenOf(newElem), 1, 1);
+			// castclass to the companion, its __hx_cast with the new type arguments, castclass to the element.
+			InstantiationCasts.emit(g, code, LObject, newElem);
 		}
 		code.stelem(newElem, () -> g.typeTokenOf(newElem));
 		code.branch(IlOps.BR, loop);
