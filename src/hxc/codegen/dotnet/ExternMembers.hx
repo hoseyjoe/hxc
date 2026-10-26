@@ -132,7 +132,7 @@ class ExternMembers {
 				case _: [];
 			};
 			for (m in link.cls.cmethods) {
-				if (m.mname != name || m.margs.length != want.length) continue;
+				if (m.mname != name || m.margs.length != want.length || m.mtypes.length != cf.params.length) continue;
 				if ((m.mflags.contract.indexOf(CMStatic) >= 0) != isStatic) continue;
 				var got = [for (a in m.margs) isStatic ? eraseClassParams(a.sig.snorm) : subst(a.sig.snorm, args)];
 				if (IlPaths.sigsEq(got, want)) {

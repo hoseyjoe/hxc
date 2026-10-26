@@ -14310,3 +14310,191 @@ IHx,M4.IFiles,M4.IPing,M4.IPingMore,haxe.lang.IHxObject
 IHx,M4.IFiles,M4.IPing,M4.IPingMore,haxe.lang.IHxObject
 IHxPing,M4.IPing,haxe.lang.IHxObject
 pingB
+# M4Lib (@netlib=M4Lib), generic methods. Non-generic overloads declared after generic ones with the same parameter
+# types (CreateCriteria(string), IMultiQuery.Add), generic overloads Haxe picks over earlier non-generic ones
+# (ICriteria.List<T>(), with and without an expected type), and the type arguments hxc must write (no top-level
+# erasure; 3c erasure inside Box<HxThing>). -D net-ver=40: M4Lib's Gen.Apply uses Func<T,R>.
+--- netlib-generic-overloads @gencs @netlib=M4Lib + -D net-ver=40
+import m4.*;
+import cs.system.collections.generic.IList_1;
+
+class HxThing { public var v:Int; public function new(v) this.v = v; public function toString() return "HxThing" + v; }
+enum Color { Red; Green; }
+class Box<T> { public var x:T; public function new(x) this.x = x; }
+
+class P {
+	static function main() {
+		var s = new Sess();
+		var is:ISess = s;
+		Sys.println(is.Make("Blob"));
+		var t:cs.system.Type = cs.Lib.toNativeType(Rec);
+		Sys.println(is.Make(t));
+		var c = is.Crit("Rec");
+		var l1 = c.List();
+		Sys.println(l1.Count);
+		var l2:IList_1<Rec> = c.List();
+		Sys.println(l2.Count);
+		var u:Rec = c.Unique();
+		var u2 = c.Unique();
+		var r:Rec = is.Get(1);
+		var h:HxThing = is.Get(2);
+		var i:Int = is.Get(3);
+		var str:String = is.Get(4);
+		var a:Array<Int> = is.Get(5);
+		var ni:Null<Int> = is.Get(6);
+		var an:{x:Int} = is.Get(7);
+		var d:Dynamic = is.Get(8);
+		var col:Color = is.Get(9);
+		var bx:Box<HxThing> = is.Get(10);
+		var bi:Box<Int> = is.Get(11);
+		var m = is.Multi();
+		m.Add("q1").Add("q2");
+		Sys.println(s.Log);
+		Gen.Id(new HxThing(1));
+		Gen.Id(Red);
+		Gen.Id(3);
+		Gen.Id([1, 2]);
+		Gen.Id(new Box(1));
+		Gen.Id(new Rec("a"));
+		Gen.Id((null:Null<Int>));
+		Gen.Id({x: 1});
+		var lst = Gen.Of("a", "b");
+		Sys.println(lst.Count);
+		Sys.println(Gen.Type());
+		Sys.println(Gen.First(cs.Lib.nativeArray([new HxThing(5)], false)));
+	}
+}
+===
+[run]
+Make(Blob)
+Make(Type Rec)
+List<System.Object>()
+0
+List<M4.Rec>()
+0
+Unique()
+Unique()
+Get<M4.Rec>(1)
+Get<HxThing>(2)
+Get<System.Int32>(3)
+Get<System.String>(4)
+Get<Array`1[System.Int32]>(5)
+Get<System.Object>(6)
+Get<System.Object>(7)
+Get<System.Object>(8)
+Get<Color>(9)
+Get<Box`1[System.Object]>(10)
+Get<Box`1[System.Int32]>(11)
+Add(q1) Add(q2)
+Id<HxThing>
+Id<Color>
+Id<System.Int32>
+Id<Array`1[System.Int32]>
+Id<Box`1[System.Int32]>
+Id<M4.Rec>
+Id<System.Object>
+Id<System.Object>
+Of<System.String>
+2
+System.Object
+First<HxThing>=HxThing5
+
+# The overload Haxe picks is the generic ICrit.List<T>(); matching on name and parameters alone called the
+# non-generic List() and died with an InvalidCastException.
+--- netlib-generic-overload-picks-generic @gencs @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.IList_1;
+class P {
+	static function main() {
+		var c:ICrit = new Sess();
+		var l2:IList_1<Rec> = c.List();
+		Sys.println(l2.Count);
+	}
+}
+===
+[run]
+List<M4.Rec>()
+0
+
+# The same overloads in both metadata orders (ICrit: non-generic first; ICrit2: generic first, so Haxe picks
+# the non-generic List()).
+--- netlib-generic-overload-order @gencs @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.IList_1;
+class P {
+	static function main() {
+		var c:ICrit = new Sess();
+		var l1 = c.List();
+		Sys.println(l1.Count);
+		var l2:IList_1<Rec> = c.List();
+		Sys.println(l2.Count);
+		var c2:ICrit2 = new Crit2();
+		var k1 = c2.List();
+		Sys.println(k1.Count);
+	}
+}
+===
+[run]
+List<System.Object>()
+0
+List<M4.Rec>()
+0
+List()
+2
+
+# Two generic overloads told apart by parameter type. A regression case for the arity check.
+--- netlib-generic-two-generic-overloads @gencs @netlib=M4Lib
+import m4.*;
+class P {
+	static function main() {
+		Sys.println(Picks.Pick(1));
+		Sys.println(Picks.Pick("a"));
+		Sys.println(Picks.Make("x", 1));
+		Sys.println(Picks.Make(2.5, "s"));
+	}
+}
+===
+[run]
+Pick<System.Object>(int)
+Pick<System.Object>(string)
+x
+2.5
+
+# A Haxe class implementing a generic .NET interface method, overriding a method of a generic .NET class and an
+# operator of a generic .NET type stay refused in 4a. gencs compiles it and prints:
+#   visit 1,visit s / x! / Derived.Show(v)|Derived / True
+--- netlib-generic-members-refused @netlib=M4Lib
+import m4.*;
+
+class Visitor implements IVisitor {
+	public function new() {}
+	public function Visit<T>(x:T):String return "visit " + Std.string(x);
+}
+class SBox implements IBox_1<String> {
+	var v = "";
+	public function new() {}
+	public function Get():String return v + "!";
+	public function Set(x:String):Void v = x;
+}
+class Derived extends Base_1<String> {
+	public function new() super();
+	@:overload override public function Show(x:String):String return "Derived.Show(" + x + ")";
+	@:overload override public function Name():String return "Derived";
+}
+class P {
+	static function main() {
+		Sys.println(UseGen.Visit(new Visitor()));
+		Sys.println(UseGen.RoundTrip(new SBox()));
+		Sys.println(UseGen.Call(new Derived()));
+		var a = new Vec_1<Int>(1), b = new Vec_1<Int>(1);
+		Sys.println(a == b);
+	}
+}
+===
+[compile]
+P.hx:3: lines 3-6 : dotnet: generic .NET interface methods are not supported yet
+P.hx:15: characters 13-92 : dotnet: overriding methods of generic .NET classes are not supported yet
+P.hx:20: characters 28-41 : dotnet: Visitor (left out: generic .NET interface methods) is not supported yet
+P.hx:22: characters 27-40 : dotnet: Derived (left out: overriding methods of generic .NET classes) is not supported yet
+P.hx:24: characters 15-21 : dotnet: operators of generic .NET types are not supported yet
+
