@@ -413,11 +413,22 @@ class TexprOps {
 		}
 	}
 
-	// `==` or `!=` on Class or Enum values, as gencs writes it: Runtime.refEq when an operand is a type
-	// expression (DynamicOperators takes those), else Runtime.typeEq, against null too. False when an
-	// operand is not one of these.
+	// typeOperand, where a System.Type is a Class value too: gencs compares two of them with typeEq outside
+	// haxe.lang.Runtime, as hxcs's Std.isOfType compares a GenericInterface's type with `==` (probe
+	// t7probe/teq).
+	function equalityTypeOperand(e:TExpr):Null<TypeOperand> {
+		var k = typeOperand(e);
+		if (k == null && !tl.inRuntimeClass() && TypeFunctions.follow(e.type).match(TInst(_, []))
+			&& IlPaths.sigEq(tl.sig(e.type), TexprCalls.systemType))
+			return OValue;
+		return k;
+	}
+
+	// `==` or `!=` on Class, Enum or System.Type values, as gencs writes it: Runtime.refEq when an operand is
+	// a type expression (DynamicOperators takes those), else Runtime.typeEq, against null too. False when
+	// an operand is not one of these.
 	function typeEquality(ret:Ret, op:Binop, e1:TExpr, e2:TExpr):Bool {
-		var k1 = typeOperand(e1), k2 = typeOperand(e2);
+		var k1 = equalityTypeOperand(e1), k2 = equalityTypeOperand(e2);
 		if (k1 == null || k2 == null || k1 == ONull && k2 == ONull) return false;
 		var ref = k1 == OStatics || k2 == OStatics;
 		var s = ref ? LObject : TexprCalls.systemType;

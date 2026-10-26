@@ -747,14 +747,22 @@ class TexprDynamic {
 			tl.coerce(LBool, ret);
 			return;
 		}
-		// A generic class is tested through gencs's companion interface, plan 3c; an enum class, whose type
-		// parameters are erased, as itself; Class and Enum as System.Type, what their values are.
-		var erased = switch (mt) {
-			case TEnumDecl(en): EnumToIl.isHxGenEnum(en);
-			case TAbstractDecl(_): path == "Class" || path == "Enum";
-			case _: false;
+		// A generic class is tested as gencs writes `o is G`: G<Dynamic…>, which is its companion interface, so
+		// any instantiation and any subclass passes (types notes §5), or for a @:nativeGen or .NET class
+		// ``G`1<object…>``. gencs names a companion for a native generic or a generic struct too, which has
+		// none, so its C# does not compile (probe t7probe/nocomp). An enum class, whose type parameters are
+		// erased, is tested as itself; Class and Enum as System.Type, what their values are.
+		var tested = switch (mt) {
+			case TClassDecl(c) if (c.params.length > 0 && !c.kind.match(KAbstractImpl(_))):
+				if (!TypeFunctions.hasClassFlag(c, CExtern) && HxGen.isHxGen(mt) && !g.hasCompanion(c))
+					throw new Unsupported("Std.isOfType with a generic class that has no companion interface", false);
+				tl.sig(TInst(c, [for (_ in c.params) TypeFunctions.tDynamic]));
+			case TEnumDecl(en) if (EnumToIl.isHxGenEnum(en)): null;
+			case TAbstractDecl(_) if (path == "Class" || path == "Enum"): null;
+			case _:
+				if (TypeFunctions.tParams(mt).length > 0) throw new Unsupported("Std.isOfType with a generic type", false);
+				null;
 		}
-		if (TypeFunctions.tParams(mt).length > 0 && !erased) throw new Unsupported("Std.isOfType with a generic type", false);
 		var tests:Array<IlSigNorm> = [], call:Null<String> = null;
 		if (!tl.inRuntimeClass()) switch (path) {
 			case "Float": tests = [LFloat64, LInt32, LUInt32];
@@ -767,7 +775,7 @@ class TexprDynamic {
 			case _:
 		}
 		if (tests.length == 0) {
-			code.opToken(IlOps.ISINST, g.typeTokenOf(tl.calls.typeArg(texpr)), 1, 1);
+			code.opToken(IlOps.ISINST, g.typeTokenOf(tested != null ? tested : tl.calls.typeArg(texpr)), 1, 1);
 			code.op(IlOps.LDNULL, 0, 1);
 			code.op(IlOps.CGT_UN, 2, 1);
 			tl.coerce(LBool, ret);

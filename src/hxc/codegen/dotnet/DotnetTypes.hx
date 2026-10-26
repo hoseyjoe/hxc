@@ -413,10 +413,12 @@ class DotnetTypes {
 	}
 
 	// Whether one of `params`, through typedefs and Null, is Dynamic, which makes gencs type the
-	// instantiation as its companion interface and instantiate it with object for every argument.
+	// instantiation as its companion interface and instantiate it with object for every argument. An
+	// unbound monomorph counts, as in gencs: `var a = []` is a `global::Array`, and so is the result of
+	// `Std.downcast(d, Array)`.
 	public static function hasDynamicArg(params:Array<T>):Bool {
 		for (p in params) switch (TypeFunctions.follow(p)) {
-			case TDynamic(_): return true;
+			case TDynamic(_) | TMono(_): return true;
 			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Dynamic"): return true;
 			case _:
 		}
