@@ -954,7 +954,7 @@ class TexprCalls {
 		// A generic method's type arguments, inferred from the call as for a Haxe method.
 		var margs:Array<IlSigNorm> = [];
 		// Matching skips methods of another generic arity, so this fires only after a matching bug.
-		if (cf.params.length != m.genericCount) throw new Unsupported("a .NET method with another generic arity (internal: overload matching)", true);
+		if (cf.params.length != m.genericCount) throw Unsupported.bug("a .NET method with another generic arity (internal: overload matching)");
 		if (m.genericCount > 0) {
 			var declared = switch (fa) {
 				case FInstance(_, params, _): TypeFunctions.applyParams(c.params, params, cf.type);
