@@ -368,14 +368,14 @@ private class ReflectionEmitter {
 
 	// The object on the stack as a `to`, as gencs converts a Dynamic (TexprDynamic.toSig: Runtime.toInt,
 	// toDouble, toBool, toString, genericCast for a type parameter, C#'s cast), Null<T>.ofDynamic.
-	function fromDynamic(to:IlSigNorm, t:T):Void {
+	function fromDynamic(to:IlSigNorm):Void {
 		switch (to) {
 			case LValueType(_, [_]) if (lower.isHaxeNull(to)):
 				// Null<object>.ofDynamic<T>(value), as gencs writes it.
 				lower.ofDynamic(to);
 			case LClass(_, _) if (g.isGenericHaxeClass(to)):
 				// An Array<Dynamic> into an Array<Int> field, which gencs's __hx_setField converts with __hx_cast.
-				lower.instanceCast(LObject, to, t);
+				lower.instanceCast(LObject, to);
 			case _ if (DotnetTypes.isValueType(to) || to.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _) | LTypeParam(_) | LMethodTypeParam(_))):
 				lower.dyn.toSig(to);
 			case _:
@@ -451,7 +451,6 @@ private class ReflectionEmitter {
 	function baseCall(r:ReflectMember, argc:Int, hasResult:Bool):Void {
 		var n = @:privateAccess ReflectionMembers.name(r);
 		var cur = c.superClass;
-		var t:Null<T> = cur == null ? null : TInst(cur.c, cur.params);
 		var found:Null<{plan:ClassPlan, m:MethodPlan, owner:IlSigNorm}> = null;
 		if (cur == null) {
 			// A class without a superclass extends HxObject, which declares every member.
@@ -462,7 +461,7 @@ private class ReflectionEmitter {
 		while (cur != null && found == null) {
 			var p = g.planOf.get(cur.c);
 			if (p == null) break;
-			for (m in p.methods) if (m.name == n && m.hasThis) found = {plan: p, m: m, owner: lower.sig(t)};
+			for (m in p.methods) if (m.name == n && m.hasThis) found = {plan: p, m: m, owner: g.types.classSig(cur.c, cur.params)};
 			if (found != null) break;
 			var next = cur.c.superClass;
 			if (next == null) {
@@ -473,7 +472,6 @@ private class ReflectionEmitter {
 			}
 			var params = [for (p in next.params) TypeFunctions.applyParams(cur.c.params, cur.params, p)];
 			cur = {c: next.c, params: params};
-			t = TInst(cur.c, cur.params);
 		}
 		// A superclass outside this module's plans, such as an extern class marked @:hxGen, has no members
 		// to call.
@@ -644,7 +642,7 @@ private class ReflectionEmitter {
 		var target = field(e);
 		var tmp = local(target.type);
 		code.ldarg(3);
-		if (isFloat) fromDouble(tmp.sig) else fromDynamic(tmp.sig, target.type);
+		if (isFloat) fromDouble(tmp.sig) else fromDynamic(tmp.sig);
 		code.stloc(tmp.index);
 		var store = () -> lower.texpr(RVoid, mk(TBinop(OpAssign, target, localExpr(tmp)), target.type));
 		if (writesCall(cf)) {
@@ -714,7 +712,7 @@ private class ReflectionEmitter {
 				code.ldcI4(i);
 				code.opToken(IlOps.LDELEM, g.typeTokenOf(LObject), 2, 1);
 			}
-			fromDynamic(tmp.sig, a.t);
+			fromDynamic(tmp.sig);
 			code.stloc(tmp.index);
 			args.push(localExpr(tmp));
 		}

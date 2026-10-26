@@ -1513,7 +1513,9 @@ type public Counter`1<T> extends haxe.lang.HxObject implements Counter, haxe.lan
   method public static hidebysig int32 start()
   method public static hidebysig string describe()
   method private static hidebysig specialname rtspecialname void .cctor()
---- generic-refusals
+--- generic-casts-once-refused @gencs
+// Casts plan 3c refused until X<Dynamic> was typed as the companion interface: a type parameter cast to
+// Box<Int>, Dynamic to Box<Int>, Array<Int> to Array<Dynamic>.
 class Box<T> {
 	public var v:T;
 	public function new(v:T) {
@@ -1531,12 +1533,12 @@ class P {
 		arr.push(2);
 		var dyn:Array<Dynamic> = cast arr;
 		var n:Null<Int> = arr.length;
-		Sys.println(unwrap(1).v + arr.length);
+		Sys.println(unwrap(b).v + arr.length + dyn.length);
 	}
 }
 ===
-[compile]
-P.hx:16: characters 28-36 : dotnet: a cast from Array<Int> to Array<Dynamic> is not supported yet
+[run]
+5
 --- array-methods
 class P {
 	static function show(a:Array<Int>):String {
@@ -1574,7 +1576,8 @@ class P {
 bacnull
 3
 2,
---- generic-instantiation-cast-is-an-error
+--- generic-instantiation-cast-assignments @gencs
+// Array<Dynamic> to Array<Int> and back, refused until plan 3c typed Array<Dynamic> as the companion.
 class P {
 	static function main() {
 		var a:Array<Dynamic> = [1, 2, 3], b:Array<Int> = [];
@@ -1584,8 +1587,8 @@ class P {
 	}
 }
 ===
-[compile]
-P.hx:5: characters 26-27 : dotnet: a cast from Array<Int> to Array<Dynamic> is not supported yet
+[run]
+9
 --- null-of-type-parameters @lib @module=pack.IFind @dump=pack.IFind`1
 package pack;
 interface IFind<T> {
@@ -1625,7 +1628,11 @@ class P {
 	}
 }
 ===
---- struct-to-unimplemented-interface-is-an-error
+--- struct-to-generic-interface-casts
+// A generic struct has no companion and its interface casts return `this` (plan 3c): boxed into IGet<Dynamic>,
+// the companion, it is the same value, and a cast to an IGet it does not implement throws. gencs's C# for a
+// generic struct does not compile, so there is no gencs run. Refused until plan 3c typed IGet<Dynamic> as the
+// companion.
 interface IGet<T> {
 	function get():T;
 }
@@ -1641,13 +1648,17 @@ interface IGet<T> {
 class P {
 	static function main() {
 		var g:IGet<Dynamic> = new Cell(1);
-		var h:IGet<String> = cast new Cell(2);
-		Sys.println(g);
+		Sys.println(g.get());
+		try {
+			var h:IGet<String> = cast new Cell(2);
+			Sys.println(h);
+		} catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
 	}
 }
 ===
-[compile]
-P.hx:15: characters 25-36 : dotnet: a cast from Cell<Int> to IGet<Dynamic> is not supported yet
+[run]
+1
+EXC System.InvalidCastException
 --- struct-boxes-to-its-interface
 interface IGet<T> {
 	function get():T;
@@ -1935,8 +1946,6 @@ class P {
 ===
 [compile]
 P.hx:19: characters 15-66 : dotnet: `try` in an operand after a member of a struct field is not supported yet
-P.hx:23: characters 4-12 : dotnet: this kind of assignment is not supported yet
-P.hx:28: characters 4-12 : dotnet: this kind of assignment is not supported yet
 P.hx:31: characters 12-41 : dotnet: Type.createEmptyInstance of an abstract class is not supported yet
 P.hx:40: characters 10-18 : dotnet: `return` inside expressions is not supported yet
 --- throw-and-return-as-values
@@ -4286,10 +4295,14 @@ True
 --- generic-from-dynamic-other-instantiation
 class P {
 	static function main() {
-		var d:Dynamic = new haxe.ds.StringMap<Int>();
+		var m = new haxe.ds.StringMap<Int>();
+		m.set("a", 1);
+		var d:Dynamic = m;
 		try {
 			var v:haxe.ds.StringMap<Dynamic> = d;
-			Sys.println(v);
+			Sys.println(v.get("a") + 1);
+			v.set("b", 2);
+			Sys.println(m.get("b"));
 		} catch (e:cs.system.NotSupportedException) {
 			Sys.println(e.Message);
 		}
@@ -4297,7 +4310,8 @@ class P {
 }
 ===
 [run]
-hxc dotnet: converting a value to haxe.ds.StringMap<Dynamic> is not supported yet
+2
+2
 --- override-changes-signature
 class Shape {
 	public var n:Int;
@@ -9434,6 +9448,7 @@ class G<T> {
 	public function a():Int return 1;
 	function priv():String return "p";
 	public function withC(c:G<C>):Array<C> return [];
+	public function withDyn(d:G<Dynamic>):Void {}
 	public function nullT(x:Null<T>):Void {}
 	public function arrT(x:Array<T>):Void {}
 	public function fnT(f:T->Void):Void {}
@@ -9482,7 +9497,7 @@ class P {
 	}
 	static function main() {
 		var g = new G<Int>(1);
-		g.a(); g.withC(null); g.nullT(null); g.arrT(null); g.fnT(null); g.fnPlain(null); g.gen(1); g.genNoU(); G.stat(); g.dyn(); g.inl(); g.ov(1); g.toString(); g.prop; g.anon(); g.optInt(); g.defInt();
+		g.a(); g.withC(null); g.withDyn(null); g.nullT(null); g.arrT(null); g.fnT(null); g.fnPlain(null); g.gen(1); g.genNoU(); G.stat(); g.dyn(); g.inl(); g.ov(1); g.toString(); g.prop; g.anon(); g.optInt(); g.defInt();
 		var s = new GS<Int>(1); s.own();
 		Sys.println(Type.getInstanceFields(G));
 		Sys.println(Type.getInstanceFields(GS));
@@ -9492,14 +9507,15 @@ class P {
 }
 ===
 [run]
-[G_cast,a,priv,withC,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
-[GS_cast,G_cast,a,own,priv,withC,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
+[G_cast,a,priv,withC,withDyn,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
+[GS_cast,G_cast,a,own,priv,withC,withDyn,nullT,arrT,fnT,fnPlain,gen,genNoU,inl,ov,toString,kept,get_prop,anon,optInt,defInt,v,n,dyn]
 G companion: G interface implements haxe.lang.IGenericObject,haxe.lang.IHxObject
   [GenericInterface(G`1[System.Object])]
   System.Object G_cast[T_c]()
   Int32 a()
   System.String priv()
   Array`1[System.Object] withC(G`1[System.Object])
+  Void withDyn(G)
   Void fnPlain(haxe.lang.Function)
   Int32 genNoU[U]()
   Int32 inl()
@@ -9541,6 +9557,7 @@ class H<T> {
 	public var gInt:G<Int>;
 	public var gNInt:G<Null<Int>>;
 	public var gString:G<String>;
+	public var gDyn:G<Dynamic>;
 	public var gAny:G<Any>;
 	public var gC:G<C>;
 	public var gI:G<I>;
@@ -9555,10 +9572,13 @@ class H<T> {
 	public var gDT:G<cs.system.DateTime>;
 	public var gDOW:G<cs.system.DayOfWeek>;
 	public var aAI:Array<Array<Int>>;
+	public var aND:Array<Null<Dynamic>>;
+	public var om:haxe.ds.ObjectMap<C, Dynamic>;
 	public var lC:cs.system.collections.generic.List_1<C>;
 	public var lNI:cs.system.collections.generic.List_1<Null<Int>>;
+	public var lGD:cs.system.collections.generic.List_1<G<Dynamic>>;
 	public function new() {}
-	public function meth<U>(pU:G<U>, pC:G<C>):G<U> return pU;
+	public function meth<U>(pU:G<U>, pC:G<C>, pD:G<Dynamic>):G<U> return pU;
 }
 class P {
 	static function typeName(t:cs.system.Type):String return t == null ? "null" : t.ToString();
@@ -9588,7 +9608,7 @@ class P {
 	static function main() {
 		var h = new H<Int>();
 		var t = cs.Lib.toNativeType(H).GetGenericTypeDefinition();
-		for (f in ["gInt", "gNInt", "gString", "gAny", "gC", "gI", "gE", "gAI", "gAnon", "gFun", "gT", "gNT", "gGS", "gSB", "gDT", "gDOW", "aAI", "lC", "lNI"])
+		for (f in ["gInt", "gNInt", "gString", "gDyn", "gAny", "gC", "gI", "gE", "gAI", "gAnon", "gFun", "gT", "gNT", "gGS", "gSB", "gDT", "gDOW", "aAI", "aND", "om", "lC", "lNI", "lGD"])
 			Sys.println(f + ": " + typeName(t.GetField(f).FieldType));
 		Sys.println("meth: " + Std.string(t.GetMethod("meth")));
 		dumpType("G companion", cs.system.Type._GetType("G"));
@@ -9599,7 +9619,7 @@ class P {
 		dumpType("GS companion", cs.system.Type._GetType("GS"));
 		new GI<Int>().ig();
 		new GS<Int>(1).own();
-		h.meth(null, null);
+		h.meth(null, null, null);
 	}
 }
 ===
@@ -9607,6 +9627,7 @@ class P {
 gInt: G`1[System.Int32]
 gNInt: G`1[System.Object]
 gString: G`1[System.String]
+gDyn: G
 gAny: G`1[System.Object]
 gC: G`1[System.Object]
 gI: G`1[System.Object]
@@ -9621,9 +9642,12 @@ gSB: G`1[System.Object]
 gDT: G`1[System.DateTime]
 gDOW: G`1[System.DayOfWeek]
 aAI: Array`1[System.Object]
+aND: Array
+om: haxe.ds.ObjectMap
 lC: System.Collections.Generic.List`1[C]
 lNI: System.Collections.Generic.List`1[System.Object]
-meth: G`1[U] meth[U](G`1[U], G`1[System.Object])
+lGD: System.Collections.Generic.List`1[G]
+meth: G`1[U] meth[U](G`1[U], G`1[System.Object], G)
 G companion: G interface implements haxe.lang.IGenericObject,haxe.lang.IHxObject
   [GenericInterface(G`1[System.Object])]
   System.Object G_cast[T_c]()
@@ -9887,6 +9911,7 @@ class P {
 	static var sm:Map<String, Int> = new Map();
 	static var im:Map<Int, String> = new Map();
 	static var om:Map<K, Float> = new Map();
+	static var dm:Map<String, Dynamic> = new Map();
 	static var anon:{m:Map<String, Int>} = {m: new Map()};
 	static var tz:Map<E, Array<String>> = [A => ["x"]];
 
@@ -9901,6 +9926,8 @@ class P {
 		var k = new K();
 		om.set(k, 1.5);
 		Sys.println(om.get(k));
+		dm.set("q", 1.5);
+		Sys.println(dm.get("q"));
 		anon.m.set("z", 26);
 		Sys.println(anon.m.get("z"));
 		var keys = [for (key in sm.keys()) key];
@@ -9929,6 +9956,7 @@ class P {
 [run]
 3
 x true false
+1.5
 1.5
 26
 [a,b]
@@ -10039,7 +10067,17 @@ class P {
 		var gc = new G<C>(new CI());
 		var gI:G<I> = cast gc;
 		Sys.println(Type.getClass(gI) + " " + (cast gI == cast gc));
+		var gd:G<Dynamic> = gi;
+		Sys.println((gd == cast gi) + " " + Type.getClass(gd));
+		var gc2:G<C> = cast gd;
+		Sys.println(Type.getClass(gc2) + " " + (cast gc2 == cast gi));
+		var gi2:G<Int> = cast gd;
+		Sys.println(Type.getClass(gi2) + " " + (gi2 == gi));
 		var ai = [1, 2];
+		var ad:Array<Dynamic> = ai;
+		Sys.println(ad == cast ai);
+		var aiBack:Array<Int> = cast ad;
+		Sys.println(aiBack == ai);
 		var af:Array<Float> = cast ai;
 		Sys.println(af == cast ai);
 	}
@@ -10048,6 +10086,11 @@ class P {
 [run]
 G`1[System.Double] false
 G`1[System.Object] true
+true G`1[System.Int32]
+G`1[System.Object] false
+G`1[System.Int32] true
+True
+True
 False
 # Casts notes §6.7 minus the three FP -> Th casts and `IMap from Dynamic`, which work in hxc
 # (interface-cast-fixed). Casts fact 5 says IMap gets a plain C# cast; that holds only for the anonymous field.
@@ -10093,6 +10136,8 @@ class P {
 	static function main() {
 		run("Dynamic(FP<Int>) -> Th<Int>", () -> { var d:Dynamic = new FP<Int>(1); var x:Th<Int> = d; x.get(); });
 		run("Dynamic(FP<Dyn>) -> FP<Int>", () -> { var d:Dynamic = new FP<Dynamic>(1); var x:FP<Int> = d; x.get(); });
+		run("FP<Int> -> Th<Dynamic>", () -> { var x:Th<Dynamic> = new FP<Int>(1); x.get(); });
+		run("anon Map<String,Int> unserialized", () -> { var t:TM = haxe.Unserializer.run(haxe.Serializer.run({m: ["a" => 1]})); t.m.get("a"); });
 		run("anon Map<String,Class> unserialized", () -> { var t:TO = haxe.Unserializer.run(haxe.Serializer.run({m: ["a" => new FP(1)]})); t.m.get("a").get(); });
 	}
 }
@@ -10100,6 +10145,8 @@ class P {
 [run]
 Dynamic(FP<Int>) -> Th<Int>: 1
 Dynamic(FP<Dyn>) -> FP<Int>: 1
+FP<Int> -> Th<Dynamic>: 1
+anon Map<String,Int> unserialized: EXC System.InvalidCastException: Unable to cast object of type 'haxe.ds.StringMap`1[System.Object]' to t
 anon Map<String,Class> unserialized: 1
 # Casts notes §6.9 minus `Any->Int` (cast-same-instantiation-8314).
 --- cast-same-instantiation @gencs
@@ -10356,14 +10403,18 @@ class P {
 		t("dyn->Box<Int>", () -> { var d:Dynamic = new Box(1); var b:Box<Int> = d; return b.v + 1; });
 		t("dyn->Box<Int> from Box<String>", () -> { var d:Dynamic = new Box("s"); var b:Box<Int> = d; return b.v; });
 		t("dyn->Box<Int> from Box<Dyn>", () -> { var d:Dynamic = new Box<Dynamic>(4); var b:Box<Int> = d; return Std.string(Type.getClass(b)) + b.v; });
+		t("dyn->Box<Dyn> from Box<Int>", () -> { var d:Dynamic = new Box<Int>(4); var b:Box<Dynamic> = d; return Std.string(Type.getClass(b)) + b.v + (b == d); });
 		t("dyn->Box<String> from Int", () -> { var d:Dynamic = 5; var b:Box<String> = d; return b; });
 		t("unwrap(1)", () -> unwrap(1).v);
 		t("unwrap(Box<Int>)", () -> { var b = new Box<Int>(2); return unwrap(b).v; });
+		t("Array<Int>->Array<Dyn> cast", () -> { var arr = [1]; var dyn:Array<Dynamic> = cast arr; dyn.push(2); return arr.length + "/" + dyn.length + " " + Std.string(Type.getClass(dyn)); });
+		t("Array<Int>->Array<Dyn> assign", () -> { var b:Array<Int> = [1]; var c:Array<Dynamic> = b; c.push("x"); return b.length + "/" + c.length; });
 		t("Array<Dyn>->Array<Int> bad", () -> { var a:Array<Dynamic> = ["x", 2]; var b:Array<Int> = cast a; return b[0]; });
 		t("Array<Dyn>->Array<Int> float", () -> { var a:Array<Dynamic> = [1.5, 2]; var b:Array<Int> = cast a; return b; });
 		t("Array<Dyn>->Array<String> int", () -> { var a:Array<Dynamic> = [1, 2]; var b:Array<String> = cast a; return b; });
 		t("Array<Int>->Array<Float>", () -> { var a = [1, 2]; var b:Array<Float> = cast a; b.push(0.5); return a.length + "/" + b + Std.string(Type.getClass(b)); });
 		t("class->IGet<String>", () -> { var h:IGet<String> = cast new Cell(2); return h.get(); });
+		t("class->IGet<Dyn>", () -> { var g:IGet<Dynamic> = new Cell(1); return g.get(); });
 		t("Array<Int> -> Array<Null<Int>>", () -> { var a = [1, 2]; var b:Array<Null<Int>> = cast a; b.push(null); return a.length + "/" + b.length; });
 		t("Array<Null<Int>> -> Array<Int>", () -> { var a:Array<Null<Int>> = [1, null]; var b:Array<Int> = cast a; return b; });
 	}
@@ -10378,14 +10429,18 @@ G<Float> from G<Int> G`1[System.Double]false
 dyn->Box<Int> 2
 dyn->Box<Int> from Box<String> EXC System.FormatException
 dyn->Box<Int> from Box<Dyn> Box`1[System.Int32]4
+dyn->Box<Dyn> from Box<Int> Box`1[System.Int32]4true
 dyn->Box<String> from Int EXC System.InvalidCastException
 unwrap(1) EXC System.InvalidCastException
 unwrap(Box<Int>) 2
+Array<Int>->Array<Dyn> cast 2/2 Array`1[System.Int32]
+Array<Int>->Array<Dyn> assign EXC System.FormatException
 Array<Dyn>->Array<Int> bad EXC System.FormatException
 Array<Dyn>->Array<Int> float [2,2]
 Array<Dyn>->Array<String> int EXC System.InvalidCastException
 Array<Int>->Array<Float> 2/[1,2,0.5]Array`1[System.Double]
 class->IGet<String> EXC System.InvalidCastException
+class->IGet<Dyn> 1
 Array<Int> -> Array<Null<Int>> 2/3
 Array<Null<Int>> -> Array<Int> [1,0]
 # Std notes L1, L2: flips null-return-type-inference-refusal to the gencs run.
@@ -10696,3 +10751,335 @@ ret Map: 8
 anon Pr: 2
 anon IMap: 1
 anon Th: 4
+
+
+# Types notes §8.9 (probe access): G<Dynamic>, Array<Dynamic> and Map<String,Dynamic> members, typed ->
+# companion -> typed. Its commented-out takeAny(ai) is companion-access-array-any.
+--- companion-access @gencs
+// Member access through a companion-interface-typed value (G<Dynamic>, Array<Dynamic>, StringMap<Dynamic>).
+class G<T> {
+	public var v:T;
+	public var n:Int = 7;
+	public var s:String = "s";
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+	public function set(x:T):Void v = x;
+	public function plain():Int return n;
+	public function str(a:String):String return a + s;
+	public function gen<U>(u:U):U return u;
+	public var prop(get, set):Int;
+	function get_prop() return n * 2;
+	function set_prop(x:Int) return n = x;
+	public static function stat():Int return 1;
+}
+class P {
+	static function takeInt(g:G<Int>):Int return g.v;
+	static function takeDyn(g:G<Dynamic>):Dynamic return g.v;
+	static function takeAI(a:Array<Int>):Int return a.length;
+	static function takeAD(a:Array<Dynamic>):Int return a.length;
+	static function takeAny(a:Array<Any>):Int return a.length;
+	static function retD():Array<Dynamic> return [1, 2];
+	static function main() {
+		var g:G<Dynamic> = new G<Dynamic>(1);
+		Sys.println(g.v);
+		g.v = 2;
+		Sys.println(g.n);
+		g.n = 8;
+		g.n += 1;
+		Sys.println(g.get());
+		g.set(3);
+		Sys.println(g.plain());
+		Sys.println(g.str("a"));
+		Sys.println(g.gen(4));
+		Sys.println(g.prop);
+		g.prop = 5;
+		var gi:G<Int> = new G<Int>(10);
+		var gd:G<Dynamic> = gi; // typed -> companion
+		Sys.println(gd.v);
+		var back:G<Int> = cast gd; // companion -> typed
+		Sys.println(back.v);
+		Sys.println(takeInt(cast g));
+		Sys.println(takeDyn(gi));
+		var a:Array<Dynamic> = [1, "x", 3];
+		Sys.println(a.length);
+		a.push(4);
+		Sys.println(a[0]);
+		a[1] = "y";
+		for (x in a) Sys.print(x + ",");
+		Sys.println("");
+		var it = a.iterator();
+		Sys.println(it.hasNext());
+		Sys.println(a.join("-"));
+		Sys.println(a.indexOf(3));
+		Sys.println(a.pop());
+		var m = a.map(x -> Std.string(x));
+		Sys.println(m);
+		var f = a.filter(x -> x != null);
+		Sys.println(f.length);
+		var c = a.concat([9]);
+		Sys.println(c.length);
+		a.reverse();
+		Sys.println(a.copy());
+		var ai:Array<Int> = [1, 2, 3];
+		Sys.println(takeAD(ai));
+		var ad:Array<Dynamic> = ai;
+		Sys.println(ad.length);
+		var ai2:Array<Int> = cast ad;
+		Sys.println(ai2.length);
+		var a2:Array<Dynamic> = [5, 6];
+		Sys.println(takeAI(cast a2));
+		// takeAny(ai) is in companion-access-array-any: gencs writes C# that does not compile (CS0030).
+		var r = retD();
+		Sys.println(r.length);
+		var sm:Map<String, Dynamic> = new Map();
+		sm.set("a", 1);
+		Sys.println(sm.get("a"));
+		Sys.println(sm.exists("a"));
+		for (k in sm.keys()) Sys.println(k);
+		Sys.println(sm["a"]);
+		var nested:Array<Array<Dynamic>> = [[1], [2]];
+		Sys.println(nested[0].length);
+		var anon:{arr:Array<Dynamic>} = {arr: [1]};
+		Sys.println(anon.arr.length);
+		var dyn:Dynamic = g;
+		var g2:G<Dynamic> = dyn;
+		Sys.println(g2.v);
+		var g3:G<Int> = dyn;
+		Sys.println(g3.v);
+	}
+}
+===
+[run]
+1
+7
+2
+9
+as
+4
+18
+10
+10
+3
+10
+3
+1
+1,y,3,4,
+True
+1-y-3-4
+2
+4
+[1,y,3]
+3
+4
+[3,y,1]
+3
+3
+3
+2
+2
+1
+True
+a
+1
+1
+1
+3
+3
+
+# Recorded divergence (decision: Array<Int> passed as Array<Any> works in hxc). gencs's C# for this program
+# does not compile (CS0030), so there is no gencs run. Expected [run]: the length the callee sees.
+--- companion-access-array-any
+// Split from companion-access. An Array<Int> passed where Array<Any> is expected: Haxe unifies the two, and
+// gencs emits `(global::Array<object>) (ai)`, C# that does not compile (CS0030, types notes §5). hxc compiles
+// it and the callee sees the three elements. Recorded divergence (a gencs failure on a path that should work).
+class P {
+	static function takeAny(a:Array<Any>):Int return a.length;
+	static function main() {
+		var ai:Array<Int> = [1, 2, 3];
+		Sys.println(takeAny(ai));
+	}
+}
+===
+[run]
+3
+
+# Casts notes §6.2. No line needed splitting: its two throws (a string pushed into an Array<Int> held as
+# Array<Dynamic>, an Int pushed into an Array<String> one) come from genericCast on the typed array, which hxc
+# reproduces with companion typing; no line is a gencs throw on a path hxc makes work.
+--- cast-array-view @gencs
+// A typed Array<X> passed as Array<Dynamic>: gencs passes the same object (Array<Dynamic> is the companion
+// interface), so writes reach the caller's array and a wrong-typed write throws from genericCast. @gencs.
+class P {
+	static var sDyn:Array<Dynamic>;
+
+	static function takeDyn(a:Array<Dynamic>) {
+		a.push(99);
+		a[0] = 42;
+	}
+
+	static function takeDynStr(a:Array<Dynamic>)
+		a.push("s");
+
+	static function retDyn(a:Array<Int>):Array<Dynamic>
+		return a;
+
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function main() {
+		run("arg", () -> { var ai = [1, 2, 3]; takeDyn(ai); Std.string(ai); });
+		run("arg wrong type", () -> { var ai = [1, 2, 3]; takeDynStr(ai); Std.string(ai); });
+		run("local", () -> { var ai = [1, 2, 3]; var d:Array<Dynamic> = ai; d.push(4); Std.string(ai) + " " + (d == ai) + " " + Std.string(Type.typeof(d)); });
+		run("return", () -> { var ai = [1, 2, 3]; var d = retDyn(ai); d.push(4); Std.string(ai); });
+		run("static", () -> { var ai = [1, 2, 3]; sDyn = ai; sDyn.push(4); Std.string(ai); });
+		run("closure", () -> { var f:Array<Dynamic>->Void = takeDyn; var ai = [1, 2]; f(ai); Std.string(ai); });
+		run("push 1.5 and '7' into int", () -> { var ai = [1]; var d:Array<Dynamic> = ai; d.push(1.5); d.push("7"); Std.string(ai); });
+		run("cast Str->Dyn push int", () -> { var ids = ["a", "b"]; var params:Array<Dynamic> = cast ids.copy(); params.push(5); Std.string(params); });
+		run("Dynamic write wrong", () -> { var ai = [1, 2]; var d:Dynamic = ai; d[0] = 2.5; d.push("7"); Std.string(ai); });
+		run("Box<Int> as Box<Dynamic>", () -> { var b = new Box<Int>(1); var t:Box<Dynamic> = b; t.v = 2.5; b.v; });
+	}
+}
+
+class Box<T> {
+	public var v:T;
+
+	public function new(v:T)
+		this.v = v;
+}
+===
+[run]
+arg: [42,2,3,99]
+arg wrong type: EXC System.FormatException: The input string 's' was not in a correct format.
+local: [1,2,3,4] true TClass(Array`1[System.Int32])
+return: [1,2,3,4]
+static: [1,2,3,4]
+closure: [42,2,99]
+push 1.5 and '7' into int: [1,2,7]
+cast Str->Dyn push int: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
+Dynamic write wrong: [2,2,7]
+Box<Int> as Box<Dynamic>: 2
+
+# Types notes §8.11 (probe enumargs): enum constructor arguments of generic class types.
+--- generic-enum-arguments @gencs
+// Enum constructor arguments of generic class types: gencs's field and parameter types.
+class C { public function new() {} }
+class G<T> { public var v:T; public function new(v:T) this.v = v; }
+enum En<T> {
+	Ca(a:Array<T>);
+	Cb(a:Array<Dynamic>);
+	Cc(a:Array<Int>);
+	Cd(g:G<C>);
+	Ce(x:T);
+	Cf(g:G<T>);
+	Cg(a:Array<Null<T>>);
+}
+class P {
+	static function main() {
+		var e = Ca([1]);
+		switch (e) { case Ca(a): Sys.println(a.length + " " + Type.getClass(a)); case _: }
+		var f:En<Int> = Cf(new G(1));
+		switch (f) { case Cf(g): Sys.println(Type.getClass(g)); case _: }
+		var b:En<Int> = Cb([1, "a"]);
+		Sys.println(Type.enumParameters(b));
+	}
+}
+===
+[run]
+1 Array`1[System.Int32]
+G`1[System.Int32]
+[[1,a]]
+# A Dynamic-argument instantiation of a class without a companion interface (a generic struct, plan 3c) keeps
+# its object instantiation; a typed one going to it is refused, since the two share no CLR type.
+--- struct-dynamic-instantiation-is-an-error
+@:struct class Cell<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+}
+class P {
+	static function main() {
+		var c:Cell<Dynamic> = new Cell<Dynamic>(1);
+		Sys.println(c.v);
+		var ci = new Cell<Int>(2);
+		var cd:Cell<Dynamic> = ci;
+		Sys.println(cd.v);
+	}
+}
+===
+[compile]
+P.hx:10: characters 26-28 : dotnet: a cast between instantiations of Cell is not supported yet
+# Decision 4 of plan 3c: the inlined map and filter on a typed array held as Array<Dynamic> work in hxc. gencs's
+# inlined loops cast __a to object[], which throws InvalidCastException for an int[] (types notes §5); over a
+# string[] they work (array covariance). Recorded divergence, under [gencs].
+--- companion-array-map-filter @gencs
+// map and filter, inlined from hxcs's Array, over Array<Dynamic> values holding an Array<Int>, an Array<String>
+// and an Array<Dynamic>.
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:Dynamic) Sys.println(name + ": EXC " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var ai = [1, 2, 3];
+		var sa = ["a", "b"];
+		var ad:Array<Dynamic> = [1, "x"];
+		var vi:Array<Dynamic> = ai, vs:Array<Dynamic> = sa;
+		run("map int", () -> vi.map(x -> x * 2));
+		run("map int to string", () -> vi.map(x -> Std.string(x) + "!"));
+		run("filter int", () -> vi.filter(x -> x > 1));
+		run("map string", () -> vs.map(x -> x + "?"));
+		run("filter string", () -> vs.filter(x -> x != "a"));
+		run("map dynamic", () -> ad.map(x -> x));
+		run("filter dynamic", () -> ad.filter(x -> x != null));
+		run("sources", () -> Std.string(ai) + " " + Std.string(sa) + " " + Std.string(ad));
+	}
+}
+===
+[run]
+map int: [2,4,6]
+map int to string: [1!,2!,3!]
+filter int: [2,3]
+map string: [a?,b?]
+filter string: [b]
+map dynamic: [1,x]
+filter dynamic: [1,x]
+sources: [1,2,3] [a,b] [1,x]
+[gencs]
+map int: EXC System.InvalidCastException
+map int to string: EXC System.InvalidCastException
+filter int: EXC System.InvalidCastException
+map string: [a?,b?]
+filter string: [b]
+map dynamic: [1,x]
+filter dynamic: [1,x]
+sources: [1,2,3] [a,b] [1,x]
+
+--- dynamic-argument-subclass-super
+# `super` in a subclass of Base<Dynamic> is the class, not the companion: its calls stay direct.
+class Base<T> {
+	public function new() {}
+	public function f():Array<T> return [];
+	public function g(x:Array<T>):Int return x.length;
+	public function h(x:T):T return x;
+}
+class Sub extends Base<Dynamic> {
+	public function new() super();
+	override public function f():Array<Dynamic> return [1, 2];
+	override public function g(x:Array<Dynamic>):Int return x.length + super.g(x);
+	override public function h(x:Dynamic):Dynamic return super.h(x) + 1;
+}
+class P {
+	static function main() {
+		var s = new Sub();
+		var b:Base<Dynamic> = s;
+		Sys.println(b.f() + " " + b.g([1]) + " " + s.g([1, 2]) + " " + b.h(4) + " " + s.f());
+	}
+}
+===
+[run]
+[1,2] 2 4 5 [1,2]

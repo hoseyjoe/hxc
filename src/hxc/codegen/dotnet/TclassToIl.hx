@@ -204,7 +204,7 @@ class TclassToIl {
 		if (!isStd && TypeFunctions.hasMeta(":classCode", c.meta)) throw new Unsupported("@:classCode", false);
 		var superSig = switch (c.superClass) {
 			case null: null;
-			case s: g.types.toSig(TInst(s.c, s.params));
+			case s: g.types.classSig(s.c, s.params);
 		}
 		if (superSig != null && superSig.match(LObject)) superSig = null;
 		if (superSig != null && !superSig.match(LClass(_, _))) throw new Unsupported("extending a value type", false);
@@ -493,7 +493,7 @@ class TclassToIl {
 			if (TypeFunctions.hasClassFlag(i, CExtern) && !g.ctx.netPathMap.exists(Globals.sTypePath(i.path))
 				&& DotnetNames.nativeName(i.meta) == null)
 				return;
-			var sig = g.types.toSig(TInst(i, params));
+			var sig = g.types.classSig(i, params);
 			for (x in r) if (IlPaths.sigEq(x.sig, sig)) return;
 			r.push({c: i, params: params, sig: sig});
 			for (sup in i.interfaces) add(sup.c, [for (t in sup.params) TypeFunctions.applyParams(i.params, params, t)]);
@@ -1212,7 +1212,7 @@ class TclassToIl {
 	static function interfaceBridgeBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, b:InterfaceBridge, code:IlCode, lower:TexprToIl):Void {
 		var target = g.methodPlans.get(b.target), ownerPlan = g.planOf.get(b.owner), im = g.methodPlans.get(b.im);
 		if (target == null || ownerPlan == null || im == null) throw "internal error: no method for the bridge " + m.name;
-		var owner = b.owner == plan.c ? plan.thisSig : g.types.toSig(TInst(b.owner, b.ownerParams));
+		var owner = b.owner == plan.c ? plan.thisSig : g.types.classSig(b.owner, b.ownerParams);
 		var inst = switch (owner) {
 			case LClass(_, l) | LValueType(_, l): l;
 			case _: [];

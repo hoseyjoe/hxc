@@ -308,8 +308,8 @@ class TexprToIl {
 			// A boxed type parameter is an object, which may not be the reference type wanted; nor is a
 			// boxed struct an instantiation of a generic Haxe interface it does not implement.
 			if (isTypeParam(from) && !to.match(LObject)) castTo(to);
-			// A generic struct goes as itself, so that one bound for an X<Dynamic> is refused (instanceCast).
-			else if (g.isGenericHaxeClass(to) && !g.isUpcast(from, to)) instanceCast(g.isGenericHaxeClass(from) ? from : LObject, to, null);
+			// A generic struct goes to another generic interface's instantiation as itself (instanceCast).
+			else if (g.isGenericHaxeClass(to) && !g.isUpcast(from, to)) instanceCast(g.isGenericHaxeClass(from) ? from : LObject, to);
 		} else if (!fromValue && toValue) {
 			// gencs converts Dynamic through Runtime.toInt, toDouble, toBool and genericCast, which accept
 			// null and boxed numbers of another type; an unbox.any would throw on them.
@@ -350,11 +350,14 @@ class TexprToIl {
 				// Between a type parameter and another type that is one at run time, as C# casts through object.
 				code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 				code.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
+			} else if (g.isGenericHaxeClass(from) && g.isGenericHaxeClass(to)) {
+				// Two instantiations of a generic struct, which has no companion interface (CompanionToIl).
+				throw new Unsupported("a cast between instantiations of " + g.haxePathOf(to), false);
 			} else throw new Unsupported("conversions between value types", true);
 		} else if (isReference(from) && isReference(to) && !to.match(LObject)) {
 			// An upcast needs nothing; anything else may narrow.
 			if (g.isUpcast(from, to) || from.match(LVector(_)) && isSystemArray(to)) return;
-			if (g.isGenericHaxeClass(to)) instanceCast(from, to, null) else castTo(to);
+			if (g.isGenericHaxeClass(to)) instanceCast(from, to) else castTo(to);
 		}
 	}
 
@@ -495,47 +498,15 @@ class TexprToIl {
 	// The reference `from` on the stack as `to`, an instantiation of a generic Haxe class that `from` is not
 	// already: what gencs's RealTypeParams makes of a cast to `to` (InstantiationCasts), or castclass for a
 	// downcast to the one instantiation the source's type allows, as the Map abstract's downcast of an
-	// IMap<String, V> to its StringMap<V> is (DotnetCtx.isExactDowncast). `target` is the Haxe type of the
-	// destination, null when the caller does not know it.
-	//
-	// Until X<Dynamic> is typed as its companion (plan 3c, Task 6) it is X<object…>, so a target that may
-	// be one (InstantiationCasts.mayBeDynamic) is not given __hx_cast, which would copy where gencs gives
-	// the same object: from a typed instantiation it is refused, and from anything else it is checked at
-	// run time (checkedInstanceCast).
-	public function instanceCast(from:IlSigNorm, to:IlSigNorm, target:Null<T>, ?pos:Position):Void {
+	// IMap<String, V> to its StringMap<V> is (DotnetCtx.isExactDowncast). A value typed as a companion
+	// interface (an X<Dynamic>) goes through __hx_cast like any other; a typed value going to one needs no
+	// cast at all, since every instantiation is its class's companion (decision 1 of plan 3c).
+	public function instanceCast(from:IlSigNorm, to:IlSigNorm):Void {
 		if (g.isExactDowncast(from, to)) {
 			code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
 			return;
 		}
-		if (InstantiationCasts.mayBeDynamic(g, to) && (target == null || InstantiationCasts.isDynamicTarget(target))) {
-			if (g.isGenericHaxeClass(from)) throw new Unsupported("a cast from " + g.haxeTypeOf(from) + " to " + g.haxeTypeOf(to), false, pos);
-			checkedInstanceCast(to, "a value to " + g.haxeTypeOf(to));
-			return;
-		}
 		InstantiationCasts.emit(g, code, from, to);
-	}
-
-	// The object on the stack as `to`, an instantiation of a generic Haxe class that may be an X<Dynamic>
-	// (instanceCast): null or that instantiation passes, anything else throws
-	// NotSupportedException("hxc dotnet: converting <what> is not supported yet").
-	function checkedInstanceCast(to:IlSigNorm, what:String):Void {
-		var tmp = code.addLocal(LObject);
-		var isNull = code.newLabel(), done = code.newLabel();
-		code.stloc(tmp);
-		code.ldloc(tmp);
-		code.branch(IlOps.BRFALSE, isNull);
-		code.ldloc(tmp);
-		code.opToken(IlOps.ISINST, g.typeTokenOf(to), 1, 1);
-		code.op(IlOps.DUP, 1, 2);
-		code.branch(IlOps.BRTRUE, done);
-		code.op(IlOps.POP, 1, 0);
-		var ex = LClass({ns: ["System"], nested: [], name: "NotSupportedException"}, []);
-		code.opToken(IlOps.LDSTR, g.mb.userString("hxc dotnet: converting " + what + " is not supported yet"), 0, 1);
-		code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(ex), ".ctor", g.sigs.method(true, LVoid, [LString], 0)), 1, 1);
-		code.op(IlOps.THROW, 1, 0);
-		code.mark(isNull);
-		code.op(IlOps.LDNULL, 0, 1);
-		code.mark(done);
 	}
 
 	// Whether a value of type `from` going to `to` needs a cast between instantiations (instanceCast): `to`
@@ -545,13 +516,14 @@ class TexprToIl {
 			&& !g.isUpcast(from, to);
 	}
 
-	// `e` where a `to` is wanted, `target` the Haxe type of where it goes: as texpr(RValue(to), e), but a
-	// cast between instantiations is decided with that type (instanceCast).
+	// `e` where a `to` is wanted, `target` the Haxe type of where it goes, null when the caller does not know
+	// it: as texpr(RValue(to), e), but where the target is known and the value's own type needs a cast between
+	// instantiations, the value is lowered as its own type and cast (instanceCast), as gencs casts into it.
 	public function texprTo(to:IlSigNorm, target:Null<T>, e:TExpr):Void {
 		var own = target == null || isNullConst(e) ? null : try sig(e.type) catch (_:Unsupported) null;
 		if (own != null && needsInstanceCast(own, to)) {
 			texpr(RValue(own), e);
-			instanceCast(own, to, target, e.pos);
+			instanceCast(own, to);
 			return;
 		}
 		texpr(RValue(to), e);
@@ -560,9 +532,9 @@ class TexprToIl {
 	// `e` stored where a `to` is kept, `target` the Haxe type of the place: as texprTo, but a place whose type
 	// is erased to object (an Array<Array<Int>>'s element, a T field of a G<Array<Int>>) takes the value as
 	// an instantiation of its Haxe type first, as gencs casts into it. An X<Dynamic> place keeps the value as
-	// it is: gencs's is the companion, which every instantiation is.
+	// it is: its type is the companion, which every instantiation is.
 	public function texprStore(to:IlSigNorm, target:T, e:TExpr):Void {
-		if (to.match(LObject) && !isNullConst(e) && !InstantiationCasts.isDynamicTarget(target)) {
+		if (to.match(LObject) && !isNullConst(e)) {
 			var want = try sig(target) catch (_:Unsupported) null;
 			if (want != null && want.match(LClass(_, _)) && g.isGenericHaxeClass(want)) {
 				texprTo(want, target, e);
@@ -573,7 +545,7 @@ class TexprToIl {
 	}
 
 	function castTo(to:IlSigNorm):Void {
-		if (g.isGenericHaxeClass(to)) instanceCast(LObject, to, null) else code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
+		if (g.isGenericHaxeClass(to)) instanceCast(LObject, to) else code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
 	}
 
 	static function isReference(s:IlSigNorm):Bool return s.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _));
@@ -806,7 +778,7 @@ class TexprToIl {
 			&& isDynamicRead(e1)) {
 			texpr(RValue(LObject), new TExpr(strip(e1).expr, TDynamic(null), e1.pos));
 			code.opToken(IlOps.CASTCLASS, g.typeTokenOf(from), 1, 1);
-			if (needsInstanceCast(from, to)) instanceCast(from, to, e.type);
+			if (needsInstanceCast(from, to)) instanceCast(from, to);
 			coerce(to, ret);
 			return;
 		}
@@ -816,7 +788,7 @@ class TexprToIl {
 			var src = from.match(LObject | LClass(_, _)) ? from : LObject;
 			if (needsInstanceCast(src, to)) {
 				texpr(RValue(src), e1);
-				instanceCast(src, to, e.type);
+				instanceCast(src, to);
 				coerce(to, ret);
 				return;
 			}
@@ -1102,6 +1074,22 @@ class TexprToIl {
 				if (needVal(ret)) code.op(IlOps.DUP, 1, 2);
 				store(s);
 				if (needVal(ret)) coerce(s.sig, ret);
+			case TArray(e1, e2) if (calls.isDynamicVector(e1)):
+				// System.Array's SetValue(value, index), the index kept while the value is computed.
+				calls.pushDynamicVector(e1, e2);
+				var idx = code.addLocal(LInt32);
+				code.stloc(idx);
+				texpr(RValue(LObject), rhs);
+				var tmp = needVal(ret) ? ops.keepTop(LObject) : -1;
+				code.ldloc(idx);
+				calls.callArrayValue(true);
+				if (tmp >= 0) {
+					code.ldloc(tmp);
+					coerce(LObject, ret);
+				}
+			case TArray(e1, e2) if (calls.isDynamicArrayAccess(e1)):
+				// Runtime.callField(a, "__set", hash, new object[]{i, v}).
+				dyn.fieldCall(ret, lhs, e1, "__set", [e2, rhs]);
 			case TArray(e1, e2) if (isNativeArray(e1.type)):
 				var elem = calls.pushArrayAndIndex(e1, e2);
 				texpr(RValue(elem), rhs);
@@ -1126,8 +1114,9 @@ class TexprToIl {
 				volatilePrefix(cf);
 				code.opToken(IlOps.STSFLD, f.token, 1, 0);
 				if (needVal(ret)) coerce(f.sig, ret);
-			case TField(obj, fa) if (TexprDynamic.isDynamicReceiver(fa, obj)):
-				// Runtime.setField, as gencs assigns a field of a Dynamic or a variable of a Haxe interface.
+			case TField(obj, fa) if (dyn.isDynamicReceiver(fa, obj)):
+				// Runtime.setField, as gencs assigns a field of a Dynamic, a variable of a Haxe interface, or a
+				// variable of a value typed as a companion interface.
 				dyn.fieldSet(ret, lhs, obj, TexprDynamic.fieldName(fa), rhs, lhs.type);
 			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c)):
 				var f = calls.instanceField(c, cparams, cf);
@@ -1209,6 +1198,49 @@ class TexprToIl {
 		switch (e.expr) {
 			case TParenthesis(e1) | TMeta(_, e1):
 				return place(e1);
+			case TArray(e1, e2) if (calls.isDynamicArrayAccess(e1)):
+				// Through Runtime.callField's "__get" and "__set".
+				var arr = -1, idx = -1;
+				function head(name:String) {
+					code.ldloc(arr);
+					code.opToken(IlOps.LDSTR, g.mb.userString(name), 0, 1);
+					code.ldcI4(dyn.hash(name, e1.pos));
+				}
+				function args(values:Array<Int>) {
+					code.ldcI4(values.length);
+					code.opToken(IlOps.NEWARR, g.typeTokenOf(LObject), 1, 1);
+					for (i in 0...values.length) {
+						code.op(IlOps.DUP, 1, 2);
+						code.ldcI4(i);
+						code.ldloc(values[i]);
+						code.opToken(IlOps.STELEM, g.typeTokenOf(LObject), 3, 0);
+					}
+				}
+				return {
+					sig: LObject,
+					receiver: false,
+					prepare: () -> {
+						texpr(RValue(LObject), e1);
+						arr = code.addLocal(LObject);
+						code.stloc(arr);
+						texpr(RValue(LObject), e2);
+						idx = code.addLocal(LObject);
+						code.stloc(idx);
+					},
+					load: () -> {
+						head("__get");
+						args([idx]);
+						dyn.runtimeCall("callField", LObject);
+					},
+					store: () -> {
+						var v = code.addLocal(LObject);
+						code.stloc(v);
+						head("__set");
+						args([idx, v]);
+						dyn.runtimeCall("callField", LObject);
+						code.op(IlOps.POP, 1, 0);
+					}
+				};
 			case TArray(e1, e2) if (isNativeArray(e1.type) || arrayOf(e1.type) != null):
 				var native = isNativeArray(e1.type);
 				var get = native ? null : calls.arrayAccessor(e1.type, "__get");
@@ -1277,8 +1309,8 @@ class TexprToIl {
 						code.opToken(IlOps.STSFLD, f.token, 1, 0);
 					}
 				};
-			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))
-				&& !TexprDynamic.isInterfaceField(c, cf)):
+			case TField(obj, fa = FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))
+				&& !dyn.isDynamicReceiver(fa, obj)):
 				var f = calls.instanceField(c, cparams, cf);
 				return {
 					sig: f.sig,

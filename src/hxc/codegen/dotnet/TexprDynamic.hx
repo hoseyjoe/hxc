@@ -147,16 +147,39 @@ class TexprDynamic {
 	}
 
 	// A field access gencs reaches through Runtime: a field of a Dynamic or of an anonymous structure
-	// that is not a class's statics, or a variable or dynamic method of a Haxe interface. A name the
-	// receiver's class declares is its own field in gencs.
-	static function isDynamicReceiver(fa:TFieldAccess, obj:TExpr):Bool {
+	// that is not a class's statics, a variable or dynamic method of a Haxe interface, or a member of a
+	// value typed as a companion interface that the companion does not declare (types notes §5). A name
+	// the receiver's class declares is its own field in gencs.
+	function isDynamicReceiver(fa:TFieldAccess, obj:TExpr):Bool {
 		return switch (fa) {
 			case FDynamic(n): !isClassField(obj.type, n);
 			case FAnon(_): isDynamic(obj.type);
 			case FClosure(null, _): false;
-			case FInstance(c, _, cf) | FClosure({c: c}, cf): isInterfaceField(c, cf);
+			case FInstance(c, _, cf) | FClosure({c: c}, cf):
+				isInterfaceField(c, cf) || companionReceiver(obj) && companionMember(c, cf) == null;
 			case _: false;
 		}
+	}
+
+	// Whether `obj` is a value typed as a companion interface (DotnetTypes.isCompanionTyped). `super` in a
+	// class that extends an X<Dynamic> is the X<object…> its class extends.
+	function companionReceiver(obj:TExpr):Bool {
+		return !strip(obj).expr.match(TConst(TSuper)) && g.types.isCompanionTyped(obj.type);
+	}
+
+	// The method of `c`, or the one of an ancestor that `cf` overrides, that a companion interface declares
+	// (CompanionToIl.isMember), with its class; null for a variable, a dynamic method, or a method whose Haxe
+	// signature mentions a type parameter, which a value typed as a companion reaches through Runtime.
+	function companionMember(c:TClass, cf:TClassField):Null<{c:TClass, cf:TClassField}> {
+		if (!cf.kind.match(Method(MethNormal | MethInline))) return null;
+		var cur = c, f = cf;
+		while (TypeFunctions.hasClassFieldFlag(f, CfOverride)) {
+			if (cur.superClass == null || f.overloads.length > 0) return null;
+			cur = cur.superClass.c;
+			var x = cur.fields.get(cf.name);
+			if (x != null) f = x;
+		}
+		return CompanionToIl.isMember(g, cur, f) ? {c: cur, cf: f} : null;
 	}
 
 	// A variable or dynamic method of a Haxe interface, which gencs's InterfaceVarsDeleteModf leaves off
@@ -517,7 +540,7 @@ class TexprDynamic {
 	}
 
 	// The access `obj.name` gencs reaches through Runtime, or null.
-	static function dynamicField(e:TExpr):Null<{obj:TExpr, name:String}> {
+	function dynamicField(e:TExpr):Null<{obj:TExpr, name:String}> {
 		return switch (strip(e).expr) {
 			case TField(obj, fa) if (isDynamicReceiver(fa, obj)): {obj: obj, name: fieldName(fa)};
 			case _: null;
@@ -593,7 +616,7 @@ class TexprDynamic {
 	}
 
 	// gencs's is_dynamic_expr: a Dynamic, or a field gencs reaches through Runtime (field_is_dynamic).
-	static function isDynamicExpr(e:TExpr):Bool return isDynamic(e.type) || dynamicField(e) != null;
+	function isDynamicExpr(e:TExpr):Bool return isDynamic(e.type) || dynamicField(e) != null;
 
 	// `lhs op= rhs` as gencs's DynamicOperators writes it when an operand is Dynamic, the left side is a
 	// field reached through Runtime or a Null<T> (should_change; for `+=` only the left side counts):
@@ -624,7 +647,7 @@ class TexprDynamic {
 	// ---- anonymous objects
 
 	// gencs's is_side_effects_free (reflectionCFs.ml's implement_dynamic_object_ctor).
-	static function sideEffectFree(e:TExpr):Bool {
+	function sideEffectFree(e:TExpr):Bool {
 		return switch (e.expr) {
 			case TConst(_) | TLocal(_) | TFunction(_) | TTypeExpr(_): true;
 			case TUnop(Increment | Decrement, _, _) | TBinop(OpAssign | OpAssignOp(_), _, _): false;

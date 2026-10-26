@@ -611,7 +611,7 @@ private class CastCopy {
 	function fieldOn(f:ArrayField, selfArgs:Array<IlSigNorm>):{token:Int, sig:IlSigNorm} {
 		var ownerPlan = g.ownerOf.get(f.cf);
 		if (ownerPlan == null) throw "internal error: no field " + f.cf.name;
-		var ownerSig = f.owner == c ? plan.thisSig : g.types.withParams(c.params, [], () -> g.types.toSig(TInst(f.owner, ownerArgs(f.owner))));
+		var ownerSig = f.owner == c ? plan.thisSig : g.types.withParams(c.params, [], () -> g.types.classSig(f.owner, ownerArgs(f.owner)));
 		var owner = DotnetTypes.substitute(ownerSig, selfArgs, []);
 		var inst = switch (owner) {
 			case LClass(_, l) | LValueType(_, l): l;

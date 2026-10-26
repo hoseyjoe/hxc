@@ -149,14 +149,15 @@ class EnumToIl {
 	}
 
 	// The erased type of argument `i` of the constructor `ef`: the enum's and the constructor's type
-	// parameters applied as Dynamic. An argument whose type would be an instantiation of a generic Haxe
-	// class with one of those type parameters (Array<T>) is gencs's companion interface (Array), plan 3c.
+	// parameters applied as Dynamic. So an argument whose type is an instantiation of a generic Haxe class
+	// with one of those type parameters (Array<T>, G<T>, Array<Null<T>>) is gencs's companion interface
+	// (Array, G; types notes §1). A generic struct has no companion (CompanionToIl), so one there is refused.
 	public static function argSig(g:DotnetCtx, ef:TEnumField, i:Int):IlSigNorm {
 		var a = args(ef)[i];
 		var params = enumOf(ef).params.concat(ef.params);
 		var t = TypeFunctions.applyParams(params, [for (_ in params) TypeFunctions.tDynamic], a.t);
 		var s = g.types.withParams([], [], () -> g.types.argSig(t, a.opt));
-		if (g.isGenericHaxeClass(s) && mentions(a.t, params)) throw new Unsupported("enum arguments of generic class types", true, ef.pos);
+		if (g.isGenericHaxeClass(s) && mentions(a.t, params)) throw new Unsupported("enum arguments of generic struct types", true, ef.pos);
 		return s;
 	}
 

@@ -13,6 +13,7 @@ import hxc.codegen.dotnet.IlCode;
 import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.IlMeta;
 import hxc.codegen.dotnet.TclassToIl.ClassPlan;
+import hxc.codegen.dotnet.TclassToIl.MethodKind;
 import hxc.codegen.dotnet.TclassToIl.MethodPlan;
 import hxc.codegen.dotnet.TexprToIl.Place;
 import hxc.codegen.dotnet.TexprToIl.Ret;
@@ -55,7 +56,7 @@ class TexprCalls {
 	}
 
 	function parentOf(c:TClass, inst:Array<IlSigNorm>):IlSigNorm {
-		return switch (tl.sig(TInst(c, [for (_ in c.params) TypeFunctions.tDynamic]))) {
+		return switch (g.types.classSig(c, [for (_ in c.params) TypeFunctions.tDynamic])) {
 			case LClass(p, _): LClass(p, inst);
 			case LValueType(p, _): LValueType(p, inst);
 			case s: s;
@@ -98,8 +99,8 @@ class TexprCalls {
 			case TConst(TThis) if (tl.thisSig != null && DotnetTypes.isValueType(tl.thisSig)):
 				code.ldarg(0);
 				return true;
-			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))
-				&& !TexprDynamic.isInterfaceField(c, cf)):
+			case TField(obj, fa = FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))
+				&& !tl.dyn.isDynamicReceiver(fa, obj)):
 				var f = instanceField(c, cparams, cf);
 				receiver(obj, f.owner, forStore);
 				code.opToken(IlOps.LDFLDA, f.token, 1, 1);
@@ -181,8 +182,9 @@ class TexprCalls {
 				// A method of an anonymous structure is one of its fields.
 				if (!TexprDynamic.isDynamic(obj.type)) throw new Unsupported("method closures", true);
 				tl.dyn.fieldGet(ret, e, obj, cf.name, e.type, true);
-			case FInstance(_, _, cf) | FClosure(_, cf) if (TexprDynamic.isDynamicReceiver(fa, obj)):
-				// A variable or dynamic method of a Haxe interface, through Runtime.getField as gencs reads it.
+			case FInstance(_, _, cf) | FClosure(_, cf) if (tl.dyn.isDynamicReceiver(fa, obj)):
+				// A variable or dynamic method of a Haxe interface, or a member of a value typed as a companion
+				// interface that the companion lacks, through Runtime.getField as gencs reads it.
 				tl.dyn.fieldGet(ret, e, obj, cf.name, e.type, true);
 			case FStatic(c, cf) if (!isExtern(c) && isMethod(cf)):
 				// A static method as a value: `new Closure(typeof(C), "name", hash)`.
@@ -253,7 +255,7 @@ class TexprCalls {
 				tl.coerce(f.sig, ret);
 			case FStatic(_, _):
 				throw new Unsupported("this kind of field access", false);
-			case FAnon(_) | FDynamic(_) if (TexprDynamic.isDynamicReceiver(fa, obj)):
+			case FAnon(_) | FDynamic(_) if (tl.dyn.isDynamicReceiver(fa, obj)):
 				// Runtime.getField, as gencs reads a field of a Dynamic or an anonymous structure.
 				tl.dyn.fieldGet(ret, e, obj, TexprDynamic.fieldName(fa), e.type, true);
 			case FAnon(_):
@@ -430,9 +432,10 @@ class TexprCalls {
 				code.opToken(IlOps.CALLVIRT, g.mb.memberRef(g.typeTokenOf(LObject), name, g.sigs.method(true, m, [for (_ in args) LObject], 0)),
 					args.length + 1, 1);
 				tl.coerce(m, ret);
-			case TField(obj, fa = FDynamic(_) | FAnon(_) | FInstance(_, _, _)) if (TexprDynamic.isDynamicReceiver(fa, obj)):
-				// Runtime.callField, as gencs calls a method of a Dynamic, or a variable of a function type or
-				// a dynamic method of a Haxe interface.
+			case TField(obj, fa = FDynamic(_) | FAnon(_) | FInstance(_, _, _)) if (tl.dyn.isDynamicReceiver(fa, obj)):
+				// Runtime.callField, as gencs calls a method of a Dynamic, a variable of a function type or a
+				// dynamic method of a Haxe interface, or a method of a value typed as a companion interface that
+				// the companion lacks.
 				tl.dyn.fieldCall(ret, e, obj, TexprDynamic.fieldName(fa), args);
 			case TField(_, FStatic(c, cf)) if (isStd(c) && cf.name == "string" && args.length == 1 && stringArg(args[0]) != null):
 				// A value of a known type prints as in a concatenation, Bool as true or false.
@@ -491,6 +494,9 @@ class TexprCalls {
 			case TConst(TSuper):
 				superCtorCall(args);
 				tl.coerce(LVoid, ret);
+			case TField(obj, FInstance(c, _, cf)) if (!TypeFunctions.hasClassFlag(c, CInterface) && tl.dyn.companionReceiver(obj)):
+				// A method a class's companion interface declares (TexprDynamic.companionMember): the interface's.
+				companionCall(ret, obj, tl.dyn.companionMember(c, cf), args, callee.type);
 			case TField(obj, FInstance(c, params, cf)):
 				var m = haxeMethod(c, params, cf, args, callee.type);
 				// super.m() calls the base class's method itself.
@@ -510,6 +516,27 @@ class TexprCalls {
 			case _:
 				invokeFunction(ret, e, callee, args);
 		}
+	}
+
+	// `obj.name(args)` on a value typed as a companion interface, for the method `member` of a class that
+	// the companion declares: callvirt on the companion's own declaration, as gencs's C# calls it (types notes
+	// §5). An interface's methods that mention no type parameter are its companion's already (CompanionToIl).
+	function companionCall(ret:Ret, obj:TExpr, member:{c:TClass, cf:TClassField}, args:Array<TExpr>, calleeType:T):Void {
+		var m = g.methodPlans.get(member.cf), companion = g.companionPlans.get(member.c);
+		var decl = null;
+		if (m != null && companion != null) for (x in companion.methods) {
+			if (x.kind.match(MCompanionMember) && x.name == m.name && IlPaths.sigEq(LMethod([], x.ret, x.args), LMethod([], m.ret, m.args))
+				&& x.generics.length == m.generics.length)
+				decl = x;
+		}
+		if (decl == null) throw "internal error: the companion of " + Globals.sTypePath(member.c.path) + " has no method " + member.cf.name;
+		var margs = [for (t in DotnetTypes.inferParams(member.cf.params, member.cf.type, calleeType, false)) g.types.typeArg(t)];
+		var token = margs.length > 0 ? g.mb.methodSpec(decl.token, g.sigs.methodSpec(margs)) : decl.token;
+		var retSig = DotnetTypes.substitute(decl.ret, [], margs);
+		tl.texpr(RValue(CompanionToIl.companionSig(member.c)), obj);
+		pushArgs(args, [for (a in decl.args) DotnetTypes.substitute(a, [], margs)], argTypes(calleeType));
+		code.opToken(IlOps.CALLVIRT, token, args.length + 1, retSig.match(LVoid) ? 0 : 1);
+		tl.coerce(retSig, ret);
 	}
 
 	// A call of a function value, a haxe.lang.Function, as gencs's closuresToClass writes it. Each
@@ -777,7 +804,8 @@ class TexprCalls {
 	}
 
 	// The type a magic identifier's type argument names: a type expression, or in untyped code the name
-	// of a type parameter in scope.
+	// of a type parameter in scope. A generic class is its instantiation with object for each parameter,
+	// as gencs writes `typeof(G<object>)`, not its companion interface.
 	function typeArg(e:TExpr):IlSigNorm {
 		switch (strip(e).expr) {
 			case TTypeExpr(mt):
@@ -786,7 +814,7 @@ class TexprCalls {
 					// An abstract named as a value is its implementation class.
 					case TClassDecl(c): switch (c.kind) {
 							case KAbstractImpl(a): TAbstract(a, [for (_ in a.params) TypeFunctions.tDynamic]);
-							case _: TInst(c, params);
+							case _: return g.types.classSig(c, params);
 						}
 					case TEnumDecl(en): TEnum(en, params);
 					case TTypeDecl(td): TType(td, params);
@@ -1131,6 +1159,50 @@ class TexprCalls {
 		return tl.sig(e.type);
 	}
 
+	// Whether `e1[i]` is reached through Runtime.callField's "__get" and "__set", as gencs reaches an element
+	// of a Dynamic, and of an Array<Dynamic>, whose type is Array's companion interface, which has no indexer
+	// before hxcs's @:classCode is (plan 3c's ruling).
+	function isDynamicArrayAccess(e1:TExpr):Bool {
+		if (isNativeArray(e1.type)) return false;
+		return arrayOf(e1.type) == null ? TexprDynamic.isDynamic(e1.type) : g.types.isCompanionTyped(e1.type);
+	}
+
+	// Whether `e` is a native array field read through Runtime from a value typed as a companion interface,
+	// such as hxcs's Array `__a` in the inlined map and filter on an Array<Dynamic>: its CLR type depends on
+	// the object's instantiation (an int[] for an Array<Int> held as an Array<Dynamic>), so its elements are
+	// reached through System.Array's GetValue and SetValue. gencs casts it to object[], which throws for an
+	// int[] (types notes §5); decision 4 of plan 3c keeps hxc's working.
+	function isDynamicVector(e:TExpr):Bool {
+		return isNativeArray(e.type) && switch (strip(e).expr) {
+			case TField(obj, fa = FInstance(_, _, _)): tl.dyn.companionReceiver(obj) && tl.dyn.isDynamicReceiver(fa, obj);
+			case _: false;
+		}
+	}
+
+	static final systemArray:IlSigNorm = LClass({ns: ["System"], nested: [], name: "Array"}, []);
+
+	// Pushes the native array `e1` (isDynamicVector), read with Runtime.getField and not converted to its
+	// Haxe type, as a System.Array, then the index `e2` as an Int.
+	function pushDynamicVector(e1:TExpr, e2:TExpr):Void {
+		switch (strip(e1).expr) {
+			case TField(obj, fa):
+				tl.dyn.fieldHead(obj, TexprDynamic.fieldName(fa));
+				code.ldcI4(1);
+				tl.dyn.runtimeCall("getField", LObject);
+			case _:
+				throw "internal error: not a field read";
+		}
+		code.opToken(IlOps.CASTCLASS, g.typeTokenOf(systemArray), 1, 1);
+		tl.nullOperand(RValue(LInt32), e2, false);
+	}
+
+	// System.Array's GetValue(int) or SetValue(object, int) on what is on the stack.
+	function callArrayValue(set:Bool):Void {
+		var token = g.mb.memberRef(g.typeTokenOf(systemArray), set ? "SetValue" : "GetValue",
+			g.sigs.method(true, set ? LVoid : LObject, set ? [LObject, LInt32] : [LInt32], 0));
+		code.opToken(IlOps.CALLVIRT, token, set ? 3 : 2, set ? 0 : 1);
+	}
+
 	// Pushes a native array and an index into it; returns the element type.
 	function pushArrayAndIndex(e1:TExpr, e2:TExpr):IlSigNorm {
 		var vec = vectorSig(e1);
@@ -1139,8 +1211,8 @@ class TexprCalls {
 		return vectorElement(vec);
 	}
 
-	// a[i]: ldelem on a native array, Array's __get on an Array, and on a Dynamic gencs's
-	// Runtime.callField(a, "__get", hash, new object[]{i}).
+	// a[i]: ldelem on a native array, Array's __get on an Array, and on a Dynamic or an Array<Dynamic>
+	// gencs's Runtime.callField(a, "__get", hash, new object[]{i}).
 	function arrayRead(ret:Ret, e:TExpr, e1:TExpr, e2:TExpr):Void {
 		if (tl.sig(e1.type).match(LString)) {
 			// s[i] on a String is C#'s indexer, a Char16.
@@ -1150,17 +1222,23 @@ class TexprCalls {
 			tl.coerce(LChar, ret);
 			return;
 		}
+		if (isDynamicVector(e1)) {
+			pushDynamicVector(e1, e2);
+			callArrayValue(false);
+			tl.coerce(LObject, ret);
+			return;
+		}
 		if (isNativeArray(e1.type)) {
 			var elem = pushArrayAndIndex(e1, e2);
 			code.ldelem(elem, () -> g.typeTokenOf(elem));
 			tl.coerce(elem, ret);
 			return;
 		}
-		if (arrayOf(e1.type) == null) {
-			if (!TexprDynamic.isDynamic(e1.type)) throw new Unsupported("array access", false);
+		if (isDynamicArrayAccess(e1)) {
 			tl.dyn.fieldCall(ret, e, e1, "__get", [e2]);
 			return;
 		}
+		if (arrayOf(e1.type) == null) throw new Unsupported("array access", false);
 		var m = arrayAccessor(e1.type, "__get");
 		receiver(e1, m.owner);
 		tl.nullOperand(RValue(m.args[0]), e2, false);

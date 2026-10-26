@@ -139,6 +139,25 @@ class DotnetCtx {
 		return classes.get(IlPaths.key(p));
 	}
 
+	var companions:Null<Map<String, TClass>> = null;
+
+	// The hxgeneric class or interface whose companion interface `s` is, or null (CompanionToIl).
+	public function companionClass(s:IlSigNorm):Null<TClass> {
+		var p = switch (s) {
+			case LClass(p, []) if (p.nested.length == 0 && p.name.indexOf("`") < 0): p;
+			case _: return null;
+		}
+		if (companions == null) {
+			companions = new Map();
+			for (mt in ctx.types) switch (mt) {
+				case TClassDecl(c) if (c.params.length > 0 && CompanionToIl.hasCompanion(this, c)):
+					companions.set(IlPaths.key(CompanionToIl.companionPath(c)), c);
+				case _:
+			}
+		}
+		return companions.get(IlPaths.key(p));
+	}
+
 	// The token code uses for a Haxe member of `plan`'s class reached through `owner`, the class's type
 	// as the access sees it: the definition's own, or for a generic class a MemberRef on that
 	// instantiation, with the definition's signature.
@@ -184,11 +203,14 @@ class DotnetCtx {
 			case LClass(p, _) | LValueType(p, _): classAt(p);
 			case _: null;
 		}
+		if (c == null) c = companionClass(s);
 		return c == null ? Std.string(s) : DotnetTypes.haxePath(TClassDecl(c));
 	}
 
 	// The Haxe type a signature stands for, as messages print it: haxe.ds.StringMap<Dynamic>.
 	public function haxeTypeOf(s:IlSigNorm):String {
+		var companion = companionClass(s);
+		if (companion != null) return DotnetTypes.haxePath(TClassDecl(companion)) + "<" + [for (_ in companion.params) "Dynamic"].join(", ") + ">";
 		return switch (s) {
 			case LObject: "Dynamic";
 			case LString: "String";
@@ -215,6 +237,12 @@ class DotnetCtx {
 	// Whether a value of the class `from` already is a `to`, through its superclasses and interfaces as
 	// Haxe declares them.
 	public function isUpcast(from:IlSigNorm, to:IlSigNorm):Bool {
+		// A companion extends its generic superclasses' companions (CompanionToIl), not its interfaces'.
+		var companion = companionClass(from);
+		while (companion != null) {
+			if (CompanionToIl.hasCompanion(this, companion) && IlPaths.sigEq(CompanionToIl.companionSig(companion), to)) return true;
+			companion = companion.superClass == null ? null : companion.superClass.c;
+		}
 		var c = null, args = [];
 		switch (from) {
 			case LClass(p, l) | LValueType(p, l):
@@ -224,19 +252,19 @@ class DotnetCtx {
 		}
 		if (c == null) return false;
 		// Each class's type in terms of its own type parameters, then with `args` for them.
-		function open(c:TClass, t:T):Null<IlSigNorm> {
-			return try types.withParams(c.params, [], () -> types.toSig(t)) catch (_:Unsupported) null;
+		function open(c:TClass, sup:TClass, params:Array<T>):Null<IlSigNorm> {
+			return try types.withParams(c.params, [], () -> types.classSig(sup, params)) catch (_:Unsupported) null;
 		}
 		function reaches(c:TClass, args:Array<IlSigNorm>):Bool {
 			// Every instantiation of an hxgeneric class or interface is its companion.
 			if (CompanionToIl.hasCompanion(this, c) && IlPaths.sigEq(CompanionToIl.companionSig(c), to)) return true;
-			var s = open(c, TInst(c, TypeFunctions.extractParamTypes(c.params)));
+			var s = open(c, c, TypeFunctions.extractParamTypes(c.params));
 			if (s == null) return false;
 			if (IlPaths.sigEq(DotnetTypes.substitute(s, args, []), to)) return true;
 			var supers = c.interfaces.copy();
 			if (c.superClass != null) supers.push(c.superClass);
 			for (sup in supers) {
-				var supSig = open(c, TInst(sup.c, sup.params));
+				var supSig = open(c, sup.c, sup.params);
 				switch (supSig == null ? null : DotnetTypes.substitute(supSig, args, [])) {
 					case LClass(_, l) | LValueType(_, l):
 						if (reaches(sup.c, l)) return true;
@@ -267,7 +295,7 @@ class DotnetCtx {
 			var supers = c.interfaces.copy();
 			if (c.superClass != null) supers.push(c.superClass);
 			for (sup in supers) {
-				var supSig = try types.withParams(c.params, [], () -> types.toSig(TInst(sup.c, sup.params))) catch (_:Unsupported) null;
+				var supSig = try types.withParams(c.params, [], () -> types.classSig(sup.c, sup.params)) catch (_:Unsupported) null;
 				if (supSig != null) visit(DotnetTypes.substitute(supSig, args, []), depth + 1);
 			}
 		}

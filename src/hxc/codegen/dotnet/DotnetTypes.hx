@@ -457,6 +457,44 @@ class DotnetTypes {
 		}
 	}
 
+	// The CLR class of the Haxe class `c` applied to `params`, as an extends or implements clause, a `new`
+	// or a member access names it: never the companion interface, which toSig gives for a Dynamic
+	// argument; ``X`1<object>`` instead.
+	public function classSig(c:TClass, params:Array<T>):IlSigNorm {
+		if (TypeFunctions.hasClassFlag(c, CExtern) || c.kind.match(KTypeParameter(_)) || isPath(c.path, [], "String")) return toSig(TInst(c, params));
+		checkKept(TClassDecl(c));
+		var p = DotnetNames.typePath(TClassDecl(c));
+		var args = classArgs(c, params);
+		return TypeFunctions.hasMeta(":struct", c.meta) ? LValueType(p, args) : LClass(p, args);
+	}
+
+	// Whether toSig gives `t` as a companion interface: through typedefs, Null and abstracts that are not
+	// core types, an instantiation with a Dynamic argument of an hxgeneric class or interface that has a
+	// companion (types notes §1). Members are reached through such a value as types notes §5 has it.
+	public function isCompanionTyped(t:T):Bool {
+		for (_ in 0...50) switch (t) {
+			case TMono(m):
+				if (m.type == null) return false;
+				t = m.type;
+			case TLazy(f):
+				t = TypeFunctions.lazyType(f);
+			case TType(d, [_]) if (isPath(d.path, ["cs"], "Ref") || isPath(d.path, ["cs"], "Out")):
+				return false;
+			case TType(d, params):
+				t = TypeFunctions.applyTypedef(d, params);
+			case TInst(c, params):
+				return !c.kind.match(KTypeParameter(_)) && !TypeFunctions.hasClassFlag(c, CExtern) && hasDynamicArg(params) && g != null
+					&& g.hasCompanion(c);
+			case TAbstract(a, [p]) if (a.path.pack.length == 0 && a.path.name == "Null"):
+				t = p;
+			case TAbstract(a, params) if (!TypeFunctions.hasMeta(":coreType", a.meta) && !isPath(a.path, ["cs", "_Flags"], "EnumUnderlying")):
+				t = TypeFunctions.getUnderlyingType(a, params);
+			case _:
+				return false;
+		}
+		return false;
+	}
+
 	public function toSig(t:T):IlSigNorm {
 		return switch (t) {
 			case TMono(m): m.type == null ? LObject : toSig(m.type);
@@ -492,10 +530,13 @@ class DotnetTypes {
 					// System.Enum extends System.ValueType, so it is a @:struct extern, but the CLR has it a class.
 					TypeFunctions.hasMeta(":struct", c.meta) && !isSystemEnum(p) ? LValueType(p, args) : LClass(p, args);
 				} else {
-					checkKept(TClassDecl(c));
-					var p = DotnetNames.typePath(TClassDecl(c));
-					var args = classArgs(c, params);
-					TypeFunctions.hasMeta(":struct", c.meta) ? LValueType(p, args) : LClass(p, args);
+					// An instantiation with a Dynamic argument is the class's companion interface (types notes §1); one
+					// of a class without a companion (a generic struct or a local function's class) keeps X<object…>.
+					if (hasDynamicArg(params) && g != null && g.hasCompanion(c)) {
+						checkKept(TClassDecl(c));
+						return g.companionOf(c);
+					}
+					classSig(c, params);
 				}
 			case TAbstract(a, params):
 				var p = a.path;
