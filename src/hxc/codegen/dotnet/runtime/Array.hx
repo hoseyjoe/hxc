@@ -32,8 +32,9 @@ import haxe.iterators.ArrayKeyValueIterator;
 // writes the forwarder's `length` wherever it writes its own, so `length` stays a field that callers,
 // ArrayIterator, reflection and C# read directly. map, filter, iterator, keyValueIterator,
 // __unsafe_get and __unsafe_set are not inline, as gencs emits them as methods too, so no caller reads
-// `__a` itself. The members this adds never show in reflection: the vars skip it, and the helpers are
-// extern inline, so no method (nor a member of the `Array` companion interface) exists for them.
+// `__a` itself. The members this adds never show in reflection: the vars and the Equals and GetHashCode
+// overrides skip it, and the helpers are extern inline, so no method exists for them; none of them is a
+// member of the `Array` companion interface. Equality sees an array and its forward as one array.
 #if core_api_serialize
 @:meta(System.Serializable)
 #end
@@ -101,6 +102,29 @@ final class Array<T> implements ArrayAccess<T> {
 			__hx_from.length = length;
 	}
 
+	// hxc: `o` resolved as __hx_resolve() resolves an array: the forward target of an Array`1<object> that has
+	// one, else `o` itself, whatever it is (only an Array`1<object> forwards). Runtime.eq and refEq use it too.
+	extern inline static function __hx_resolveOf(o:Dynamic):Dynamic {
+		var u:Array<Any> = untyped __as__(o);
+		return u != null && u.__hx_fwd != null ? u.__hx_fwd : o;
+	}
+
+	// hxc: an Array and its forward are one array (casts notes §2.6). Equals compares the arrays whose
+	// storage the two use, so System.Array.IndexOf (indexOf, lastIndexOf) finds one through the other; an
+	// array that neither forwards nor is a forward target keeps reference identity, as in gencs's Array,
+	// which overrides neither method. Neither is reflected, nor a member of the companion interface.
+	@:skipReflection public function Equals(other:Dynamic):Bool {
+		return cs.system.Object.ReferenceEquals(__hx_resolve(), __hx_resolveOf(other));
+	}
+
+	// hxc: the identity hash of the forwarder, for the forwarder and its target alike, so arrays Equals finds
+	// equal hash equal (ObjectMap keys). The forwarder is there before its forward is installed, so an array
+	// already used as a key keeps its hash.
+	@:skipReflection public function GetHashCode():Int {
+		var self:Dynamic = __hx_from != null ? (__hx_from : Dynamic) : this;
+		return ArrayIdentity.GetHashCode(self);
+	}
+
 	// hxc: the body of Array_cast<T_c> after gencs's check for the same type arguments, which CompanionToIl
 	// emits before calling this (casts notes §2.4). A cast of an Array`1<object> that does not forward yet
 	// to a basic-element array (String or a value type) whose every element survives the conversion
@@ -114,25 +138,33 @@ final class Array<T> implements ArrayAccess<T> {
 		var to:cs.system.Type = untyped __typeof__(T_c);
 		var object:cs.system.Type = untyped __typeof__(Dynamic);
 		var string:cs.system.Type = untyped __typeof__(String);
-		if (__hx_fwd == null && from == object && (to == string || to.IsValueType)) {
+		var len = length, a = __a;
+		if (__hx_fwd == null && from == object) {
 			// The scan runs under the lock too: once a winner has installed, pushes through its target grow
-			// the target's storage and this array's `length`, not this array's `__a`.
+			// the target's storage and this array's `length`, not this array's `__a`. For the same reason a
+			// copy takes `length` and `__a` together under the lock, while no forward is there: a forward to
+			// another type installed after a failed scan here would otherwise let the copy pair the grown
+			// `length` with the stale `__a`.
 			cs.Lib.lock(this, {
 				if (__hx_fwd == null) {
-					var len = length, a = __a, lossless = true, i = 0;
-					var typed = new NativeArray<T_c>(len);
-					while (lossless && i < len) {
-						var o:Dynamic = a[i];
-						if (__hx_lossless(o, to))
-							typed[i] = Runtime.genericCast(o);
-						else
-							lossless = false;
-						i++;
-					}
-					if (lossless) {
-						var target = new Array<T_c>(typed);
-						target.__hx_from = cast this;
-						__hx_fwd = target;
+					len = length;
+					a = __a;
+					if (to == string || to.IsValueType) {
+						var lossless = true, i = 0;
+						var typed = new NativeArray<T_c>(len);
+						while (lossless && i < len) {
+							var o:Dynamic = a[i];
+							if (__hx_lossless(o, to))
+								typed[i] = Runtime.genericCast(o);
+							else
+								lossless = false;
+							i++;
+						}
+						if (lossless) {
+							var target = new Array<T_c>(typed);
+							target.__hx_from = cast this;
+							__hx_fwd = target;
+						}
 					}
 				}
 			});
@@ -147,8 +179,7 @@ final class Array<T> implements ArrayAccess<T> {
 			return other;
 		}
 		var copy = new Array<T_c>();
-		copy.length = length;
-		var a = __a;
+		copy.length = len;
 		if (a == null) {
 			copy.__a = null;
 		} else {
@@ -704,4 +735,10 @@ final class Array<T> implements ArrayAccess<T> {
 			return __hx_resolve().__unsafe_set(idx, val);
 		return __a[idx] = val;
 	}
+}
+
+// hxc: Object.GetHashCode's identity hash, which Array's own GetHashCode can't reach through `super`. The
+// cs.system externs leave out every GetHashCode.
+@:native("System.Runtime.CompilerServices.RuntimeHelpers") private extern class ArrayIdentity {
+	static function GetHashCode(o:Dynamic):Int;
 }

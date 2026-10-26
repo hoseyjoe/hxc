@@ -93,7 +93,7 @@ static class Program {
 		return problems.IsEmpty ? 0 : 1;
 	}
 
-	// Haxe issue 8314's forward under a race, in three shapes. Each round calls one of the assembly's
+	// Haxe issue 8314's forward under a race, in four shapes. Each round calls one of the assembly's
 	// makers for a fresh Array`1<object> from haxe.Unserializer and starts 8 threads behind a barrier. Each
 	// casts that one array with the shape's P.toInts(a:Dynamic):Array<Int> or P.toStrings and pushes onto
 	// what it got, the pushes under a lock since an Array is not thread-safe. Every thread must get the same
@@ -101,13 +101,108 @@ static class Program {
 	// must follow it. Any exception fails too. P.make's [1,2,3] runs 200 rounds of one push a thread;
 	// P.makeFull's [1,2,3,4], which fills its capacity, and P.makeStrings's ["a",null,"b"], whose null
 	// converts losslessly, run 1000 rounds of 3 pushes a thread, so a push can race a late cast's scan.
+	// The fourth shape races two target types (StressTwoTypes).
 	static int StressArrayForward(string path) {
 		var p = Assembly.LoadFrom(path).GetType("P", true)!;
 		var failed = false;
 		failed |= StressShape(p, "make", "toInts", typeof(int), [1, 2, 3], me => me, 200, 1);
 		failed |= StressShape(p, "makeFull", "toInts", typeof(int), [1, 2, 3, 4], me => me, 1000, 3);
 		failed |= StressShape(p, "makeStrings", "toStrings", typeof(string), ["a", null, "b"], me => "t" + me, 1000, 3);
+		failed |= StressTwoTypes(p, 5000, 3);
 		return failed ? 1 : 0;
+	}
+
+	// P.makeMixed's [1.5,2] converts losslessly into Float but not into Int, so of 8 threads casting it at
+	// once the even ones (P.toFloats) reinterpret it and push 10 + their index onto the target, while the odd ones
+	// (P.toInts) copy it. The Float threads must all get the same Array`1<double>, holding 1.5, 2 and then
+	// their pushes, with the original's length following it. Each Int thread must get an Array`1<int> whose
+	// storage holds its length, starting 2, 2 (1.5 rounds) and then some of the pushed values, and whose
+	// toString works: a copy that took the original's length after pushes through the target grew it, but
+	// the original's stale storage, reads past that storage's end. Any exception fails too.
+	static bool StressTwoTypes(Type p, int rounds, int pushes) {
+		const int threads = 8;
+		var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+		var make = p.GetMethod("makeMixed", flags)!.CreateDelegate<Func<object>>();
+		var toFloats = p.GetMethod("toFloats", flags)!.CreateDelegate<Func<object, object>>();
+		var toInts = p.GetMethod("toInts", flags)!.CreateDelegate<Func<object, object>>();
+		var problems = new List<string>();
+		var pushers = Enumerable.Range(0, threads).Where(t => t % 2 == 0).ToArray();
+		var want = 2 + pushers.Length * pushes;
+		int Length(object o) => (int)o.GetType().GetField("length")!.GetValue(o)!;
+		System.Array Store(object o) => (System.Array)o.GetType().GetField("__a")!.GetValue(o)!;
+		// Looked up once, so a Float thread's pushes follow its cast closely.
+		var generic = make().GetType().GetGenericTypeDefinition();
+		var push = generic.MakeGenericType(typeof(double)).GetMethod("push")!;
+		var watch = System.Diagnostics.Stopwatch.StartNew();
+		for (var round = 0; round < rounds; round++) {
+			var a = make();
+			var got = new object?[threads];
+			var errors = new System.Collections.Concurrent.ConcurrentQueue<string>();
+			var gate = new object();
+			var start = new Barrier(threads);
+			var workers = new Thread[threads];
+			for (var t = 0; t < threads; t++) {
+				var me = t;
+				workers[t] = new Thread(() => {
+					start.SignalAndWait();
+					try {
+						if (me % 2 == 0) {
+							var r = toFloats(a);
+							got[me] = r;
+							lock (gate) for (var i = 0; i < pushes; i++) push.Invoke(r, [(double)(me + 10)]);
+						} else {
+							var r = toInts(a);
+							got[me] = r;
+							r.GetType().GetMethod("toString")!.Invoke(r, []);
+						}
+					} catch (Exception e) {
+						var x = e is TargetInvocationException && e.InnerException != null ? e.InnerException : e;
+						errors.Enqueue(x.GetType().Name + ": " + x.Message);
+					}
+				});
+				workers[t].Start();
+			}
+			foreach (var w in workers) w.Join();
+			var where = "makeMixed round " + round + ": ";
+			foreach (var e in errors) problems.Add(where + e);
+			var first = got[0];
+			if (first == null || first.GetType() != generic.MakeGenericType(typeof(double))) {
+				problems.Add(where + "thread 0 got " + (first == null ? "null" : first.GetType().ToString()));
+				continue;
+			}
+			foreach (var t in pushers)
+				if (!ReferenceEquals(got[t], first)) problems.Add(where + "thread " + t + " got another array");
+			var length = Length(first);
+			if (length != want) problems.Add(where + "length " + length + ", not " + want);
+			if (Length(a) != length) problems.Add(where + "the original's length is " + Length(a) + ", the target's " + length);
+			var store = Store(first);
+			var values = Enumerable.Range(0, Math.Min(length, store.Length)).Select(i => (double)store.GetValue(i)!).ToArray();
+			var rest = values.Skip(2).OrderBy(v => v);
+			var expected = pushers.SelectMany(t => Enumerable.Repeat((double)(t + 10), pushes)).OrderBy(v => v);
+			if (!values.Take(2).SequenceEqual([1.5, 2.0]) || !rest.SequenceEqual(expected))
+				problems.Add(where + "elements " + string.Join(",", values));
+			for (var t = 1; t < threads; t += 2) {
+				var copy = got[t];
+				if (copy == null) continue;
+				if (copy.GetType() != generic.MakeGenericType(typeof(int))) {
+					problems.Add(where + "thread " + t + " got " + copy.GetType());
+					continue;
+				}
+				var n = Length(copy);
+				var own = Store(copy);
+				if (n < 2 || n > own.Length) {
+					problems.Add(where + "thread " + t + "'s copy has length " + n + " over storage of " + own.Length);
+					continue;
+				}
+				var ints = Enumerable.Range(0, n).Select(i => (int)own.GetValue(i)!).ToArray();
+				if (ints[0] != 2 || ints[1] != 2 || ints.Skip(2).Any(v => !pushers.Contains(v - 10)))
+					problems.Add(where + "thread " + t + "'s copy " + string.Join(",", ints));
+			}
+		}
+		foreach (var problem in problems.Take(20)) Console.WriteLine(problem);
+		Console.WriteLine("stress-arrayforward makeMixed: " + rounds + " rounds of " + threads + " threads, two types, " + pushes
+			+ " pushes each, in " + watch.ElapsedMilliseconds + " ms, " + problems.Count + " problems");
+		return problems.Count != 0;
 	}
 
 	// One shape of stress-arrayforward; true when it found a problem.

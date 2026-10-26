@@ -12439,6 +12439,42 @@ class P {
 [run]
 body: [ val : [1,0,0,0] ] | [ val : [2,0,0,0] ] | [ val : [2,0,0,0] ]
 json: [raw anonymous object is ok] [raw anonymous object is ok] | [after json conversion fails] [after json conversion fails] same=true
+# Recorded #8314 divergence (casts notes §6.12). gencs: False, False, `[1,2,3] [1,2,3,4]`, False, `-1 -1`,
+# an empty line. Expected [run]: the hxc output casts §6.12 states.
+--- cast-4872-eq
+// Haxe issue 4872's tests (Simn 2016-03-29 and 2024-02-04). gencs: a == b false, the push is lost.
+// Recorded #8314 divergence: hxc prints true and [1,2,3,4].
+class P {
+	static function eq<T>(e1:T, e2:T)
+		return e1 == e2;
+
+	static function main() {
+		var a:Array<Dynamic> = [1, 2, 3];
+		Sys.println("prevent fusion");
+		var b:Array<Int> = cast a;
+		Sys.println("prevent fusion");
+		Sys.println(a == b);
+		Sys.println(eq(a, b));
+		b.push(4);
+		Sys.println(Std.string(a) + " " + Std.string(b));
+		var da:Dynamic = a, db:Dynamic = b;
+		Sys.println(da == db);
+		Sys.println(a.indexOf(4) + " " + [a].indexOf(cast b));
+		var m = new haxe.ds.ObjectMap<Dynamic, Int>();
+		m.set(a, 1);
+		Sys.println(m.get(b));
+	}
+}
+===
+[run]
+prevent fusion
+prevent fusion
+True
+True
+[1,2,3,4] [1,2,3,4]
+True
+3 0
+1
 # Recorded #8314 divergence (casts notes §6.13). gencs: `[1,2,2.5] [1,2] [1,2,2] oy3:valai1i2d2.5hg`,
 # `[1,2,2.5,x]`. Expected [run]: the hxc output casts §6.13 states.
 --- cast-array-dynamic-write
@@ -12524,7 +12560,7 @@ class P {
 # fields). gencs: inner write 1, same inner false, ai same false, ai push seen 1. Expected [run]: types §8.17's
 # stated lines (inner write 5, same inner true, ai push seen 2, ac/outer as gencs) and `ai same: true`, which
 # §8.17 leaves out: `h.ai == o.ai` has a Dynamic operand, so it resolves the forward (casts §2.6), as
-# cast-4872-eq's `da == db` does. That line waits for Task 10 (equality), in pending-task10.hx.txt.
+# cast-4872-eq's `da == db` does.
 --- nested-array-element-cast
 // Nested arrays under erasure: Array<Array<Int>> is Array<object>, so the inner cast happens at each element read.
 class C { public var x = 1; public function new() {} }
@@ -12548,6 +12584,7 @@ class P {
 		Sys.println("same inner: " + (inner == h.aai[0]));
 		Sys.println("outer same: " + (h.aai == o.aai));
 		Sys.println("ac same: " + (h.ac == o.ac));
+		Sys.println("ai same: " + (h.ai == o.ai));
 		h.ac.push(new C());
 		Sys.println("ac push seen: " + o.ac.length);
 		h.ai.push(2);
@@ -12563,6 +12600,7 @@ inner write: 5
 same inner: true
 outer same: true
 ac same: true
+ai same: true
 ac push seen: 1
 ai push seen: 2
 anon Array<C> push seen: 2
@@ -12717,7 +12755,10 @@ class P {
 # and pushing onto what it got. Every thread must get the same Array`1<int>, with 3 + 8 elements, and the
 # original's length must follow it. Two more shapes run 1000 rounds of 3 pushes a thread: makeFull's array
 # fills its capacity, and makeStrings's (cast with toStrings) holds a null, which converts losslessly into
-# String; in both an install racing the scan would read past the original's storage.
+# String; in both an install racing the scan would read past the original's storage. makeMixed's [1.5,2]
+# runs 5000 rounds of two target types racing: four threads cast it with toFloats, which reinterprets it, and
+# push, while four cast it with toInts, which copies it (1.5 is lossy); a copy that took the original's length
+# after those pushes but its stale storage would read past that storage.
 --- array-forward-race @stress-arrayforward
 class P {
 	public static function make():Array<Dynamic> {
@@ -12732,11 +12773,19 @@ class P {
 		return haxe.Unserializer.run("ay1:any1:bh");
 	}
 
+	public static function makeMixed():Array<Dynamic> {
+		return haxe.Unserializer.run("ad1.5i2h");
+	}
+
 	public static function toInts(a:Dynamic):Array<Int> {
 		return a;
 	}
 
 	public static function toStrings(a:Dynamic):Array<String> {
+		return a;
+	}
+
+	public static function toFloats(a:Dynamic):Array<Float> {
 		return a;
 	}
 

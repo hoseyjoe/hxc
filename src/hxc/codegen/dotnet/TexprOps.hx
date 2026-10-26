@@ -365,6 +365,15 @@ class TexprOps {
 				// gencs leaves a comparison with Runtime.undefined C#'s reference comparison.
 				tl.texpr(RValue(LObject), e1);
 				tl.texpr(RValue(LObject), e2);
+			} else if (equality && arrayEquality(e1, e2)) {
+				// Runtime.eq, which sees an Array and its #8314 forward as one array. An instantiation of
+				// Array goes as itself, as in a comparison of references below.
+				tl.texpr(RValue(g.isGenericHaxeClass(s1) ? s1 : null), e1);
+				tl.texpr(RValue(g.isGenericHaxeClass(s2) ? s2 : null), e2);
+				tl.dyn.runtimeCall("eq");
+				if (op.match(OpNotEq)) not();
+				tl.coerce(LBool, ret);
+				return;
 			} else if (equality && isReference(s1) && isReference(s2) && !s1.match(LObject) && !s2.match(LObject)) {
 				netOperator = equalityOperator(op, e1, e2);
 				// An instantiation of a generic Haxe class goes as itself, so a read of a place erased to object
@@ -403,6 +412,16 @@ class TexprOps {
 			}
 		}
 		tl.coerce(LBool, ret);
+	}
+
+	// Whether `==` or `!=` on `e1` and `e2` compares through Runtime.eq so that an Array and its #8314
+	// forward are one array (casts notes §2.6): two Arrays, one of them an Array<Dynamic> (the companion
+	// interface, which can hold either). An operand typed Dynamic or as a type parameter already goes through
+	// Runtime (TexprDynamic.binop), whose eq and refEq resolve forwards too; other Arrays compare their
+	// references, as in gencs's C#.
+	function arrayEquality(e1:TExpr, e2:TExpr):Bool {
+		if (TexprCalls.arrayOf(e1.type) == null || TexprCalls.arrayOf(e2.type) == null) return false;
+		return g.types.isCompanionTyped(e1.type) || g.types.isCompanionTyped(e2.type);
 	}
 
 	// What an operand of `==` on types is: a type expression, whose type is its statics; a Class<T> or

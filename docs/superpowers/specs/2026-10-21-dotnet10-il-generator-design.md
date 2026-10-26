@@ -330,10 +330,14 @@ instantiation locks it, and from then on every reference shares one storage.
   paths in `cs.internal.Runtime`. The std readers of `__a` (`cs.Lib.nativeArray`, `haxe.Rest`)
   resolve it too. `Reflect.field(a, "__a")` on a forwarder returns the stale storage, as gencs's
   untyped original would.
-- **Equality sees one array.** `Runtime.eq`, `==` with an `Array<Dynamic>`, `Dynamic` or
+- **Equality sees one array.** `Runtime.eq` and `refEq`, `==` with an `Array<Dynamic>`, `Dynamic` or
   type-parameter operand, and `Equals`/`GetHashCode` overrides on `Array` compare forward targets.
-  That keeps `indexOf`/`remove`/`contains` (which use `System.Array.IndexOf`) and `ObjectMap` keys
-  consistent.
+  That keeps `indexOf`/`lastIndexOf` (which use `System.Array.IndexOf`), `remove`/`contains` (which
+  use `Runtime.eq`) and `ObjectMap` keys consistent. `GetHashCode` is the forwarder's identity hash,
+  for the forwarder and its target alike, so an array already used as a key keeps its hash when it is
+  reinterpreted. An array that neither forwards nor is a forward target keeps reference identity.
+  The overrides are neither reflected nor members of the `Array` companion interface, which stays
+  gencs's.
 - **Unchanged from hxcs:** maps, `List` and other generic classes keep `__hx_cast`'s copy, bugs
   included. A search of the server app found no map read from serialized data with a basic value type, and no
   generic class of its own besides `CSTools.IEnumerableIterator`. It also depends on
@@ -352,6 +356,7 @@ hxcs, with gencs's output kept for contrast:
    instead of copying, and writes through it convert. A write past `length` through it fills the gap
    with the target type's default instead of `null`, and converted elements take the target's CLR type,
    which `indexOf`/`lastIndexOf` observe (cases `cast-array-dynamic-write`, `cast-array-forward-storage`).
+   Equality, `indexOf` and `ObjectMap` see an array and its forward as one array (case `cast-4872-eq`).
 2. **Parent casts** return the right instantiation instead of `this`, so casts that throw in gencs
    work.
 3. **Paths where gencs throws but this design works are left working**:

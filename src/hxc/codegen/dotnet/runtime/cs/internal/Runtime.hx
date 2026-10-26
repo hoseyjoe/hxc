@@ -42,6 +42,7 @@ import cs.system.Object;
 @:nativeGen
 @:native('haxe.lang.Runtime')
 @:access(String)
+@:access(Array)
 @:keep class Runtime {
 	@:readOnly public static var undefined(default, never):Dynamic = new cs.system.Object();
 
@@ -124,7 +125,9 @@ import cs.system.Object;
 		#end
 		}
 
-		return false;
+		// hxc: an Array and its #8314 forward are one array (casts notes §2.6). Neither is IConvertible, a
+		// value type or a Type, so resolving here, last, is resolving first.
+		return Object.ReferenceEquals(Array.__hx_resolveOf(v1), Array.__hx_resolveOf(v2));
 	}
 
 	public static function refEq(v1:{}, v2:{}):Bool {
@@ -132,7 +135,8 @@ import cs.system.Object;
 		if (Std.isOfType(v1, Type))
 			return typeEq(Lib.as(v1, Type), Lib.as(v2, Type));
 		#end
-		return Object.ReferenceEquals(v1, v2);
+		// hxc: an Array and its #8314 forward are one array, as in eq.
+		return Object.ReferenceEquals(v1, v2) || Object.ReferenceEquals(Array.__hx_resolveOf(v1), Array.__hx_resolveOf(v2));
 	}
 
 	public static function toDouble(obj:Dynamic):Float {
