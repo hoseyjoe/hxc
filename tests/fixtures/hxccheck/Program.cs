@@ -93,19 +93,31 @@ static class Program {
 		return problems.IsEmpty ? 0 : 1;
 	}
 
-	// Haxe issue 8314's forward under a race. Each of 200 rounds calls the assembly's P.make(), which
-	// returns a fresh Array`1<object> of [1,2,3] from haxe.Unserializer, and starts 8 threads behind a
-	// barrier. Each casts that one array with P.toInts(a:Dynamic):Array<Int> and pushes its index onto what
-	// it got, the pushes under a lock since an Array is not thread-safe. Every thread must get the same
-	// Array`1<int>, holding 1, 2, 3 and then each index once, and the original's length must follow it. Any
-	// exception fails too.
+	// Haxe issue 8314's forward under a race, in three shapes. Each round calls one of the assembly's
+	// makers for a fresh Array`1<object> from haxe.Unserializer and starts 8 threads behind a barrier. Each
+	// casts that one array with the shape's P.toInts(a:Dynamic):Array<Int> or P.toStrings and pushes onto
+	// what it got, the pushes under a lock since an Array is not thread-safe. Every thread must get the same
+	// typed array, holding the original's elements and then each thread's pushes, and the original's length
+	// must follow it. Any exception fails too. P.make's [1,2,3] runs 200 rounds of one push a thread;
+	// P.makeFull's [1,2,3,4], which fills its capacity, and P.makeStrings's ["a",null,"b"], whose null
+	// converts losslessly, run 1000 rounds of 3 pushes a thread, so a push can race a late cast's scan.
 	static int StressArrayForward(string path) {
-		const int threads = 8, rounds = 200;
 		var p = Assembly.LoadFrom(path).GetType("P", true)!;
+		var failed = false;
+		failed |= StressShape(p, "make", "toInts", typeof(int), [1, 2, 3], me => me, 200, 1);
+		failed |= StressShape(p, "makeFull", "toInts", typeof(int), [1, 2, 3, 4], me => me, 1000, 3);
+		failed |= StressShape(p, "makeStrings", "toStrings", typeof(string), ["a", null, "b"], me => "t" + me, 1000, 3);
+		return failed ? 1 : 0;
+	}
+
+	// One shape of stress-arrayforward; true when it found a problem.
+	static bool StressShape(Type p, string maker, string caster, Type element, object?[] initial, Func<int, object> pushed, int rounds, int pushes) {
+		const int threads = 8;
 		var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
-		var make = p.GetMethod("make", flags)!.CreateDelegate<Func<object>>();
-		var toInts = p.GetMethod("toInts", flags)!.CreateDelegate<Func<object, object>>();
+		var make = p.GetMethod(maker, flags)!.CreateDelegate<Func<object>>();
+		var cast = p.GetMethod(caster, flags)!.CreateDelegate<Func<object, object>>();
 		var problems = new List<string>();
+		var want = initial.Length + threads * pushes;
 		var watch = System.Diagnostics.Stopwatch.StartNew();
 		for (var round = 0; round < rounds; round++) {
 			var a = make();
@@ -119,20 +131,22 @@ static class Program {
 				workers[t] = new Thread(() => {
 					start.SignalAndWait();
 					try {
-						var r = toInts(a);
+						var r = cast(a);
 						got[me] = r;
-						lock (gate) r.GetType().GetMethod("push")!.Invoke(r, [me]);
+						var push = r.GetType().GetMethod("push")!;
+						lock (gate) for (var i = 0; i < pushes; i++) push.Invoke(r, [pushed(me)]);
 					} catch (Exception e) {
-						errors.Enqueue(e.GetType().Name + ": " + e.Message);
+						var x = e is TargetInvocationException && e.InnerException != null ? e.InnerException : e;
+						errors.Enqueue(x.GetType().Name + ": " + x.Message);
 					}
 				});
 				workers[t].Start();
 			}
 			foreach (var w in workers) w.Join();
-			var where = "round " + round + ": ";
+			var where = maker + " round " + round + ": ";
 			foreach (var e in errors) problems.Add(where + e);
 			var first = got[0];
-			if (first == null || first.GetType() != a.GetType().GetGenericTypeDefinition().MakeGenericType(typeof(int))) {
+			if (first == null || first.GetType() != a.GetType().GetGenericTypeDefinition().MakeGenericType(element)) {
 				problems.Add(where + "thread 0 got " + (first == null ? "null" : first.GetType().ToString()));
 				continue;
 			}
@@ -140,18 +154,19 @@ static class Program {
 				if (!ReferenceEquals(got[t], first)) problems.Add(where + "thread " + t + " got another array");
 			int Length(object o) => (int)o.GetType().GetField("length")!.GetValue(o)!;
 			var length = Length(first);
-			if (length != 3 + threads) problems.Add(where + "length " + length + ", not " + (3 + threads));
+			if (length != want) problems.Add(where + "length " + length + ", not " + want);
 			if (Length(a) != length) problems.Add(where + "the original's length is " + Length(a) + ", the target's " + length);
-			var store = (int[])first.GetType().GetField("__a")!.GetValue(first)!;
-			var values = store.Take(Math.Min(length, store.Length)).ToArray();
-			var indexes = values.Skip(3).OrderBy(v => v).ToArray();
-			if (!values.Take(3).SequenceEqual([1, 2, 3]) || !indexes.SequenceEqual(Enumerable.Range(0, threads)))
+			var store = (System.Array)first.GetType().GetField("__a")!.GetValue(first)!;
+			var values = Enumerable.Range(0, Math.Min(length, store.Length)).Select(i => store.GetValue(i)).ToArray();
+			var rest = values.Skip(initial.Length).Select(v => Convert.ToString(v)).OrderBy(v => v, StringComparer.Ordinal);
+			var expected = Enumerable.Range(0, threads).SelectMany(t => Enumerable.Repeat(Convert.ToString(pushed(t)), pushes)).OrderBy(v => v, StringComparer.Ordinal);
+			if (!values.Take(initial.Length).SequenceEqual(initial) || !rest.SequenceEqual(expected))
 				problems.Add(where + "elements " + string.Join(",", values));
 		}
 		foreach (var problem in problems.Take(20)) Console.WriteLine(problem);
-		Console.WriteLine("stress-arrayforward: " + rounds + " rounds of " + threads + " threads in " + watch.ElapsedMilliseconds + " ms, "
-			+ problems.Count + " problems");
-		return problems.Count == 0 ? 0 : 1;
+		Console.WriteLine("stress-arrayforward " + maker + ": " + rounds + " rounds of " + threads + " threads, " + pushes + " pushes each, in "
+			+ watch.ElapsedMilliseconds + " ms, " + problems.Count + " problems");
+		return problems.Count != 0;
 	}
 
 	static int Verify(string path) {

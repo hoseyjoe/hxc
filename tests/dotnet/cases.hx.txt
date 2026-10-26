@@ -12466,6 +12466,38 @@ class P {
 [1,2,2] [1,2,2] [1,2,2] oy3:valai1i2i2hg
 EXC System.FormatException
 [1,2,2]
+# Recorded #8314 divergence 1 (spec, the forward's typed storage), sibling of cast-array-dynamic-write. Expected
+# [run]: hxc's output; gencs's is the [gencs] section.
+--- cast-array-forward-storage @gencs
+// What forwarding into typed storage shows besides a converted write. A write past `length` through the
+// forward fills the gap with the target type's default, so the record serializes `zz` where gencs (whose write
+// lands in the untyped original) writes `u2`. Converted elements keep their value but take the target's CLR
+// type: on [2.0, 3] from Json, reinterpreted as Array<Int>, indexOf(2.0) goes from 0 to -1 and indexOf(2) from
+// -1 to 0 (System.Array.IndexOf compares with Equals); contains (Runtime.eq) is unchanged. @gencs.
+typedef TI = {val:Array<Int>};
+
+class P {
+	static function main() {
+		var t:TI = haxe.Json.parse('{"val":[1,2]}');
+		var v = t.val;
+		var d:Dynamic = Reflect.field(t, "val");
+		d[4] = 7;
+		Sys.println(Std.string(d) + " " + haxe.Serializer.run(t));
+		var a:Array<Dynamic> = haxe.Json.parse("[2.0, 3]");
+		Sys.println(a.indexOf(2.0) + " " + a.indexOf(2) + " " + a.contains(2.0) + " " + a.contains(2));
+		var r:Array<Int> = cast a;
+		Sys.println(a.indexOf(2.0) + " " + a.indexOf(2) + " " + a.contains(2.0) + " " + a.contains(2) + " " + Std.string(r));
+	}
+}
+===
+[run]
+[1,2,0,0,7] oy3:valai1i2zzi7hg
+0 -1 true true
+-1 0 true true [2,3]
+[gencs]
+[1,2,null,null,7] oy3:valai1i2u2i7hg
+0 -1 true true
+0 -1 true true [2,3]
 # Recorded #8314 divergence (casts notes §6.14). gencs: `[[1],[2]] [[1],[2]] false`, `[[1,2],[3]]`.
 # Expected [run]: the hxc output casts §6.14 states.
 --- cast-array-nested
@@ -12652,12 +12684,14 @@ class P {
 [run]
 4/4 Array`1[System.Int32]
 # Review Focus 3 of plan 3c: Array's surface to C# and to reflection. gencs's Type.getInstanceFields(Array)
-# also lists get_Item and set_Item, from hxcs's @:classCode indexer (milestone 4), so the case leaves them out.
+# and its Array companion interface also list get_Item and set_Item, from hxcs's @:classCode indexer
+# (milestone 4), so the case leaves them out.
 --- array-clr-surface @gencs
 // Array`1 keeps its namespace, name and arity, and `length` stays a public Int32 field (the server app's C# builds
 // `new Array<string>()` and reads `.length`). The #8314 forward's members (__hx_fwd, __hx_from) never show
 // in Reflect.fields, Type.getInstanceFields or haxe.Serializer output, for a plain unserialized array, one a
-// typed cast has reinterpreted, or the typed array itself. @gencs.
+// typed cast has reinterpreted, or the typed array itself. The Array companion interface declares gencs's
+// methods, in order, and nothing of the forward's. @gencs.
 class P {
 	static function main() {
 		var t = cs.Lib.toNativeType(Array);
@@ -12670,6 +12704,10 @@ class P {
 		Sys.println(Reflect.fields(plain) + " " + Reflect.fields(a) + " " + Reflect.fields(b));
 		Sys.println([for (n in Type.getInstanceFields(Array)) if (n != "get_Item" && n != "set_Item") n]);
 		Sys.println(haxe.Serializer.run(a) + " " + haxe.Serializer.run(b) + " " + haxe.Serializer.run({a: a, b: b}));
+		var companion = cs.system.Type._GetType("Array");
+		var ms = companion.GetMethods(new cs.Flags(cs.system.reflection.BindingFlags.Public) | cs.system.reflection.BindingFlags.Instance
+			| cs.system.reflection.BindingFlags.DeclaredOnly);
+		Sys.println(companion.IsInterface + " " + [for (i in 0...ms.Length) if (ms[i].Name != "get_Item" && ms[i].Name != "set_Item") ms[i].Name]);
 	}
 }
 ===
@@ -12677,14 +12715,28 @@ class P {
 # can't start a thread until milestone 4 (cast-array-threads, m4.cases.txt), so HxcCheck's stress-arrayforward
 # drives P.make and P.toInts from C#: 200 rounds of 8 threads behind a barrier, each casting one fresh array
 # and pushing onto what it got. Every thread must get the same Array`1<int>, with 3 + 8 elements, and the
-# original's length must follow it.
+# original's length must follow it. Two more shapes run 1000 rounds of 3 pushes a thread: makeFull's array
+# fills its capacity, and makeStrings's (cast with toStrings) holds a null, which converts losslessly into
+# String; in both an install racing the scan would read past the original's storage.
 --- array-forward-race @stress-arrayforward
 class P {
 	public static function make():Array<Dynamic> {
 		return haxe.Unserializer.run("ai1i2i3h");
 	}
 
+	public static function makeFull():Array<Dynamic> {
+		return haxe.Unserializer.run("ai1i2i3i4h");
+	}
+
+	public static function makeStrings():Array<Dynamic> {
+		return haxe.Unserializer.run("ay1:any1:bh");
+	}
+
 	public static function toInts(a:Dynamic):Array<Int> {
+		return a;
+	}
+
+	public static function toStrings(a:Dynamic):Array<String> {
 		return a;
 	}
 

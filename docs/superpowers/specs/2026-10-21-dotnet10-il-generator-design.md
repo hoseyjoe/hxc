@@ -290,11 +290,14 @@ instantiation locks it, and from then on every reference shares one storage.
   A typed instantiation (``Array`1<int32>``, ``Array`1<string>``, …) never forwards. A typed array
   held in an `Array<Dynamic>` slot is an upcast and needs nothing.
 - **Reinterpret once.** The cast converts the elements into a new `Array<X>`, installs it as the
-  forward target, and returns it. The install runs under `Monitor.Enter(this)`/`Exit(this)`, since
-  hxc has no `ref` arguments for `Interlocked.CompareExchange`. A thread that loses the race returns
-  the winner's array. The old storage stays in place, so a reader that raced the install sees the same
-  values. Later casts of the object to `Array<X>` return that same array: `t.val == t.val` holds, and
-  a write through either reference shows through the other.
+  forward target, and returns it. The check, the conversion and the install all run under
+  `Monitor.Enter(this)`/`Exit(this)`, behind a second look for a forward, since hxc has no `ref`
+  arguments for `Interlocked.CompareExchange`. A thread that loses the race returns the winner's array
+  (and never scans the old storage, which pushes through the winner's target have outgrown). The old
+  storage stays in place, so a reader that raced the install sees the same values. Later casts of the
+  object to `Array<X>` return that same array: `t.val == t.val` holds, and a write through either
+  reference shows through the other. Writers racing the install are not covered: that is concurrent
+  mutation of an unsynchronized `Array`, which hxcs doesn't make safe either.
 - **Only lossless conversions.** An element converts when its value survives: an `Int`, or a `Float`
   holding an `Int` value, into `Array<Int>` (`-0.0` too: `genericCast` gives `0` and the Serializer
   writes `z` for both); any number into `Array<Float>`; a `Bool` into `Array<Bool>`; a string or
@@ -309,7 +312,13 @@ instantiation locks it, and from then on every reference shares one storage.
   that throws. Under hxcs the same write would have gone into an untyped copy. Typed code sees this
   too, because erasure makes `Array<Null<Int>>`, `Array<C>` and `Array<Array<Int>>` all
   ``Array`1<object>``: an `Array<Null<Int>>` view of a reinterpreted array turns `push(null)` into
-  `0`.
+  `0`. A write past `length` fills the gap with the target type's default (`0`, `false`), not `null`,
+  so the record serializes `z` where hxcs writes `u`: `d[4] = 7` on `{"val":[1,2]}` read as
+  `Array<Int>` gives `ai1i2zzi7h` against gencs's `ai1i2u2i7h`.
+- **Converted elements take the target's type.** They keep their value but not their CLR type, and
+  `indexOf`/`lastIndexOf` (`System.Array.IndexOf`, which compares with `Equals`) see it: on `[2.0, 3]`
+  from Json, once `Array<Int>` reinterprets it, `indexOf(2.0)` goes from `0` to `-1` and `indexOf(2)`
+  from `-1` to `0`. `contains` and `remove` compare with `Runtime.eq` and are unchanged.
 - **Nested arrays.** The outer array is ``Array`1<object>`` and never converts. Each inner array
   converts when an element read casts it, as above, so `h.aai[0][0] = 5` persists where gencs loses
   it.
@@ -340,7 +349,9 @@ instantiation locks it, and from then on every reference shares one storage.
 hxcs, with gencs's output kept for contrast:
 
 1. **The #8314 forward**: a cast of an ``Array`1<object>`` to a basic-element `Array` shares storage
-   instead of copying, and writes through it convert.
+   instead of copying, and writes through it convert. A write past `length` through it fills the gap
+   with the target type's default instead of `null`, and converted elements take the target's CLR type,
+   which `indexOf`/`lastIndexOf` observe (cases `cast-array-dynamic-write`, `cast-array-forward-storage`).
 2. **Parent casts** return the right instantiation instead of `this`, so casts that throw in gencs
    work.
 3. **Paths where gencs throws but this design works are left working**:

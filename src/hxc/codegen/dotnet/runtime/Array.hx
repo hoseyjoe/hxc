@@ -45,8 +45,9 @@ final class Array<T> implements ArrayAccess<T> {
 	// hxc: the typed array this one forwards to, set once; only an Array`1<object> has one.
 	@:skipReflection private var __hx_fwd:Dynamic;
 
-	// hxc: the array forwarding to this one, whose `length` this one keeps in step.
-	@:skipReflection private var __hx_from:Array<Dynamic>;
+	// hxc: the array forwarding to this one, whose `length` this one keeps in step: an Array`1<object>,
+	// so the write is a plain store.
+	@:skipReflection private var __hx_from:Array<Any>;
 
 	@:skipReflection static var __hx_toString_depth = 0;
 	@:skipReflection static inline final __hx_defaultCapacity = 4;
@@ -103,8 +104,9 @@ final class Array<T> implements ArrayAccess<T> {
 	// hxc: the body of Array_cast<T_c> after gencs's check for the same type arguments, which CompanionToIl
 	// emits before calling this (casts notes §2.4). A cast of an Array`1<object> that does not forward yet
 	// to a basic-element array (String or a value type) whose every element survives the conversion
-	// reinterprets it: the typed array is installed as the forward under `lock (this)`, and a thread that
-	// loses the race returns the winner's. A forwarding array returns its target for the target's type and
+	// reinterprets it: under `lock (this)`, and only if no forward is there yet, the elements are checked
+	// and converted and the typed array is installed as the forward; a thread that loses the race returns
+	// the winner's. A forwarding array returns its target for the target's type and
 	// a copy of it for another type. Anything else copies as gencs's X_cast does: `length` as it is, and
 	// each element of `__a` that is not null through Runtime.genericCast.
 	@:keep @:skipReflection private function __hx_castTo<T_c>():Array<T_c> {
@@ -113,25 +115,27 @@ final class Array<T> implements ArrayAccess<T> {
 		var object:cs.system.Type = untyped __typeof__(Dynamic);
 		var string:cs.system.Type = untyped __typeof__(String);
 		if (__hx_fwd == null && from == object && (to == string || to.IsValueType)) {
-			var len = length, a = __a, lossless = true;
-			var typed = new NativeArray<T_c>(len);
-			for (i in 0...len) {
-				var o:Dynamic = a[i];
-				if (!__hx_lossless(o, to)) {
-					lossless = false;
-					break;
-				}
-				typed[i] = Runtime.genericCast(o);
-			}
-			if (lossless) {
-				var target = new Array<T_c>(typed);
-				cs.Lib.lock(this, {
-					if (__hx_fwd == null) {
-						target.__hx_from = this;
+			// The scan runs under the lock too: once a winner has installed, pushes through its target grow
+			// the target's storage and this array's `length`, not this array's `__a`.
+			cs.Lib.lock(this, {
+				if (__hx_fwd == null) {
+					var len = length, a = __a, lossless = true, i = 0;
+					var typed = new NativeArray<T_c>(len);
+					while (lossless && i < len) {
+						var o:Dynamic = a[i];
+						if (__hx_lossless(o, to))
+							typed[i] = Runtime.genericCast(o);
+						else
+							lossless = false;
+						i++;
+					}
+					if (lossless) {
+						var target = new Array<T_c>(typed);
+						target.__hx_from = cast this;
 						__hx_fwd = target;
 					}
-				});
-			}
+				}
+			});
 		}
 		var fwd:Dynamic = __hx_fwd;
 		if (fwd != null) {
@@ -183,6 +187,9 @@ final class Array<T> implements ArrayAccess<T> {
 			return Runtime.toDouble(f) == d;
 		}
 		if (to == untyped __typeof__(cs.StdTypes.Int64)) {
+			// Within Int64's range: (long) of 2^63 saturates to 2^63 - 1, which reads back as 2^63.
+			if (!(d >= -9.2e18 && d <= 9.2e18))
+				return false;
 			var l:cs.StdTypes.Int64 = Runtime.genericCast(o);
 			return Runtime.toDouble(l) == d;
 		}
