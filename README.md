@@ -185,8 +185,12 @@ The tests need the .NET 10 SDK and hxcs installed globally. They build `tests/fi
 check the output is deterministic, verify it with ILVerify, and run it:
 
 ```bash
-tests/dotnet/run.sh --compiler path/to/hxc [--std path/to/haxe/std] [--case name] [--haxe path/to/haxe]
+tests/dotnet/run.sh --compiler path/to/hxc [--std path/to/haxe/std] [--case name] [--haxe path/to/haxe] [-j jobs] [--no-gencs-cache]
 ```
+
+Cases run 8 at a time (`-j` or `HXC_TEST_JOBS` changes that; `-j 1` runs them one by one, in order), and their
+reports print in case order. Cases tagged `@stress-…` or `@run-timeout`, whose results depend on timing, run alone after
+the rest.
 
 Cases tagged `@gencs` are also compiled with Haxe 4.3.7's own `--cs` generator (`-D no-compilation`), the C# is built
 for net10.0, and its output must match the hxc build's. That needs Haxe 4.3.7 (`haxe`, or `--haxe`) with hxcs on the
@@ -195,6 +199,9 @@ Cases tagged `@serial` are `@gencs` cases that also round-trip `haxe.Serializer`
 program writes `name<TAB>serialized` lines with `gen <file>` and reads them back with `rt <in> <file>`, and hxc's build
 reading gencs's data, gencs's build reading hxc's data and hxc's build reading its own data must all print what gencs's
 build prints when it reads its own. `serial-corpus` covers the Serializer's encodings and hxcs's quirks this way.
+gencs's results (and, for `@serial` cases, its build and data) are cached in `tests/dotnet/tmp/gencs-cache` (under
+`HXC_TEST_TMP`), keyed by the case, `gencs.csproj.in`, the script's gencs steps, Haxe, its std, the global hxcs, the .NET
+SDK and the time zone, so only changed cases go through gencs again; `--no-gencs-cache` skips the cache.
 Each run of a test program stops after 120 seconds (`HXC_RUN_TIMEOUT` changes the limit, and a case's
 `@run-timeout=<seconds>` tag changes it for that case), which fails its case.
 
