@@ -416,12 +416,26 @@ class TexprOps {
 
 	// Whether `==` or `!=` on `e1` and `e2` compares through Runtime.eq so that an Array and its #8314
 	// forward are one array (casts notes §2.6): two Arrays, one of them an Array<Dynamic> (the companion
-	// interface, which can hold either). An operand typed Dynamic or as a type parameter already goes through
-	// Runtime (TexprDynamic.binop), whose eq and refEq resolve forwards too; other Arrays compare their
-	// references, as in gencs's C#.
+	// interface, which can hold either), or an Array`1<object> (an Array<Null<Int>>, Array<Any>, …), which
+	// can forward, and an Array of a basic element (String or a value type), which can be a forward target;
+	// gencs's C# can't compare those two (CS0019). Runtime.eq is a comparison of references when neither
+	// forwards. An operand typed Dynamic or as a type parameter already goes through Runtime
+	// (TexprDynamic.binop), whose eq and refEq resolve forwards too; other Arrays, such as two of one CLR
+	// type, compare their references, as in gencs's C#.
 	function arrayEquality(e1:TExpr, e2:TExpr):Bool {
 		if (TexprCalls.arrayOf(e1.type) == null || TexprCalls.arrayOf(e2.type) == null) return false;
-		return g.types.isCompanionTyped(e1.type) || g.types.isCompanionTyped(e2.type);
+		if (g.types.isCompanionTyped(e1.type) || g.types.isCompanionTyped(e2.type)) return true;
+		var a1 = arrayElement(e1), a2 = arrayElement(e2);
+		inline function basic(s:IlSigNorm) return s.match(LString) || DotnetTypes.isValueType(s);
+		return a1 != null && a2 != null && (a1.match(LObject) && basic(a2) || a2.match(LObject) && basic(a1));
+	}
+
+	// The element type of the CLR instantiation of Array an operand typed as one has, or null.
+	function arrayElement(e:TExpr):Null<IlSigNorm> {
+		return switch (tl.unNull(tl.sig(e.type))) {
+			case LClass(_, [s]): s;
+			case _: null;
+		}
 	}
 
 	// What an operand of `==` on types is: a type expression, whose type is its statics; a Class<T> or

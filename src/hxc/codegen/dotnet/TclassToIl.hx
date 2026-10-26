@@ -26,6 +26,9 @@ enum MethodKind {
 	MCctor;
 	// gencs's ToString for a class with toString():String, which returns this.toString().
 	MToString(toString:TClassField);
+	// An override of System.Object's virtual method that calls the Haxe method `body` with its arguments:
+	// the runtime Array's Equals and GetHashCode (arrayIdentity).
+	MObjectOverride(body:TClassField);
 	// An hxgen class's constructor taking haxe.lang.EmptyObject, which runs no constructor body.
 	MEmptyCtor;
 	// An hxgen class's real constructor: base(EmptyObject.EMPTY), or the parameterless base constructor
@@ -438,6 +441,7 @@ class TclassToIl {
 				token: 0
 			});
 		}
+		if (c == g.runtimeClass("Array")) for (m in arrayIdentity(c)) methods.push(m);
 		// gencs adds each overload's static constructor in front of the earlier ones, after the main one:
 		// the overloads come in reverse, the main one (listed last) still last.
 		if (staticCtors.length > 1) {
@@ -938,6 +942,29 @@ class TclassToIl {
 		];
 	}
 
+	// The runtime Array's Equals and GetHashCode overrides, which the #8314 forward adds (casts notes §2.6):
+	// they call its __hx_equals and __hx_hashCode, whose names keep them out of Haxe code's view (gencs's
+	// Array has no Equals nor GetHashCode field), out of reflection and out of the companion interface.
+	static function arrayIdentity(c:TClass):Array<MethodPlan> {
+		function overrideOf(name:String, body:String, ret:IlSigNorm, args:Array<IlSigNorm>, argNames:Array<String>):MethodPlan {
+			var cf = c.fields.get(body);
+			if (cf == null) throw "internal error: the runtime Array has no " + body;
+			return {
+				kind: MObjectOverride(cf),
+				name: name,
+				flags: MethodAttrs.PUBLIC | MethodAttrs.VIRTUAL | MethodAttrs.HIDE_BY_SIG,
+				hasThis: true,
+				ret: ret,
+				args: args,
+				argNames: argNames,
+				generics: [],
+				pos: cf.pos,
+				token: 0
+			};
+		}
+		return [overrideOf("Equals", "__hx_equals", LBool, [LObject], ["other"]), overrideOf("GetHashCode", "__hx_hashCode", LInt32, [], [])];
+	}
+
 	// gencs adds ToString for a class whose own toString() returns String and overrides nothing.
 	static function wrapsToString(g:DotnetCtx, c:TClass, cf:TClassField):Bool {
 		if (TypeFunctions.hasClassFieldFlag(cf, CfOverride) || TypeFunctions.hasClassFieldFlag(cf, CfExtern) || c.fields.exists("ToString")) return false;
@@ -1130,6 +1157,7 @@ class TclassToIl {
 			case MEntryPoint: "Main";
 			case MCctor: "__init__";
 			case MToString(_): "ToString";
+			case MObjectOverride(_): m.name;
 			case MEmptyCtor | MSplitCtor(_) | MClonedCtor(_): "new";
 			case MStaticCtor(_): "new";
 			case MReflect(r): ReflectionMembers.label(r);
@@ -1493,6 +1521,10 @@ class TclassToIl {
 				case MToString(cf):
 					code.ldarg(0);
 					code.opToken(plan.isStruct ? IlOps.CALL : IlOps.CALLVIRT, g.memberOf(plan, plan.thisSig, cf), 1, 1);
+					code.op(IlOps.RET, 1, 0);
+				case MObjectOverride(cf):
+					for (i in 0...m.args.length + 1) code.ldarg(i);
+					code.opToken(IlOps.CALL, g.memberOf(plan, plan.thisSig, cf), m.args.length + 1, 1);
 					code.op(IlOps.RET, 1, 0);
 				case MField(cf):
 					if (TypeFunctions.hasMeta(":functionCode", cf.meta)) throw new Unsupported("@:functionCode", false, cf.pos);

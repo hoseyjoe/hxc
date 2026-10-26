@@ -12475,6 +12475,60 @@ True
 True
 3 0
 1
+# Recorded #8314 divergence 1 (spec, equality), sibling of cast-4872-eq. Not @gencs: gencs's C# can't compile the
+# first two lines' comparisons (CS0019, `==` on Array<object> and Array<int>), and on the last two it gives
+# `false false` for an array and its forward. Expected [run]: hxc's output.
+--- cast-array-forward-eq
+// Equality across an Array and its forward besides #4872's Array<Dynamic>. A typed Array`1<object> (an
+// Array<Null<Int>>, an Array<Any>) against an Array of a basic element compares through Runtime.eq, as an
+// Array<Dynamic> does; two unrelated arrays and two of one CLR type stay a comparison of references. `cast ni`
+// back to Array<Null<Int>> copies, in gencs too, so that comparison is false. A closure compares its object
+// with refEq and an enum argument with Equals, so Reflect.compareMethods and Type.enumEq see one array.
+enum E {
+	W(a:Dynamic);
+}
+
+class P {
+	static function main() {
+		var n:Array<Null<Int>> = haxe.Unserializer.run("ai1i2h");
+		var ni:Array<Int> = cast n;
+		Sys.println("nullint " + (n == ni) + " " + (ni == n) + " " + (n != ni) + " " + (n == cast ni) + " " + ((n : Dynamic) == ni));
+		var y:Array<Any> = haxe.Unserializer.run("ai1i2h");
+		var yi:Array<Int> = cast y;
+		var ys:Array<String> = ["a"];
+		Sys.println("any " + (y == yi) + " " + (yi == y) + " " + (y != yi) + " " + (y == ys));
+		var p:Array<Null<Int>> = [1], q:Array<Int> = [1];
+		Sys.println("plain " + (p == q) + " " + (ni == q) + " " + (ni == ni));
+		var a:Array<Dynamic> = haxe.Unserializer.run("ai1i2i3h");
+		var b:Array<Int> = cast a;
+		var c:Array<Dynamic> = haxe.Unserializer.run("ai1i2i3h");
+		Sys.println("compareMethods " + Reflect.compareMethods(a.join, b.join) + " " + Reflect.compareMethods(a.join, c.join));
+		Sys.println("enumEq " + Type.enumEq(W(a), W(b)) + " " + Type.enumEq(W(a), W(c)));
+	}
+}
+===
+[run]
+nullint true true false false true
+any true true false false
+plain false false true
+compareMethods true false
+enumEq true false
+# gencs's Array has no Equals nor GetHashCode field, and neither has hxc's: its overrides, which the #8314
+# forward adds, call methods Haxe code doesn't see. gencs: the same errors.
+--- array-equals-not-a-field
+class P {
+	static function main() {
+		var a:Array<Dynamic> = [1, 2];
+		Sys.println(a.Equals(a) + " " + a.GetHashCode());
+		var b:Array<Int> = [1];
+		Sys.println(b.Equals(b));
+	}
+}
+===
+[compile]
+P.hx:4: characters 17-23 : Array<Dynamic> has no field Equals
+P.hx:4: characters 37-48 : Array<Dynamic> has no field GetHashCode
+P.hx:6: characters 17-23 : Array<Int> has no field Equals
 # Recorded #8314 divergence (casts notes §6.13). gencs: `[1,2,2.5] [1,2] [1,2,2] oy3:valai1i2d2.5hg`,
 # `[1,2,2.5,x]`. Expected [run]: the hxc output casts §6.13 states.
 --- cast-array-dynamic-write

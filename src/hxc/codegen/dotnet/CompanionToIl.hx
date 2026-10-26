@@ -92,12 +92,12 @@ class CompanionToIl {
 	// Whether the method `f` of the hxgeneric class or interface `c` is a member of its companion: an
 	// instance method (not dynamic, not an override) whose Haxe type mentions no type parameter, of the
 	// class or of the method (has_type_params, which follows typedefs: `it():Iterator<T>` is a member).
-	// The runtime Array's Equals and GetHashCode, which the #8314 forward adds to it (gencs's Array has
-	// neither), are not, so the companion stays gencs's.
+	// The bodies of the runtime Array's Equals and GetHashCode overrides, which the #8314 forward adds to
+	// it (gencs's Array has neither), are not, so the companion stays gencs's.
 	public static function isMember(g:DotnetCtx, c:TClass, f:TClassField):Bool {
 		if (!f.kind.match(Method(MethNormal | MethInline)) || TypeFunctions.hasClassFieldFlag(f, CfOverride)) return false;
 		if (TypeFunctions.hasClassFieldFlag(f, CfExtern) || c.constructor == f) return false;
-		if ((f.name == "Equals" || f.name == "GetHashCode") && c == g.runtimeClass("Array")) return false;
+		if ((f.name == "__hx_equals" || f.name == "__hx_hashCode") && c == g.runtimeClass("Array")) return false;
 		return hasCompanion(g, c) && !HxGeneric.hasTypeParams(f.type);
 	}
 
