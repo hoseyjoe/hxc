@@ -33,7 +33,7 @@ output.
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
 | `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set |
-| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, the Serializer and exceptions work; see [.NET output](#net-output) |
+| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, generic instantiations and the casts between them, the Serializer and exceptions work; see [.NET output](#net-output) |
 | `--lua`, `--python`, `--php`, `--hl`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
@@ -138,12 +138,24 @@ work. Interface variables and `dynamic` methods of an interface are reached thro
 type gets gencs's explicit implementation. The `@gencs` cases in the tests check that these behave
 as gencs's output does, and `@serial` cases that serialized data round-trips between the two.
 
-The Serializer still differs from gencs where a generic class is involved, because hxc does not yet
-erase type arguments as gencs does: `Type.resolveClass` cannot find a generic class by name, so
-`Array` as a value (`Ay5:Array`) and instances of a generic class such as `Box<T>` cannot be read
-back, and a value whose instantiation is not the one the Serializer's code names (a
-`Map<String, Int>` to write, or an `Array<Null<Int>>` field to read into) fails to convert. A
-class's or a generic method's type parameter that holds `Null<Int>`, `Null<Float>` or `Null<Bool>`
+Generic classes are instantiated as gencs makes them. A type argument that is not a basic type (`Int`,
+`Float`, `Bool`, `String`, `Int64` and the like) is erased to `object`, so `Box<Point>` is
+``Box`1<object>``, and each generic Haxe class and interface gets gencs's companion interface
+(`<pack>.<Class>`, with no arity), which `Std.isOfType` tests and `X<Dynamic>` is typed as: a typed
+value passed where an `X<Dynamic>` is expected is the same object. A cast between two instantiations
+(`Array<Dynamic>` to `Array<Int>`, `Map<String, Dynamic>` to `Map<String, Int>`) goes through gencs's
+`X_cast` and `__hx_cast`, so maps and `List` are copied as gencs copies them, bugs included. `Type`,
+`Reflect` and the Serializer see generic classes and their instantiations as gencs's do, so serialized
+data with generic classes round-trips between the two. Two hxcs bugs are fixed on purpose. A cast to
+a parent instantiation (a class to an `IMap<String, Int>` it implements, `FallbackPromise<T>` to
+`Thenable<T>`) gives the right instantiation, where gencs's returns the object itself and the next cast
+throws. And Haxe issue 8314 is fixed: casting an `Array<Dynamic>` to an `Array` of a basic type
+(`Array<Int>`, `Array<Float>`, …) forwards the original to the typed array instead of copying it, so a
+write through either one reaches both; a lossy cast (`1.5` into an `Array<Int>`) still copies.
+`docs/superpowers/specs/2026-10-21-dotnet10-il-generator-design.md` lists these and the other recorded
+divergences from gencs.
+
+A class's or a generic method's type parameter that holds `Null<Int>`, `Null<Float>` or `Null<Bool>`
 (an `Array<Null<Int>>`, a `Box<Null<Int>>`, `Lambda.exists` over an `Array<Null<Int>>`) reaches
 `Dynamic`, reflection, string concatenation and the Serializer as gencs's boxed value or `null`. A
 generic method's type parameters are bound as gencs binds them, by Haxe's unification of each
@@ -153,22 +165,22 @@ callback's return), T is bound to the basic type, so a null `Null<Int>` passed t
 it does under gencs. A `Null<T>` among a callback's arguments (`f:Null<T>->Bool`) keeps T a
 `Null<Int>`, and so does one inside a type argument (`Array<Null<T>>`, `Option<Null<T>>`) met by a
 `Null<Null<Int>>`. A local generic function's arguments bind the other way round, as gencs's closure
-classes do. A call whose bound type parameter then needs a cast between instantiations (an
-`Array<Null<Int>>` argument to an `Array<T>` parameter of a method with a `Null<T>` return, an
-`Array<Null<T>>` or `Map<String, Null<T>>` result with T a `Null<Int>`) is not supported yet.
+classes do.
 
 Constructs not supported yet are compile errors in user code (`dotnet: ... not supported yet`). The
 list is not complete; among others it has assignments to `Dynamic` array elements, `return`, `break`
-and `continue` inside expressions, casts between instantiations of a generic class (such as
-`Array<Dynamic>` to `Array<Int>`), `Std.isOfType` with a generic class, inline C# (`untyped __cs__`,
-`@:classCode`, `@:functionCode`), enum constructor arguments whose type is a generic class
-instantiated with the enum's own type parameter (`L(a:Array<T>)`; `C(a:T)` works), and .NET interop
+and `continue` inside expressions, casts between instantiations of a generic class that has no
+companion interface (a generic `@:struct`) and `Std.isOfType` or enum constructor arguments with one,
+inline C# (`untyped __cs__`, `cs.Syntax.code`, `@:classCode`, `@:functionCode`), and .NET interop
 beyond calling referenced assemblies (properties of .NET interfaces, generic .NET methods,
-`Nullable<T>`). `haxe.ds.EnumValueMap`, and so a `Map` with enum keys, throws
-`System.NotSupportedException` when it compares two keys of a constructor with arguments, since its
-`compareArg` needs `Std.isOfType(v, Array)`. The next steps for the .NET generator are the
-generic-instantiation casts and the `Array` forwarding fix (Haxe issue 8314), then .NET interop.
-Until then, standard-library code that needs them compiles to stubs.
+`Nullable<T>`, delegates, indexers, types that a `--net-lib` assembly's own references define).
+`Array` has no `object this[int]` indexer yet (hxcs adds it with `@:classCode`), so C# code cannot index
+an `Array` and `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`.
+`-resource` files are not embedded yet, so `haxe.Resource.getString` and `getBytes` return `null`
+and `listNames` throws. The next step for the .NET generator is .NET interop, which also brings
+these. Until then, standard-library code that needs them compiles to stubs: `Thread.create`,
+`EReg.matched`, `Socket.select` and `Socket.setTimeout`, `Sys.command` and `sys.io.Process` among
+them.
 
 hxc ships its own copy of the hxcs runtime classes that generated code depends on
 (`haxe.lang.HxObject`, `haxe.lang.DynamicObject`, `haxe.lang.FieldLookup`, `haxe.lang.Runtime`,

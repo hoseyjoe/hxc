@@ -368,6 +368,11 @@ hxcs, with gencs's output kept for contrast:
 3. **Paths where gencs throws but this design works are left working**:
    - `return d` of a `Dynamic` as `Array<Int>`, which skips `__hx_cast` in gencs;
    - closure calls with an array argument that needs a cast;
+   - `Type.createInstance` of a class with one constructor (`@:nativeGen`) given an argument that is
+     another instantiation of the parameter's generic type: `Runtime.callMethod` casts it with
+     `__hx_cast`, where gencs's reflection invoke throws `ArgumentException`. A Haxe class has a second,
+     `EmptyObject` constructor, so the call filters by assignability first and both throw the same
+     `String` (case `create-instance-generic-argument`);
    - `map` and `filter` on a typed array held as `Array<Dynamic>` (gencs's inlined loops cast `__a`
      to `object[]`, which fails for an `int[]`);
    - an `Array<Int>` passed as `Array<Any>` (a C# compile error in gencs);

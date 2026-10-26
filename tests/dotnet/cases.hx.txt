@@ -10823,6 +10823,51 @@ class P {
 [run]
 return: [2,2]
 closure call: [2,2]
+# Recorded divergence 3 (Decision 4 of plan 3c), next to closure calls: Type.createInstance with an argument
+# that is another instantiation of the constructor's generic type. A Haxe class has two constructors (its own
+# and the EmptyObject one), so Runtime.callMethod first filters them by assignability; neither takes an
+# Array`1<object>, and gencs and hxc both throw the String "Invalid calling parameters for method .ctor". A
+# @:nativeGen class has one constructor, which is invoked unfiltered: hxc casts the argument with __hx_cast (the
+# #8314 forward, so the push shows through d), gencs's reflection invoke throws ArgumentException.
+--- create-instance-generic-argument @gencs
+class C {
+	public var a:Array<Int>;
+
+	public function new(a:Array<Int>) {
+		this.a = a;
+	}
+}
+
+@:nativeGen class N {
+	public var a:Array<Int>;
+
+	public function new(a:Array<Int>) {
+		this.a = a;
+	}
+}
+
+class P {
+	static function main() {
+		var d:Array<Dynamic> = [1, 2];
+		try {
+			var c = Type.createInstance(C, [d]);
+			c.a.push(3);
+			Sys.println(Std.string(Type.getClass(c.a)) + " " + c.a + " " + d);
+		} catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)) + " " + Std.string(e));
+		try {
+			var n = Type.createInstance(N, [d]);
+			n.a.push(3);
+			Sys.println(Std.string(Type.getClass(n.a)) + " " + n.a + " " + d);
+		} catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+}
+===
+[run]
+EXC String Invalid calling parameters for method .ctor
+Array`1[System.Int32] [1,2,3] [1,2,3]
+[gencs]
+EXC String Invalid calling parameters for method .ctor
+EXC System.ArgumentException
 # Std notes §5 generic-cast-matrix minus `Array<Dyn>->Array<Int>` (generic-cast-matrix-8314). The
 # `class->IGet<String>` line was also run with gencs's parent casts patched by types §4's rule: it still throws
 # InvalidCastException (the copy's genericCast<string>(2) does).
@@ -13354,9 +13399,9 @@ printer pretty <r k="v">
 
 # Std notes A6 (a fake socket, no network), without customRequest: its URL parsing calls EReg.matched, a
 # .NET indexer (milestone 4), so http-response-parsing waits in m4.cases.txt. This calls readHttpResponse,
-# customRequest's own step once the request is written, with its error handling. getResponseHeaderValues is
-# called only after a header repeated; gencs's NullReferenceException otherwise is kept as a gencs bug and
-# not exercised. The header names are sorted with a comparator that returns 0 for equal strings: with
+# customRequest's own step once the request is written, with its error handling. getResponseHeaderValues
+# throws NullReferenceException in gencs when no header repeated (responseHeadersSameKey is null), a gencs
+# bug the spec reproduces (Decision 5); the eof run pins it. The header names are sorted with a comparator that returns 0 for equal strings: with
 # `a < b ? -1 : 1`, hxcs's quicksort gave an order that followed the StringMap's per-process key order.
 --- http-response-reading @gencs
 import haxe.io.Bytes;
@@ -13390,6 +13435,7 @@ class P {
 		keys.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
 		Sys.println(name + " headers " + keys.map(k -> k + "=" + h.responseHeaders.get(k)).join(";"));
 		if (name == "len") Sys.println(name + " multi " + h.getResponseHeaderValues("Set-Cookie") + " " + h.getResponseHeaderValues("X-B") + " " + h.getResponseHeaderValues("none"));
+		if (name == "eof") Sys.println(name + " none " + (try Std.string(h.getResponseHeaderValues("none")) catch (e:Dynamic) "EXC " + Type.getClassName(Type.getClass(e))));
 		Sys.println(name + " body " + out.getBytes().toString());
 	}
 	static function main() {
@@ -13407,6 +13453,7 @@ len multi [a=1,b=2] [b] null
 len body hello
 eof status 200
 eof headers X-C=c
+eof none EXC System.NullReferenceException
 eof body until end
 404 error: Http Error #404
 404 status 404
@@ -13879,7 +13926,7 @@ class P {
 			var ce:cs.system.Exception = ex;
 			Type.getClassName(Type.getClass(ex)) + ": " + ce.Message;
 		} else Std.string(ex);
-		return "EXC " + StringTools.replace(StringTools.replace(s, "\r", ""), "\n", "\n");
+		return "EXC " + StringTools.replace(StringTools.replace(s, "\r", ""), "\n", "\\n");
 	}
 
 	static var out = new StringBuf();
