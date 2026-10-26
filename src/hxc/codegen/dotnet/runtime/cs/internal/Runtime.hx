@@ -472,6 +472,10 @@ import cs.system.Object;
 				} else if (!cs.Lib.getNativeType(arg).IsAssignableFrom(param)) {
 					oargs[i] = cast(arg, IConvertible).ToType(param, null);
 				}
+			} else if (arg != null && param.IsGenericType && Std.isOfType(arg, cs.internal.HxObject.IGenericObject) && !param.IsAssignableFrom(cs.Lib.getNativeType(arg))) {
+				// hxc: another instantiation of a generic Haxe class goes through __hx_cast, as a typed call
+				// converts it; hxcs's reflection call throws ArgumentException (plan 3c, decision 4).
+				oargs[i] = instanceCast(arg, param);
 			}
 		}
 
@@ -503,6 +507,30 @@ import cs.system.Object;
 		catch(e:TargetInvocationException)
 			throw e.InnerException;
 		return unbox(ret);
+	}
+
+	// hxc: `arg` as the instantiation `t` of a generic Haxe class or interface, through the class's
+	// `X<object…>.__hx_cast<…>` or the interface's `X__Statics_.__hx_cast<…>`, as hxc's typed casts go
+	// (InstantiationCasts); `arg` itself when `t` has no such helper.
+	static function instanceCast(arg:Dynamic, t:Type):Dynamic {
+		var def = t.GetGenericTypeDefinition();
+		var holder:Type = null;
+		if (def.IsInterface) {
+			var name = def.FullName;
+			var tick = name.indexOf("`");
+			holder = def.Assembly.GetType((tick < 0 ? name : name.substr(0, tick)) + "__Statics_");
+		} else {
+			var objects = new NativeArray<Type>(def.GetGenericArguments().Length);
+			for (i in 0...objects.Length)
+				objects[i] = untyped __typeof__(Dynamic);
+			holder = def.MakeGenericType(objects);
+		}
+		var m = holder == null ? null : holder.GetMethod("__hx_cast");
+		if (m == null)
+			return arg;
+		var args = new NativeArray<Dynamic>(1);
+		args[0] = arg;
+		return try m.MakeGenericMethod(t.GetGenericArguments()).Invoke(null, args) catch (e:TargetInvocationException) throw e.InnerException;
 	}
 
 	public static function unbox(dyn:Dynamic):Dynamic {

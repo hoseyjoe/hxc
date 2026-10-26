@@ -380,8 +380,11 @@ class TexprCalls {
 		tl.coerce(found.m.ret, ret);
 	}
 
-	function pushArgs(args:Array<TExpr>, slots:Array<IlSigNorm>):Void {
+	// Pushes the arguments as the parameters' types `slots`. `targets`, the parameters' Haxe types where the
+	// call knows them, decides a cast between instantiations of a generic Haxe class (TexprToIl.texprTo).
+	function pushArgs(args:Array<TExpr>, slots:Array<IlSigNorm>, ?targets:Array<T>):Void {
 		if (args.length != slots.length) throw new Unsupported("calls that leave out arguments", true);
+		if (targets != null && targets.length != args.length) targets = null;
 		for (i in 0...args.length) switch (slots[i]) {
 			case LManagedPointer(t):
 				// cs.Ref and cs.Out: the address of a variable of exactly that type, as C#'s ref and out.
@@ -389,7 +392,15 @@ class TexprCalls {
 				if (s == null || !IlPaths.sigEq(s, t) || !pushAddress(args[i], true))
 					throw new Unsupported("by-reference arguments that are not variables of the parameter's type", true);
 			case s:
-				tl.texpr(RValue(s), args[i]);
+				tl.texprTo(s, targets == null ? null : targets[i], args[i]);
+		}
+	}
+
+	// The argument types of the function type `t`, as a call applies them; null when it is no function.
+	static function argTypes(t:T):Null<Array<T>> {
+		return switch (TypeFunctions.follow(t)) {
+			case TFun(fsig): [for (a in fsig.args) a.t];
+			case _: null;
 		}
 	}
 
@@ -464,7 +475,7 @@ class TexprCalls {
 				var plan = g.ownerOf.get(target);
 				if (plan == null || !g.methodTokens.exists(target)) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
 				var m = methodRef(plan, staticOwner(plan), [], target, target.type, callee.type, receiverArgs(c, target, args));
-				pushArgs(args, m.args);
+				pushArgs(args, m.args, argTypes(callee.type));
 				code.opToken(IlOps.CALL, m.token, args.length, m.ret.match(LVoid) ? 0 : 1);
 				tl.coerce(m.ret, ret);
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c)):
@@ -480,7 +491,7 @@ class TexprCalls {
 				// `base.m()` in a static method, does not compile either).
 				if (isSuper && tl.splitCtor) throw new Unsupported("super.method() calls in constructors", true);
 				if (isSuper) code.ldarg(0) else receiver(obj, m.owner);
-				pushArgs(args, m.args);
+				pushArgs(args, m.args, argTypes(callee.type));
 				var op = isSuper || DotnetTypes.isValueType(m.owner) ? IlOps.CALL : IlOps.CALLVIRT;
 				code.opToken(op, m.token, args.length + 1, m.ret.match(LVoid) ? 0 : 1);
 				tl.coerce(m.ret, ret);
@@ -1166,7 +1177,7 @@ class TexprCalls {
 		for (i in 0...el.length) {
 			code.op(IlOps.DUP, 1, 2);
 			code.ldcI4(i);
-			tl.texpr(RValue(elem), el[i]);
+			tl.texprStore(elem, a.params[0], el[i]);
 			code.stelem(elem, () -> elemToken);
 		}
 		code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(owner), ".ctor", g.sigs.method(true, LVoid, ctor.args, 0)), 1, 1);

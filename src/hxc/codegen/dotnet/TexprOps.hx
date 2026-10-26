@@ -292,8 +292,10 @@ class TexprOps {
 			} else {
 				if (DotnetTypes.isValueType(s) || isTypeParam(s)) throw new Unsupported("comparing a value type with null", false);
 				netOperator = equalityOperator(op, e1, e2);
-				tl.texpr(RValue(netOperator == null ? null : netOperator.args[0]), e1);
-				tl.texpr(RValue(netOperator == null ? null : netOperator.args[1]), e2);
+				// The operand that is not null goes as its own type: a call of a generic method can return
+				// another one, such as StringMap<object>.get's haxe.lang.Null<object> for a Null<Dynamic>.
+				tl.texpr(RValue(netOperator != null ? netOperator.args[0] : isNullConst(e1) ? null : s), e1);
+				tl.texpr(RValue(netOperator != null ? netOperator.args[1] : isNullConst(e2) ? null : s), e2);
 			}
 		} else {
 			// Null<T> operands compare their values, as HardNullableSynf unwraps them; Char and the small

@@ -374,8 +374,8 @@ private class ReflectionEmitter {
 				// Null<object>.ofDynamic<T>(value), as gencs writes it.
 				lower.ofDynamic(to);
 			case LClass(_, _) if (g.isGenericHaxeClass(to)):
-				// An Array<Dynamic> into an Array<Int> field, which gencs converts with __hx_cast (plan 3c).
-				lower.checkedInstanceCast(to, hxc.core.TPrinting.sTypeStr(t) + " through reflection");
+				// An Array<Dynamic> into an Array<Int> field, which gencs's __hx_setField converts with __hx_cast.
+				lower.instanceCast(LObject, to, t);
 			case _ if (DotnetTypes.isValueType(to) || to.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _) | LTypeParam(_) | LMethodTypeParam(_))):
 				lower.dyn.toSig(to);
 			case _:

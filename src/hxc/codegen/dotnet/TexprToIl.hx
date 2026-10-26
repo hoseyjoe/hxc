@@ -1,6 +1,7 @@
 package hxc.codegen.dotnet;
 
 import hxc.ast.Ast;
+import hxc.ast.Position;
 import hxc.core.Globals;
 import hxc.core.TexprTools;
 import hxc.core.Type;
@@ -300,11 +301,12 @@ class TexprToIl {
 			if (fromValue) code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 			dyn.toSig(to);
 		} else if (fromValue && !toValue) {
-			// A struct boxes into an instantiation of a generic Haxe interface only when it implements it.
-			if (!isTypeParam(from) && g.isGenericHaxeClass(to) && !g.isUpcast(from, to)) throw instantiationCast(to);
 			code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
-			// A boxed type parameter is an object, which may not be the reference type wanted.
+			// A boxed type parameter is an object, which may not be the reference type wanted; nor is a
+			// boxed struct an instantiation of a generic Haxe interface it does not implement.
 			if (isTypeParam(from) && !to.match(LObject)) castTo(to);
+			// A generic struct goes as itself, so that one bound for an X<Dynamic> is refused (instanceCast).
+			else if (g.isGenericHaxeClass(to) && !g.isUpcast(from, to)) instanceCast(g.isGenericHaxeClass(from) ? from : LObject, to, null);
 		} else if (!fromValue && toValue) {
 			// gencs converts Dynamic through Runtime.toInt, toDouble, toBool and genericCast, which accept
 			// null and boxed numbers of another type; an unbox.any would throw on them.
@@ -349,16 +351,7 @@ class TexprToIl {
 		} else if (isReference(from) && isReference(to) && !to.match(LObject)) {
 			// An upcast needs nothing; anything else may narrow.
 			if (g.isUpcast(from, to) || from.match(LVector(_)) && isSystemArray(to)) return;
-			if (from.match(LObject) && g.isGenericHaxeClass(to)) {
-				checkedInstanceCast(to, "a value to " + g.haxeTypeOf(to));
-				return;
-			}
-			// A downcast to the one instantiation the source's type allows is no cast between instantiations.
-			if (g.isExactDowncast(from, to)) {
-				code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
-				return;
-			}
-			castTo(to);
+			if (g.isGenericHaxeClass(to)) instanceCast(from, to, null) else castTo(to);
 		}
 	}
 
@@ -496,28 +489,33 @@ class TexprToIl {
 		return true;
 	}
 
-	// gencs gives a generic Haxe class real type arguments and converts between instantiations with
-	// __hx_cast, which copies (Haxe issue 8314); castclass would throw where it converts. Milestone 3
-	// lowers these casts as the spec's "Casts between generic instantiations" says.
-	function instantiationCast(to:IlSigNorm):Unsupported {
-		return new Unsupported("a cast between instantiations of " + g.haxePathOf(to), false);
+	// The reference `from` on the stack as `to`, an instantiation of a generic Haxe class that `from` is not
+	// already: what gencs's RealTypeParams makes of a cast to `to` (InstantiationCasts), or castclass for a
+	// downcast to the one instantiation the source's type allows, as the Map abstract's downcast of an
+	// IMap<String, V> to its StringMap<V> is (DotnetCtx.isExactDowncast). `target` is the Haxe type of the
+	// destination, null when the caller does not know it.
+	//
+	// Until X<Dynamic> is typed as its companion (plan 3c, Task 6) it is X<object…>, so a target that may
+	// be one (InstantiationCasts.mayBeDynamic) is not given __hx_cast, which would copy where gencs gives
+	// the same object: from a typed instantiation it is refused, and from anything else it is checked at
+	// run time (checkedInstanceCast).
+	public function instanceCast(from:IlSigNorm, to:IlSigNorm, target:Null<T>, ?pos:Position):Void {
+		if (g.isExactDowncast(from, to)) {
+			code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
+			return;
+		}
+		if (InstantiationCasts.mayBeDynamic(g, to) && (target == null || InstantiationCasts.isDynamicTarget(target))) {
+			if (g.isGenericHaxeClass(from)) throw new Unsupported("a cast from " + g.haxeTypeOf(from) + " to " + g.haxeTypeOf(to), false, pos);
+			checkedInstanceCast(to, "a value to " + g.haxeTypeOf(to));
+			return;
+		}
+		InstantiationCasts.emit(g, code, from, to);
 	}
 
-	// Throws for a cast from `from` into an instantiation of a generic Haxe class that is not the same
-	// type, an upcast or an exact downcast (DotnetCtx.isExactDowncast). From Dynamic it is checked at run time (checkedInstanceCast).
-	function checkInstantiationCast(from:IlSigNorm, to:IlSigNorm):Void {
-		// haxe.lang.Null<T> converts through its value (nullConvert).
-		if (IlPaths.sigEq(from, to) || !g.isGenericHaxeClass(to) || isHaxeNull(to) || from.match(LObject)) return;
-		if (g.isUpcast(from, to) || g.isExactDowncast(from, to)) return;
-		throw instantiationCast(to);
-	}
-
-	// The object on the stack as the instantiation `to` of a generic Haxe class. gencs converts an object
-	// of another instantiation (a StringMap<Int> into a StringMap<Dynamic>) with __hx_cast, plan 3c; until
-	// then such a value is refused loudly rather than with an InvalidCastException: null or the same
-	// instantiation passes, anything else throws NotSupportedException("hxc dotnet: converting <what> is
-	// not supported yet").
-	public function checkedInstanceCast(to:IlSigNorm, what:String):Void {
+	// The object on the stack as `to`, an instantiation of a generic Haxe class that may be an X<Dynamic>
+	// (instanceCast): null or that instantiation passes, anything else throws
+	// NotSupportedException("hxc dotnet: converting <what> is not supported yet").
+	function checkedInstanceCast(to:IlSigNorm, what:String):Void {
 		var tmp = code.addLocal(LObject);
 		var isNull = code.newLabel(), done = code.newLabel();
 		code.stloc(tmp);
@@ -537,9 +535,42 @@ class TexprToIl {
 		code.mark(done);
 	}
 
+	// Whether a value of type `from` going to `to` needs a cast between instantiations (instanceCast): `to`
+	// an instantiation of a generic Haxe class, `from` a reference that is not already one.
+	function needsInstanceCast(from:IlSigNorm, to:IlSigNorm):Bool {
+		return to.match(LClass(_, _)) && g.isGenericHaxeClass(to) && from.match(LObject | LClass(_, _)) && !IlPaths.sigEq(from, to)
+			&& !g.isUpcast(from, to);
+	}
+
+	// `e` where a `to` is wanted, `target` the Haxe type of where it goes: as texpr(RValue(to), e), but a
+	// cast between instantiations is decided with that type (instanceCast).
+	public function texprTo(to:IlSigNorm, target:Null<T>, e:TExpr):Void {
+		var own = target == null || isNullConst(e) ? null : try sig(e.type) catch (_:Unsupported) null;
+		if (own != null && needsInstanceCast(own, to)) {
+			texpr(RValue(own), e);
+			instanceCast(own, to, target, e.pos);
+			return;
+		}
+		texpr(RValue(to), e);
+	}
+
+	// `e` stored where a `to` is kept, `target` the Haxe type of the place: as texprTo, but a place whose type
+	// is erased to object (an Array<Array<Int>>'s element, a T field of a G<Array<Int>>) takes the value as
+	// an instantiation of its Haxe type first, as gencs casts into it. An X<Dynamic> place keeps the value as
+	// it is: gencs's is the companion, which every instantiation is.
+	public function texprStore(to:IlSigNorm, target:T, e:TExpr):Void {
+		if (to.match(LObject) && !isNullConst(e) && !InstantiationCasts.isDynamicTarget(target)) {
+			var want = try sig(target) catch (_:Unsupported) null;
+			if (want != null && want.match(LClass(_, _)) && g.isGenericHaxeClass(want)) {
+				texprTo(want, target, e);
+				return;
+			}
+		}
+		texprTo(to, target, e);
+	}
+
 	function castTo(to:IlSigNorm):Void {
-		if (g.isGenericHaxeClass(to)) throw instantiationCast(to);
-		code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
+		if (g.isGenericHaxeClass(to)) instanceCast(LObject, to, null) else code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
 	}
 
 	static function isReference(s:IlSigNorm):Bool return s.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _));
@@ -635,7 +666,7 @@ class TexprToIl {
 				}
 				var local = {arg: false, index: code.addLocal(s), sig: s};
 				if (init != null) {
-					texpr(RValue(s), init);
+					texprStore(s, v.type, init);
 					store(local);
 				}
 				slots.set(v.id, local);
@@ -764,8 +795,28 @@ class TexprToIl {
 		if (!isNullConst(e1)) {
 			from = try sig(e1.type) catch (_:Unsupported) null;
 			to = try sig(e.type) catch (_:Unsupported) null;
-			// A cast between instantiations is reported at the cast.
-			if (from != null && to != null) checkInstantiationCast(from, to);
+		}
+		// A Map-typed read of an anonymous field or a Dynamic, cast to IMap<K, V> for a Map member: gencs's
+		// RealTypeParams does not see through the Map abstract, so this is C#'s cast, not __hx_cast, and a map of
+		// another instantiation throws InvalidCastException (casts notes fact 5).
+		if (from != null && to != null && from.match(LClass(_, _)) && to.match(LClass(_, _)) && InstantiationCasts.isMultiType(e1.type)
+			&& isDynamicRead(e1)) {
+			texpr(RValue(LObject), new TExpr(strip(e1).expr, TDynamic(null), e1.pos));
+			code.opToken(IlOps.CASTCLASS, g.typeTokenOf(from), 1, 1);
+			if (needsInstanceCast(from, to)) instanceCast(from, to, e.type);
+			coerce(to, ret);
+			return;
+		}
+		// A cast between instantiations of a generic Haxe class (instanceCast), decided by the cast's own type:
+		// a value type or a type parameter goes as an object.
+		if (from != null && to != null && !g.isUpcast(from, to)) {
+			var src = from.match(LObject | LClass(_, _)) ? from : LObject;
+			if (needsInstanceCast(src, to)) {
+				texpr(RValue(src), e1);
+				instanceCast(src, to, e.type);
+				coerce(to, ret);
+				return;
+			}
 		}
 		if (isNullConst(e1) && externEnum(e.type) != null) {
 			// cast null to a .NET enum is C#'s default(T), as gencs writes it, boxed where it goes as an object.
@@ -1044,7 +1095,7 @@ class TexprToIl {
 				}
 			case TLocal(v):
 				var s = slot(v);
-				texpr(RValue(s.sig), rhs);
+				texprStore(s.sig, lhs.type, rhs);
 				if (needVal(ret)) code.op(IlOps.DUP, 1, 2);
 				store(s);
 				if (needVal(ret)) coerce(s.sig, ret);
@@ -1061,13 +1112,13 @@ class TexprToIl {
 				var m = calls.arrayAccessor(e1.type, "__set");
 				calls.receiver(e1, m.owner);
 				texpr(RValue(m.args[0]), e2);
-				texpr(RValue(m.args[1]), rhs);
+				texprStore(m.args[1], lhs.type, rhs);
 				code.opToken(IlOps.CALLVIRT, m.token, 3, 1);
 				// __set returns the value it stored.
 				coerce(m.ret, ret);
 			case TField(_, FStatic(c, cf)) if (!isExtern(c)):
 				var f = staticField(c, cf);
-				texpr(RValue(f.sig), rhs);
+				texprStore(f.sig, lhs.type, rhs);
 				if (needVal(ret)) code.op(IlOps.DUP, 1, 2);
 				volatilePrefix(cf);
 				code.opToken(IlOps.STSFLD, f.token, 1, 0);
@@ -1078,7 +1129,7 @@ class TexprToIl {
 			case TField(obj, FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c)):
 				var f = calls.instanceField(c, cparams, cf);
 				calls.receiver(obj, f.owner, true);
-				texpr(RValue(f.sig), rhs);
+				texprStore(f.sig, lhs.type, rhs);
 				var tmp = needVal(ret) ? ops.keepTop(f.sig) : -1;
 				volatilePrefix(cf);
 				code.opToken(IlOps.STFLD, f.token, 2, 0);
@@ -1122,6 +1173,9 @@ class TexprToIl {
 	}
 
 	static function isNullConst(e:TExpr):Bool return strip(e).expr.match(TConst(TNull));
+
+	// A read of a field of an anonymous structure or a Dynamic, which gencs makes with Runtime.getField.
+	static function isDynamicRead(e:TExpr):Bool return strip(e).expr.match(TField(_, FAnon(_) | FDynamic(_)));
 
 	static function constInt(e:TExpr):Null<Int> {
 		return switch (strip(e).expr) {

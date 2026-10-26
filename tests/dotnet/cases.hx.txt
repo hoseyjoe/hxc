@@ -943,6 +943,8 @@ type public beforefieldinit Over extends haxe.lang.HxObject
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method family static hidebysig void __hx_ctor__Over(Over)
+# The cast from G<String> to G<Int> was refused here until plan 3c; it goes through __hx_cast now, as
+# gencs's does.
 --- class-declarations-that-are-errors
 class A {
 	public function new() {}
@@ -961,8 +963,8 @@ class P {
 	}
 }
 ===
-[compile]
-P.hx:14: characters 18-38 : dotnet: a cast between instantiations of G is not supported yet
+[run]
+s
 
 --- struct-mutation-through-fields
 @:struct class Vec {
@@ -1533,8 +1535,7 @@ class P {
 }
 ===
 [compile]
-P.hx:9: characters 10-16 : dotnet: a cast between instantiations of Box is not supported yet
-P.hx:16: characters 28-36 : dotnet: a cast between instantiations of Array is not supported yet
+P.hx:16: characters 28-36 : dotnet: a cast from Array<Int> to Array<Dynamic> is not supported yet
 --- array-methods
 class P {
 	static function show(a:Array<Int>):String {
@@ -1583,8 +1584,7 @@ class P {
 }
 ===
 [compile]
-P.hx:4: characters 7-13 : dotnet: a cast between instantiations of Array is not supported yet
-P.hx:5: characters 26-27 : dotnet: a cast between instantiations of Array is not supported yet
+P.hx:5: characters 26-27 : dotnet: a cast from Array<Int> to Array<Dynamic> is not supported yet
 --- null-of-type-parameters @lib @module=pack.IFind @dump=pack.IFind`1
 package pack;
 interface IFind<T> {
@@ -1646,8 +1646,7 @@ class P {
 }
 ===
 [compile]
-P.hx:15: characters 25-36 : dotnet: a cast between instantiations of IGet is not supported yet
-P.hx:16: characters 24-40 : dotnet: a cast between instantiations of IGet is not supported yet
+P.hx:15: characters 25-36 : dotnet: a cast from Cell<Int> to IGet<Dynamic> is not supported yet
 --- struct-boxes-to-its-interface
 interface IGet<T> {
 	function get():T;
@@ -2858,7 +2857,7 @@ class P {
 ===
 [compile]
 P.hx:1: lines 1-5 : Field conflict between rulujia and xpfmath
---- reflection-array-conversion-is-refused
+--- reflection-array-conversion @gencs
 class Box {
 	public var arr:Array<Int> = [1];
 	public function new() {}
@@ -2875,17 +2874,12 @@ class P {
 		Sys.println(b.arr == null);
 		Sys.println(cs.internal.Runtime.callField(b, "second", 0, cs.NativeArray.make((ints : Dynamic))));
 		var dyn:Array<Dynamic> = [6, 7];
-		try set(b, "arr", dyn) catch (e:cs.system.NotSupportedException) Sys.println(e.Message);
-		try cs.internal.Runtime.callField(b, "second", 0, cs.NativeArray.make((dyn : Dynamic))) catch (e:cs.system.NotSupportedException) Sys.println(e.Message);
+		set(b, "arr", dyn);
+		Sys.println(b.arr[1]);
+		Sys.println(cs.internal.Runtime.callField(b, "second", 0, cs.NativeArray.make((dyn : Dynamic))));
 	}
 }
 ===
-[run]
-3
-True
-3
-hxc dotnet: converting Array<Int> through reflection is not supported yet
-hxc dotnet: converting Array<Int> through reflection is not supported yet
 --- extends-hxgen-extern-is-an-error
 @:hxGen @:native("System.Object") extern class XObj {
 	function new():Void;
@@ -8343,21 +8337,6 @@ class P {
 	}
 }
 ===
---- null-return-type-inference-refusal
-// A Null<T> return binds T to Int, as gencs's firstOr<int>; an Array<Null<Int>> argument then needs
-// gencs's Array<object>.__hx_cast<int>, a cast between instantiations that waits for plan 3c.
-class P {
-	static function firstOr<T>(a:Array<T>):Null<T> return a.length > 0 ? a[0] : null;
-
-	static function main() {
-		var g:Array<Null<Int>> = [1, null];
-		Sys.println(firstOr(g));
-		Sys.println(firstOr([1, 2]));
-	}
-}
-===
-[compile]
-P.hx:8: characters 23-24 : dotnet: a cast between instantiations of Array is not supported yet
 --- null-type-parameter-binding @gencs
 // gencs binds a generic method's type parameters by Haxe's unification of each argument's and the
 // return's applied type with the declared one: a Null<T> meeting a Null<Int> binds Int where the
@@ -9341,7 +9320,11 @@ class P {
 // own type parameters and then the abstract's, Pr_Impl_.then<R,T>(Th<T> this1, …): a call binds the
 // abstract's T from the receiver, as gencs's then<object,int>((Th<int>) listInts()), the implicit
 // @:to cast's toArr<int> too. Ds is shaped like haxeui's DataSource: a generic @:from static and a
-// function-typed T (each<object>).
+// function-typed T (each<object>). A generic @:from or @:op static whose T Haxe leaves unbound is
+// fromValue<object>, of<object> and cat<object>, as in gencs: its arguments and result go through
+// __hx_cast (Bag, over a class). Over an interface (Ds, TBag) gencs's parent cast returns `this`, so the
+// __hx_cast<string> of fromValue's Th<object> throws InvalidCastException; hxc's copies (decision 2 of
+// plan 3c), a recorded divergence, so [run] is hxc's output and [gencs] gencs's.
 interface Th<T> { function then<R>(f:T->R):Th<R>; }
 class FP<T> implements Th<T> {
 	var v:T;
@@ -9363,6 +9346,14 @@ abstract Bx<T>(Th<T>) {
 	public function later():Void->Array<T> return () -> new Array<T>();
 	public function count():Int return wrap().length + 1;
 }
+abstract Bag<T>(FP<T>) from FP<T> to FP<T> {
+	@:op(A + B) static function cat<T>(a:Bag<T>, b:Bag<T>):Bag<T> return new FP(a.get());
+	@:from static function of<T>(v:T):Bag<T> return new FP(v);
+	public function get():T return @:privateAccess this.v;
+}
+abstract TBag<T>(Th<T>) from Th<T> to Th<T> {
+	@:op(A + B) static function cat<T>(a:TBag<T>, b:TBag<T>):TBag<T> return a;
+}
 class Folder { public var id:String; public function new(id) this.id = id; }
 class P {
 	static function listFolders():Pr<Array<Folder>> return new FP([new Folder("a")]);
@@ -9382,9 +9373,53 @@ class P {
 		Sys.println(b.count());
 		var bs = new Bx(new FP("s"));
 		Sys.println(Type.getClass(bs.wrap()));
+		var b1:Bag<Int> = 4;
+		Sys.println(b1.get() + 1);
+		var b2:Bag<Int> = new FP(6);
+		var b3 = b1 + b2;
+		Sys.println(b3.get() + " " + Type.getClass((b3 : FP<Int>)));
+		try {
+			var ds:Ds<String> = "x";
+			ds.each(s -> Sys.println(s));
+		} catch (e:Dynamic) Sys.println("Ds<String> threw " + Type.getClassName(Type.getClass(e)));
+		try {
+			var t1:TBag<Int> = new FP(7);
+			var t3 = t1 + t1;
+			Sys.println(Type.getClass((t3 : Th<Int>)));
+		} catch (e:Dynamic) Sys.println("TBag threw " + Type.getClassName(Type.getClass(e)));
 	}
 }
 ===
+[run]
+1
+a
+1
+3
+Array`1[System.Int32]
+Array`1[System.Int32]
+Array`1[System.Int32]
+Array`1[System.Int32]
+1
+Array`1[System.String]
+5
+4 FP`1[System.Int32]
+x
+FP`1[System.Int32]
+[gencs]
+1
+a
+1
+3
+Array`1[System.Int32]
+Array`1[System.Int32]
+Array`1[System.Int32]
+Array`1[System.Int32]
+1
+Array`1[System.String]
+5
+4 FP`1[System.Int32]
+Ds<String> threw System.InvalidCastException
+TBag threw System.InvalidCastException
 --- companion-members @gencs
 // Which members a companion interface declares: every kept non-static, non-dynamic method the class itself
 // declares whose Haxe signature mentions no type parameter (types notes §3), read through
@@ -9828,3 +9863,771 @@ GS IG_cast: 7
 Concrete Ab_cast<Int> is this: true
 Concrete Ab_cast<String>: System.InvalidCastException
 AbI Ab_cast<Int>: copy=true t=3
+# Casts notes §6.1, merged with types notes §8.16's map-abstract-downcast (probe mapdowncast: an enum-keyed
+# local, a static with an initializer, Map<String,Array<String>>, Map<Int,C>, and a write through a typed
+# anonymous field reaching the original map). Instance-field maps are map-fields-in-classes.
+--- cast-map-member @gencs
+// Member access on a Map<K,V> static, local or anonymous field: Haxe's @:multiType abstract casts `this`
+// (IMap<K,V>) to its specialization (StringMap<V>, IntMap<V>, ObjectMap<K,V>, EnumValueMap<K,V>) with the same
+// type arguments. gencs writes __hx_cast, which returns the object itself (casts notes fact 6, types notes §0.8).
+// The last line: a write through a typed anonymous field read reaches the original map (an identity cast).
+enum E {
+	A;
+	B(i:Int);
+}
+
+class K {
+	public var x = 1;
+	public function new() {}
+}
+
+class P {
+	static var em:Map<E, Bool> = new Map();
+	static var sm:Map<String, Int> = new Map();
+	static var im:Map<Int, String> = new Map();
+	static var om:Map<K, Float> = new Map();
+	static var anon:{m:Map<String, Int>} = {m: new Map()};
+	static var tz:Map<E, Array<String>> = [A => ["x"]];
+
+	static function main() {
+		em.set(A, true);
+		em[B(1)] = false;
+		sm["a"] = 1;
+		sm.set("b", 2);
+		Sys.println(sm["a"] + sm.get("b"));
+		im.set(1, "x");
+		Sys.println(im.get(1) + " " + im.remove(1) + " " + im.exists(1));
+		var k = new K();
+		om.set(k, 1.5);
+		Sys.println(om.get(k));
+		anon.m.set("z", 26);
+		Sys.println(anon.m.get("z"));
+		var keys = [for (key in sm.keys()) key];
+		keys.sort(Reflect.compare);
+		Sys.println(keys);
+		var total = 0;
+		for (key => v in sm) total += v;
+		for (v in sm) total += v;
+		Sys.println(total);
+		var m:Map<E, Bool> = new Map();
+		m.set(A, true);
+		Sys.println(m.exists(A) + " " + m.get(A) + " " + m.exists(B(1)));
+		var ms:Map<String, Array<String>> = new Map();
+		ms.set("k", ["v"]);
+		Sys.println(ms.exists("k") + " " + ms.get("k"));
+		var mi:Map<Int, K> = new Map();
+		mi.set(1, new K());
+		Sys.println(mi.get(1).x);
+		Sys.println(tz.exists(A) ? tz[A].length : -1);
+		var d:Dynamic = {prefs: m};
+		var typed:{prefs:Map<E, Bool>} = d;
+		typed.prefs.set(B(1), false);
+	}
+}
+===
+[run]
+3
+x true false
+1.5
+26
+[a,b]
+6
+true true false
+true [v]
+1
+1
+# Casts notes §6.6: gencs's __hx_cast copy, including the map copy that corrupts the original and the lost
+# List add (casts fact 9, kept as gencs bugs the spec reproduces). Two-key StringMaps are printed sorted and the
+# serialization of the original is searched, because String.GetHashCode is randomized per process.
+--- cast-generic-copy @gencs
+// A Dynamic holding X<Dynamic> cast to X<Int>: gencs's __hx_cast builds a new object and copies every field,
+// converting native arrays of T with genericCast and casting generic-typed fields again through setField.
+// Maps share their keys/hashes arrays with the copy, so a write through the copy shows its key in the
+// original with a null value; a List copy loses adds. hxcs bugs, reproduced. @gencs.
+// A StringMap's key order follows String.GetHashCode, which .NET randomizes per process, so two-key StringMaps
+// are printed with their entries sorted (srt) and the original's serialization is only searched for `y1:qn`.
+import haxe.ds.*;
+
+enum E {
+	A;
+	B(x:Int);
+}
+
+class Box<T> {
+	public var v:T;
+	public var n:Int;
+
+	public function new(v:T) {
+		this.v = v;
+		n = 7;
+	}
+}
+
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function srt(s:String):String {
+		var parts = s.substr(1, s.length - 2).split(", ");
+		parts.sort(Reflect.compare);
+		return "[" + parts.join(", ") + "]";
+	}
+
+	static function takeIntMap(m:StringMap<Int>)
+		m.set("y", 5);
+
+	static function main() {
+		run("StringMap", () -> { var m = new StringMap<Dynamic>(); m.set("a", 1.5); var d:Dynamic = m; var t:StringMap<Int> = d; t.set("q", 3); srt(m.toString()) + " " + srt(t.toString()) + " " + (m.get("q") == null) + " " + (haxe.Serializer.run(m).indexOf("y1:qn") >= 0); });
+		run("StringMap same", () -> { var m = new StringMap<Int>(); var d:Dynamic = m; var t:StringMap<Int> = d; t.set("q", 3); m.toString() + " " + (t == m); });
+		run("StringMap arg cast", () -> { var m = new StringMap<Dynamic>(); m.set("a", 1); takeIntMap(cast m); srt(m.toString()); });
+		run("StringMap bad", () -> { var m = new StringMap<Dynamic>(); m.set("a", 1); var d:Dynamic = m; var t:StringMap<String> = d; t.toString(); });
+		run("IntMap", () -> { var m = new IntMap<Dynamic>(); m.set(1, 1); var d:Dynamic = m; var t:IntMap<Float> = d; t.set(2, 2.5); m.toString() + " " + t.toString(); });
+		run("ObjectMap", () -> { var m = new ObjectMap<Dynamic, Dynamic>(); var k = {}; m.set(k, 1); var d:Dynamic = m; var t:ObjectMap<Dynamic, Int> = d; t.get(k); });
+		run("EnumValueMap", () -> { var m = new EnumValueMap<E, Dynamic>(); m.set(A, 1); var d:Dynamic = m; var t:EnumValueMap<E, Int> = d; t.set(B(1), 2); m.toString() + " " + t.toString(); });
+		run("BalancedTree", () -> { var m = new BalancedTree<String, Dynamic>(); m.set("a", 1); var d:Dynamic = m; var t:BalancedTree<String, Int> = d; t.set("b", 2); m.toString() + " " + t.toString(); });
+		run("List", () -> { var l = new List<Dynamic>(); l.add(1); var d:Dynamic = l; var t:List<Int> = d; t.add(2); l.toString() + " " + t.toString() + " " + t.length; });
+		run("List bad", () -> { var l = new List<Dynamic>(); l.add(1); var d:Dynamic = l; var t:List<String> = d; t.toString(); });
+		run("Box", () -> { var b = new Box<Dynamic>(2.5); var d:Dynamic = b; var t:Box<Int> = d; t.v = 4; b.v + " " + t.v + " " + t.n + " " + Std.string(Type.typeof(t)); });
+		run("Box bad", () -> { var b = new Box<Dynamic>(3); var d:Dynamic = b; var t:Box<String> = d; t.v; });
+		run("Box typed cast", () -> { var b = new Box<Int>(3); var t:Box<Float> = cast b; t.v = 2.5; b.v; });
+		run("Box setField", () -> { var h = new Holder(); var b = new Box<Dynamic>(1.5); Reflect.setField(h, "b", b); h.b.v = 9; b.v + " " + h.b.v; });
+	}
+}
+
+class Holder {
+	public var b:Box<Int>;
+
+	public function new() {}
+}
+===
+[run]
+StringMap: [a => 1.5, q => null] [a => 2, q => 3] true true
+StringMap same: [q => 3] true
+StringMap arg cast: [a => 1, y => null]
+StringMap bad: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
+IntMap: [1 => 1, 2 => null] [1 => 1, 2 => 2.5]
+ObjectMap: 1
+EnumValueMap: [A => 1] [A => 1, B(1) => 2]
+BalancedTree: [a => 1] [a => 1, b => 2]
+List: {1} {1} 2
+List bad: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
+Box: 2.5 4 7 TClass(Box`1[System.Int32])
+Box bad: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
+Box typed cast: 3
+Box setField: 1.5 9
+# Types notes §8.13 (probe typedcasts) without its last cast (Array<Int> -> Array<String>, an unhandled
+# InvalidCastException).
+--- typed-instantiation-casts @gencs
+// Casts between typed instantiations and through the companion.
+class C { public function new() {} }
+interface I {}
+class CI extends C implements I { public function new() super(); }
+class G<T> { public var v:T; public function new(v:T) this.v = v; }
+class P {
+	static function main() {
+		var gi = new G<Int>(1);
+		var gf:G<Float> = cast gi;
+		Sys.println(Type.getClass(gf) + " " + (cast gf == cast gi));
+		var gc = new G<C>(new CI());
+		var gI:G<I> = cast gc;
+		Sys.println(Type.getClass(gI) + " " + (cast gI == cast gc));
+		var ai = [1, 2];
+		var af:Array<Float> = cast ai;
+		Sys.println(af == cast ai);
+	}
+}
+===
+[run]
+G`1[System.Double] false
+G`1[System.Object] true
+False
+# Casts notes §6.7 minus the three FP -> Th casts and `IMap from Dynamic`, which work in hxc
+# (interface-cast-fixed). Casts fact 5 says IMap gets a plain C# cast; that holds only for the anonymous field.
+# `IMap from Dynamic` goes through IMap__Statics_.__hx_cast and StringMap's buggy haxe_IMap_cast, and printed 1
+# when every @gencs case was rerun with gencs's parent casts patched by types §4's rule.
+--- cast-interface @gencs
+// Casts into an instantiation of a generic interface. gencs's Th_cast<T_c> implementation passes the class's
+// own T (and IMap gets no __hx_cast at all), so a mismatched instantiation always ends in an
+// InvalidCastException: an anonymous field typed Map<String,Int> holding an unserialized StringMap throws on
+// every access. @gencs.
+// The FP<Dynamic> -> Th<Int>, Th<Int> -> Th<Float> and Dynamic -> IMap<String,Int> casts are in
+// interface-cast-fixed: hxc fixes gencs's parent-cast bodies (FP.Th_cast, StringMap.haxe_IMap_cast), so they
+// work instead of throwing. The anonymous Map<String,Int> field is a plain castclass to IMap<string,int> in
+// gencs (no __hx_cast), so it throws in both.
+interface Th<T> {
+	function get():T;
+}
+
+class FP<T> implements Th<T> {
+	var v:T;
+
+	public function new(v:T)
+		this.v = v;
+
+	public function get():T
+		return v;
+}
+
+typedef TM = {m:Map<String, Int>};
+typedef TO = {m:Map<String, FP<Int>>};
+
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function main() {
+		run("Dynamic(FP<Int>) -> Th<Int>", () -> { var d:Dynamic = new FP<Int>(1); var x:Th<Int> = d; x.get(); });
+		run("Dynamic(FP<Dyn>) -> FP<Int>", () -> { var d:Dynamic = new FP<Dynamic>(1); var x:FP<Int> = d; x.get(); });
+		run("anon Map<String,Class> unserialized", () -> { var t:TO = haxe.Unserializer.run(haxe.Serializer.run({m: ["a" => new FP(1)]})); t.m.get("a").get(); });
+	}
+}
+===
+[run]
+Dynamic(FP<Int>) -> Th<Int>: 1
+Dynamic(FP<Dyn>) -> FP<Int>: 1
+anon Map<String,Class> unserialized: 1
+# Casts notes §6.9 minus `Any->Int` (cast-same-instantiation-8314).
+--- cast-same-instantiation @gencs
+// gencs erases class, enum, anonymous, function, Null<basic> and generic-class type arguments to object, so
+// these casts are between equal instantiations: no copy, writes shared, values kept. @gencs (needs the
+// gencs type-argument mapping).
+// The Array<Any> -> Array<Int> line is in cast-same-instantiation-8314: an untyped Array<object> cast to a
+// basic-element array is reinterpreted there (#8314), so the push reaches the original.
+class C {
+	public function new() {}
+}
+
+class D extends C {}
+
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function main() {
+		run("Dyn->C", () -> { var a:Array<Dynamic> = [new D()]; var ac:Array<C> = cast a; ac.push(new C()); a.length; });
+		run("D->C", () -> { var ad = [new D()]; var ac:Array<C> = cast ad; ac.push(new C()); ad.length; });
+		run("Dyn->Null<Int>", () -> { var r:Array<Null<Int>> = haxe.Json.parse("[1, null, 2.5]"); Std.string(r); });
+		run("wrong class", () -> { var a:Array<Dynamic> = ["x"]; var r:Array<C> = cast a; r.length; });
+		run("Null<Float> -> Float arg", () -> { var vals = [for (i in 0...3) { var v:Null<Float> = i; v == null ? 0.0 : v; }]; sum(vals); });
+	}
+
+	static function sum(a:Array<Float>) {
+		var s = 0.0;
+		for (x in a) s += x;
+		return s;
+	}
+}
+===
+[run]
+Dyn->C: 2
+D->C: 2
+Dyn->Null<Int>: [1,null,2.5]
+wrong class: 1
+Null<Float> -> Float arg: 3
+# Casts notes §6.5 minus `return` and `closure call` (cast-contexts-working); `Math.random() < 2` became a
+# static flag.
+--- cast-contexts @gencs
+// Where gencs inserts __hx_cast for Dynamic -> Array<Int> (lossy data, so hxc's lossless rule also copies):
+// var, argument, static, class field (direct, Reflect.setField, through Dynamic), anonymous field and
+// literal, array element, ternary, explicit cast, generic function. Not on `return d` (a plain C# cast:
+// InvalidCastException) or a closure call (reflection: ArgumentException). @gencs.
+// Those two throwing shapes are in cast-contexts-working: hxc converts there too (a recorded divergence).
+typedef TI = {val:Array<Int>};
+
+class C {
+	public var ai:Array<Int>;
+
+	public function new() {}
+}
+
+class P {
+	static var sInt:Array<Int>;
+	static var yes = true;
+
+	static function takeInt(a:Array<Int>)
+		return Std.string(a);
+
+	static function retInt(d:Dynamic):Array<Int>
+		return d;
+
+	static function retIntCast(d:Dynamic):Array<Int>
+		return cast d;
+
+	static function gen<T>(a:Array<T>):Array<T>
+		return a;
+
+	static function src():Dynamic
+		return haxe.Json.parse("[1.5,2]");
+
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function main() {
+		run("var", () -> { var r:Array<Int> = src(); Std.string(r); });
+		run("arg", () -> takeInt(src()));
+		run("static", () -> { sInt = src(); Std.string(sInt); });
+		run("field", () -> { var c = new C(); c.ai = src(); Std.string(c.ai) + " " + Std.string(Type.typeof(c.ai)); });
+		run("Reflect.setField", () -> { var c = new C(); Reflect.setField(c, "ai", src()); Std.string(c.ai) + " " + Std.string(Type.typeof(c.ai)); });
+		run("Dynamic field", () -> { var c:Dynamic = new C(); c.ai = src(); Std.string(c.ai) + " " + Std.string(Type.typeof(c.ai)); });
+		run("anon field write", () -> { var t:TI = {val: []}; t.val = src(); Std.string(t.val) + " " + Std.string(Type.typeof(Reflect.field(t, "val"))); });
+		run("anon literal", () -> { var t:TI = {val: src()}; Std.string(Type.typeof(Reflect.field(t, "val"))); });
+		run("anon read", () -> { var t:TI = haxe.Json.parse('{"val":[1.5,2]}'); Std.string(t.val) + " " + Std.string(Type.typeof(Reflect.field(t, "val"))); });
+		run("element", () -> { var aa:Array<Array<Int>> = []; aa[0] = src(); Std.string(aa); });
+		run("ternary", () -> { var r:Array<Int> = yes ? src() : null; Std.string(r); });
+		run("explicit cast", () -> { var r = (cast src() : Array<Int>); Std.string(r); });
+		run("generic fn", () -> { var r:Array<Int> = gen(src()); Std.string(r); });
+		run("return cast", () -> Std.string(retIntCast(src())));
+	}
+}
+===
+[run]
+var: [2,2]
+arg: [2,2]
+static: [2,2]
+field: [2,2] TClass(Array`1[System.Int32])
+Reflect.setField: [2,2] TClass(Array`1[System.Int32])
+Dynamic field: [2,2] TClass(Array`1[System.Int32])
+anon field write: [2,2] TClass(Array`1[System.Object])
+anon literal: TClass(Array`1[System.Int32])
+anon read: [2,2] TClass(Array`1[System.Object])
+element: [[2,2]]
+ternary: [2,2]
+explicit cast: [2,2]
+generic fn: [2,2]
+return cast: [2,2]
+# Recorded divergence split from cast-contexts (decision: where gencs throws on a path that should work,
+# hxc lets it work). gencs: `return: EXC System.InvalidCastException: ...` and `closure call: EXC
+# System.ArgumentException: ...`. Expected [run]: the converted copy gencs itself gives `return cast d` ([2,2]).
+--- cast-contexts-working
+// Split from cast-contexts. gencs inserts no __hx_cast on `return d` (a plain C# cast: InvalidCastException)
+// or on a closure call (reflection invoke: ArgumentException). hxc converts on both paths, as gencs does for
+// `return cast d`, so both print the converted copy [2,2] (lossy data, so a copy). Recorded divergence.
+class P {
+	static function takeInt(a:Array<Int>)
+		return Std.string(a);
+
+	static function retInt(d:Dynamic):Array<Int>
+		return d;
+
+	static function src():Dynamic
+		return haxe.Json.parse("[1.5,2]");
+
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			Sys.println(name + ": " + Std.string(f()));
+		} catch (e:Dynamic) {
+			var s = Std.string(e);
+			if (s.length > 100) s = s.substr(0, 100);
+			Sys.println(name + ": EXC " + s.split("\n")[0].split("\r")[0]);
+		}
+	}
+
+	static function main() {
+		run("return", () -> Std.string(retInt(src())));
+		run("closure call", () -> { var f:Array<Int>->String = takeInt; f(src()); });
+	}
+}
+===
+[run]
+return: [2,2]
+closure call: [2,2]
+# Std notes §5 generic-cast-matrix minus `Array<Dyn>->Array<Int>` (generic-cast-matrix-8314). The
+# `class->IGet<String>` line was also run with gencs's parent casts patched by types §4's rule: it still throws
+# InvalidCastException (the copy's genericCast<string>(2) does).
+--- generic-cast-matrix @gencs
+// Casts between instantiations for the std-adjacent shapes (std notes §2, §5): G<String> -> G<Int>,
+// Dynamic -> Box<Int>, Array<Int> <-> Array<Dynamic>/<Float>/<Null<Int>>, class -> IGet<String>.
+// The lossless Array<Dynamic> -> Array<Int> cast followed by a push is in generic-cast-matrix-8314.
+class G<T> {
+	public var f:T;
+	public function new(f:T = null) { this.f = f; }
+}
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+}
+interface IGet<T> { function get():T; }
+class Cell<T> implements IGet<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function unwrap<T>(t:T):Box<Int> return cast t;
+	static function main() {
+		t("G<String>->G<Int>", () -> { var g:G<Int> = cast new G<String>("s"); return Std.string(Type.getClass(g)) + " " + g.f; });
+		t("G<String>->G<Int> ok", () -> { var g:G<Int> = cast new G<String>("12"); return g.f; });
+		t("G<Int>->G<String>", () -> { var g:G<String> = cast new G<Int>(5); return g.f; });
+		t("G<Int> same", () -> { var a = new G<Int>(5); var g:G<Int> = cast a; return g == a; });
+		t("G<Float> from G<Int>", () -> { var a = new G<Int>(5); var g:G<Float> = cast a; return Std.string(Type.getClass(g)) + (g == cast a); });
+		t("dyn->Box<Int>", () -> { var d:Dynamic = new Box(1); var b:Box<Int> = d; return b.v + 1; });
+		t("dyn->Box<Int> from Box<String>", () -> { var d:Dynamic = new Box("s"); var b:Box<Int> = d; return b.v; });
+		t("dyn->Box<Int> from Box<Dyn>", () -> { var d:Dynamic = new Box<Dynamic>(4); var b:Box<Int> = d; return Std.string(Type.getClass(b)) + b.v; });
+		t("dyn->Box<String> from Int", () -> { var d:Dynamic = 5; var b:Box<String> = d; return b; });
+		t("unwrap(1)", () -> unwrap(1).v);
+		t("unwrap(Box<Int>)", () -> { var b = new Box<Int>(2); return unwrap(b).v; });
+		t("Array<Dyn>->Array<Int> bad", () -> { var a:Array<Dynamic> = ["x", 2]; var b:Array<Int> = cast a; return b[0]; });
+		t("Array<Dyn>->Array<Int> float", () -> { var a:Array<Dynamic> = [1.5, 2]; var b:Array<Int> = cast a; return b; });
+		t("Array<Dyn>->Array<String> int", () -> { var a:Array<Dynamic> = [1, 2]; var b:Array<String> = cast a; return b; });
+		t("Array<Int>->Array<Float>", () -> { var a = [1, 2]; var b:Array<Float> = cast a; b.push(0.5); return a.length + "/" + b + Std.string(Type.getClass(b)); });
+		t("class->IGet<String>", () -> { var h:IGet<String> = cast new Cell(2); return h.get(); });
+		t("Array<Int> -> Array<Null<Int>>", () -> { var a = [1, 2]; var b:Array<Null<Int>> = cast a; b.push(null); return a.length + "/" + b.length; });
+		t("Array<Null<Int>> -> Array<Int>", () -> { var a:Array<Null<Int>> = [1, null]; var b:Array<Int> = cast a; return b; });
+	}
+}
+===
+[run]
+G<String>->G<Int> EXC System.FormatException
+G<String>->G<Int> ok 12
+G<Int>->G<String> EXC System.InvalidCastException
+G<Int> same true
+G<Float> from G<Int> G`1[System.Double]false
+dyn->Box<Int> 2
+dyn->Box<Int> from Box<String> EXC System.FormatException
+dyn->Box<Int> from Box<Dyn> Box`1[System.Int32]4
+dyn->Box<String> from Int EXC System.InvalidCastException
+unwrap(1) EXC System.InvalidCastException
+unwrap(Box<Int>) 2
+Array<Dyn>->Array<Int> bad EXC System.FormatException
+Array<Dyn>->Array<Int> float [2,2]
+Array<Dyn>->Array<String> int EXC System.InvalidCastException
+Array<Int>->Array<Float> 2/[1,2,0.5]Array`1[System.Double]
+class->IGet<String> EXC System.InvalidCastException
+Array<Int> -> Array<Null<Int>> 2/3
+Array<Null<Int>> -> Array<Int> [1,0]
+# Std notes L1, L2: flips null-return-type-inference-refusal to the gencs run.
+--- null-binding-casts-fa @gencs
+class P {
+	static function t(f:Void->Dynamic) {
+		try Sys.println(f()) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+	}
+	static function fa<T>(a:T, b:Array<T>):String return a + "|" + b.length;
+	static function firstOr<T>(a:Array<T>):Null<T> return a.length > 0 ? a[0] : null;
+	static function main() {
+		var nn:Null<Int> = null;
+		var g:Array<Null<Int>> = [1, null, 3];
+		var ai:Array<Int> = [7, 8];
+		t(() -> fa(nn, ai));
+		t(() -> fa(5, ai));
+		t(() -> firstOr(g));
+		t(() -> firstOr([1, 2]));
+		t(() -> Lambda.array(g).join(","));
+		t(() -> Lambda.filter(g, v -> v == null).length);
+	}
+}
+===
+[run]
+null|2
+5|2
+1
+1
+1,null,3
+1
+# Std notes A13: Map-typed instance fields (the server app bulk). cast-map-member covers statics, locals and
+# anonymous fields; types' mapdowncast is merged there.
+--- map-fields-in-classes @gencs
+class H {
+	var m:Map<String, Int>;
+	var im:Map<Int, String>;
+	var om:Map<H, Int>;
+	public function new() { m = new Map(); im = new Map(); om = new Map(); }
+	public function put(k:String, v:Int) m[k] = v;
+	public function get(k:String) return m[k];
+	public function has(k:String) return m.exists(k);
+	public function geti(k:Int) return im.get(k);
+	public function puti(k:Int, v:String) im.set(k, v);
+	public function keys() return [for (k in m.keys()) k];
+	public function geto(k:H) return om.get(k);
+	public function puto(k:H, v:Int) om[k] = v;
+}
+class P {
+	static function main() {
+		var h = new H();
+		h.put("a", 1); h.puti(2, "two"); h.puto(h, 3);
+		Sys.println(h.get("a") + " " + h.has("a") + " " + h.geti(2) + " " + h.keys() + " " + h.geto(h));
+	}
+}
+===
+[run]
+1 true two [a] 3
+# Recorded divergence (decision: hxc fixes gencs's parent-cast bug for every parent cast). Types notes
+# §8.14 (probe thenable), the three FP -> Th casts of casts' cast-interface, and the Perm, Partial, Both and Fixed
+# shapes of types §4's table. Expected [run]: gencs's C# for this program patched with the §4 rule (every
+# parent-cast body `return this.X_cast<b1..bn>()`, bk = Pj_c for the first j with aj == Tk), built and run as
+# run.sh does (the patcher is fixcasts.py, see verification.md); it rewrote FP.Th_cast, Perm.I2_cast,
+# Partial.I2_cast, Both.I1_cast, Both.I2_cast and the std's StringMap.haxe_IMap_cast. Unpatched
+# gencs throws InvalidCastException on every line but `same inst` and `Fixed -> I1<Int>`.
+--- interface-cast-fixed
+// Casts into another instantiation of a generic interface the class implements. gencs's parent cast
+// Th_cast<T_c>() calls FP_cast<T>() with the class's own T, so it returns `this` and the castclass after it
+// throws InvalidCastException (types notes §4). hxc emits the correct body: FP_cast<T_c>(), Perm_cast<B_c, A_c>(),
+// Partial_cast<B_c>(), Both_cast<A_c>(), and in the std StringMap<T> implements IMap<String,T>
+// haxe_ds_StringMap_cast<V_c>(); Fixed<T> implements I1<Int> keeps Fixed_cast<T>() as gencs does.
+interface Th<T> {
+	function then<R>(f:T->R):Th<R>;
+	function value():T;
+}
+class FP<T> implements Th<T> {
+	var v:Null<T>;
+	public function new(v:T) this.v = v;
+	public function then<R>(f:T->R):Th<R> {
+		// thenshim's shape: an Any-typed promise cast to Th<R>.
+		return cast impl(f);
+	}
+	function impl(f:Dynamic):FP<Any> return new FP<Any>(f(v));
+	public function value():T return v;
+}
+interface I1<T> { function a():T; }
+interface I2<A, B> { function b(x:A):B; }
+class Perm<X, Y> implements I2<Y, X> {
+	public var x:X;
+	public var y:Y;
+	public function new(x:X, y:Y) { this.x = x; this.y = y; }
+	public function b(v:Y):X return x;
+}
+class Partial<T> implements I2<String, T> {
+	public var t:T;
+	public function new(t:T) this.t = t;
+	public function b(s:String):T return t;
+}
+class Both<T> implements I1<T> implements I2<T, T> {
+	public var t:T;
+	public function new(t:T) this.t = t;
+	public function a():T return t;
+	public function b(x:T):T return x;
+}
+class Fixed<T> implements I1<Int> {
+	public var t:T;
+	public function new(t:T) this.t = t;
+	public function a():Int return 1;
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + ": " + f()) catch (e:Dynamic) Sys.println(n + " threw: " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var p = new FP<Int>(20);
+		t("then<Int>", () -> { var q:Th<Int> = p.then(x -> x + 1); q.value(); });
+		t("dyn->Th<Int>", () -> { var d:Dynamic = new FP<Dynamic>(5); var x:Th<Int> = d; x.value(); });
+		t("dyn->Th<String>", () -> { var d:Dynamic = new FP<Dynamic>("s"); var x:Th<String> = d; x.value(); });
+		t("same inst", () -> { var d:Dynamic = new FP<Int>(5); var x:Th<Int> = d; x.value(); });
+		t("cast FP<Dyn> -> Th<Int>", () -> { var x:Th<Int> = cast new FP<Dynamic>(1); Std.string(Type.getClass(x)) + " " + x.value(); });
+		t("Th<Int> -> Th<Float> cast", () -> { var a:Th<Int> = new FP<Int>(1); var x:Th<Float> = cast a; Std.string(Type.getClass(x)) + " " + x.value(); });
+		t("Perm -> I2<String,Int>", () -> { var d:Dynamic = new Perm<Dynamic, Dynamic>(1, "s"); var i:I2<String, Int> = d; Std.string(Type.getClass(i)) + " " + i.b("q"); });
+		t("Partial -> I2<String,Int>", () -> { var d:Dynamic = new Partial<Dynamic>(3); var i:I2<String, Int> = d; Std.string(Type.getClass(i)) + " " + i.b("q"); });
+		t("Both -> I1<Int>", () -> { var d:Dynamic = new Both<Dynamic>(4); var i:I1<Int> = d; Std.string(Type.getClass(i)) + " " + i.a(); });
+		t("Both -> I2<Int,Int>", () -> { var d:Dynamic = new Both<Dynamic>(4); var i:I2<Int, Int> = d; Std.string(Type.getClass(i)) + " " + i.b(5); });
+		t("Both -> I2<Int,String>", () -> { var d:Dynamic = new Both<Dynamic>(4); var i:I2<Int, String> = d; Std.string(Type.getClass(i)); });
+		t("IMap from Dynamic", () -> { var sm:Dynamic = new haxe.ds.StringMap<Dynamic>(); var im:haxe.Constraints.IMap<String, Int> = sm; im.set("a", 1); Std.string(Type.getClass(im)) + " " + im.get("a"); });
+		t("Fixed -> I1<Int>", () -> { var d:Dynamic = new Fixed<Dynamic>(2); var i:I1<Int> = d; Std.string(Type.getClass(i)) + " " + i.a(); });
+	}
+}
+===
+[run]
+then<Int>: 21
+dyn->Th<Int>: 5
+dyn->Th<String>: s
+same inst: 5
+cast FP<Dyn> -> Th<Int>: FP`1[System.Int32] 1
+Th<Int> -> Th<Float> cast: FP`1[System.Double] 1
+Perm -> I2<String,Int>: Perm`2[System.Int32,System.String] 1
+Partial -> I2<String,Int>: Partial`1[System.Int32] 3
+Both -> I1<Int>: Both`1[System.Int32] 4
+Both -> I2<Int,Int>: Both`1[System.Int32] 5
+Both -> I2<Int,String> threw: System.InvalidCastException
+IMap from Dynamic: haxe.ds.StringMap`1[System.Int32] 1
+Fixed -> I1<Int>: Fixed`1[System.Object] 1
+# Recorded divergence (same decision). Types notes §8.15 (probe supercast) plus the Derived2<A,B> extends
+# Base<B> shape of types §4's table. Expected [run]: gencs's C# patched with the §4 rule (GSub.G_cast,
+# Base.I1_cast, Derived2.I1_cast and Derived2.Base_cast rewritten), built and run as run.sh does. Unpatched gencs
+# throws InvalidCastException on dyn->G<Int>, dyn->Base<Int> and dyn->I1<Int>.
+--- superclass-cast-fixed
+// The same parent-cast bug on a generic superclass: gencs gives GSub<U> extends G<U> the override
+// G_cast<T_c>() { return GSub_cast<U>(); }, which returns `this`, so the cast throws InvalidCastException
+// (types notes §4). hxc emits GSub_cast<T_c>(), and for Derived2<A,B> extends Base<B> (whose Base<B> implements
+// I1<B>) Derived2_cast<A, T_c>() in both Base_cast<T_c> and I1_cast<T_c>.
+class G<T> { public var v:T; public function new(v:T) this.v = v; }
+class GSub<U> extends G<U> { public var w:U; public function new(v:U) { super(v); w = v; } }
+interface I1<T> { function a():T; }
+class Base<T> implements I1<T> {
+	public var bv:T;
+	public function new(v:T) bv = v;
+	public function a():T return bv;
+}
+class Derived2<A, B> extends Base<B> {
+	public var av:A;
+	public function new(a:A, b:B) { super(b); av = a; }
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + ": " + f()) catch (e:Dynamic) Sys.println(n + " threw " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var d:Dynamic = new GSub<Dynamic>(5);
+		t("dyn->G<Int>", () -> { var g:G<Int> = d; Type.getClass(g) + " v=" + g.v; });
+		t("dyn->GSub<Int>", () -> { var s:GSub<Int> = d; Type.getClass(s) + " v=" + s.v + " w=" + s.w; });
+		var gs = new GSub<Int>(7);
+		var dd:Dynamic = gs;
+		var g2:G<Int> = dd;
+		Sys.println("same inst: " + (g2 == gs));
+		var d2:Dynamic = new Derived2<Dynamic, Dynamic>("x", 5);
+		t("dyn->Base<Int>", () -> { var b:Base<Int> = d2; Type.getClass(b) + " " + b.a(); });
+		t("dyn->I1<Int>", () -> { var i:I1<Int> = d2; Type.getClass(i) + " " + i.a(); });
+		t("dyn->Derived2<String,Int>", () -> { var x:Derived2<String, Int> = d2; Type.getClass(x) + " " + x.av + x.a(); });
+		t("dyn->Base<String>", () -> { var b:Base<String> = d2; Type.getClass(b) + " " + b.a(); });
+	}
+}
+===
+[run]
+dyn->G<Int>: GSub`1[System.Int32] v=5
+dyn->GSub<Int>: GSub`1[System.Int32] v=5 w=5
+same inst: true
+dyn->Base<Int>: Derived2`2[System.Object,System.Int32] 5
+dyn->I1<Int>: Derived2`2[System.Object,System.Int32] 5
+dyn->Derived2<String,Int>: Derived2`2[System.String,System.Int32] x5
+dyn->Base<String> threw System.InvalidCastException
+# Casts into abstract-typed places (probes t5probe/abs and t5probe/anon, Task 5). gencs's RealTypeParams sees
+# through an abstract to its underlying instantiation, except that a Map-typed anonymous field read used by a
+# Map member is C#'s plain cast to IMap<K,V>.
+--- abstract-target-casts @gencs
+// A Dynamic holding another instantiation, cast into a place typed by an abstract over a generic class:
+// Map<String,Int> (whose IMap<string,int> slot gets gencs's StringMap<object>.__hx_cast<int>, a copy) and
+// ReadOnlyArray<Int>, as a local, an argument, a field, through Reflect.setField and by `cast`. An anonymous
+// field typed Map<String,Int> is read with C#'s cast to IMap<string,int> before a Map member (InvalidCastException
+// for a StringMap<object>), but goes through __hx_cast when it is stored first (`var m = a.m`).
+import haxe.ds.ReadOnlyArray;
+
+typedef A = {m:Map<String, Int>, ro:ReadOnlyArray<Int>, sm:haxe.ds.StringMap<Int>, mo:Map<String, Array<Int>>};
+
+class H {
+	public var m:Map<String, Int>;
+	public var ro:ReadOnlyArray<Int>;
+
+	public function new() {}
+}
+
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:Dynamic) Sys.println(name + ": EXC " + Type.getClassName(Type.getClass(e)));
+	}
+
+	static function takeMap(m:Map<String, Int>) return m.get("a");
+
+	static function main() {
+		run("local Map", () -> { var d:Dynamic = new haxe.ds.StringMap<Dynamic>(); var m:Map<String, Int> = d; m.set("a", 1); m.get("a"); });
+		run("arg Map", () -> { var sm = new haxe.ds.StringMap<Dynamic>(); sm.set("a", 1); var d:Dynamic = sm; takeMap(d); });
+		run("field Map", () -> { var h = new H(); var d:Dynamic = new haxe.ds.StringMap<Dynamic>(); h.m = d; h.m.set("a", 2); h.m.get("a"); });
+		run("setField Map", () -> { var h = new H(); Reflect.setField(h, "m", new haxe.ds.StringMap<Dynamic>()); h.m.set("a", 3); h.m.get("a"); });
+		run("cast Map", () -> { var d:Dynamic = new haxe.ds.StringMap<Dynamic>(); var m = (cast d : Map<String, Int>); m.set("a", 4); m.get("a"); });
+		run("local ROA", () -> { var d:Dynamic = haxe.Json.parse("[1,2]"); var r:ReadOnlyArray<Int> = d; r[0]; });
+		run("field ROA", () -> { var h = new H(); var d:Dynamic = haxe.Json.parse("[1,2]"); h.ro = d; h.ro[1]; });
+		var sm = new haxe.ds.StringMap<Dynamic>();
+		sm.set("a", 1);
+		var d:Dynamic = {m: sm, ro: haxe.Json.parse("[3]"), sm: sm, mo: sm};
+		var a:A = d;
+		run("anon Map", () -> a.m.get("a"));
+		run("anon Map for", () -> { var n = 0; for (k => v in a.m) n += v; n; });
+		run("anon Map var", () -> { var m = a.m; m.exists("a"); });
+		run("anon ROA", () -> a.ro[0]);
+		run("anon StringMap", () -> a.sm.get("a"));
+		run("anon Map erased", () -> a.mo.exists("a"));
+	}
+}
+===
+# The same with an abstract over a generic interface, a typed IMap, and `return d` (Decision 4). gencs's parent
+# cast (FP.Th_cast, StringMap.haxe_IMap_cast) returns `this`, so every line but the last throws
+# InvalidCastException in gencs (`return d` is C#'s plain cast there); hxc's copies (decision 2 of plan 3c).
+--- abstract-target-casts-fixed
+// Casts into places typed by an abstract over a generic interface (Pr<Int> over Th<Int>) and by IMap<String,Int>
+// itself, from a Dynamic holding the object instantiation, and `return d` into a Map<String,Int>. gencs throws
+// InvalidCastException on each (its parent casts return `this`; `return d` is a plain cast); hxc's __hx_cast
+// copies into the instantiation asked for. Recorded divergence.
+interface Th<T> {
+	function get():T;
+}
+
+class FP<T> implements Th<T> {
+	var v:T;
+
+	public function new(v:T)
+		this.v = v;
+
+	public function get():T
+		return v;
+}
+
+abstract Pr<T>(Th<T>) from Th<T> to Th<T> {
+	public function get():T
+		return this.get();
+}
+
+typedef A = {p:Pr<Int>, im:haxe.Constraints.IMap<String, Int>, th:Th<Int>};
+
+class H {
+	public var p:Pr<Int>;
+
+	public function new() {}
+}
+
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:Dynamic) Sys.println(name + ": EXC " + Type.getClassName(Type.getClass(e)));
+	}
+
+	static function retMap(d:Dynamic):Map<String, Int>
+		return d;
+
+	static function main() {
+		run("local Pr", () -> { var d:Dynamic = new FP<Dynamic>(5); var p:Pr<Int> = d; p.get(); });
+		run("field Pr", () -> { var h = new H(); var d:Dynamic = new FP<Dynamic>(6); h.p = d; h.p.get(); });
+		run("local IMap", () -> { var d:Dynamic = new haxe.ds.StringMap<Dynamic>(); var m:haxe.Constraints.IMap<String, Int> = d; m.set("a", 7); m.get("a"); });
+		run("ret Map", () -> { var sm = new haxe.ds.StringMap<Dynamic>(); sm.set("a", 8); retMap(sm).get("a"); });
+		var sm = new haxe.ds.StringMap<Dynamic>();
+		sm.set("a", 1);
+		var d:Dynamic = {p: new FP<Dynamic>(2), im: sm, th: new FP<Dynamic>(4)};
+		var a:A = d;
+		run("anon Pr", () -> a.p.get());
+		run("anon IMap", () -> a.im.get("a"));
+		run("anon Th", () -> a.th.get());
+	}
+}
+===
+[run]
+local Pr: 5
+field Pr: 6
+local IMap: 7
+ret Map: 8
+anon Pr: 2
+anon IMap: 1
+anon Th: 4
