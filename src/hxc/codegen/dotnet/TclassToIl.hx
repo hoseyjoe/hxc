@@ -504,8 +504,9 @@ class TclassToIl {
 	// Two methods of one name, static-ness, generic arity and CLR signature are invalid metadata (ECMA-335
 	// II.22.26), and a call through Dynamic could reach either. Erasure gives two overloads one signature
 	// when their Haxe types differ only in type arguments: `f(a:Array<C>)` and `f(a:Array<D>)` are both
-	// ``f(Array`1<object>)``. gencs's C# for them fails with CS0111. Constructors count too.
-	static function checkDistinctSignatures(methods:Array<MethodPlan>):Void {
+	// ``f(Array`1<object>)``. gencs's C# for them fails with CS0111. Constructors count too, and so do the
+	// members of a generic interface's companion (CompanionToIl.declare).
+	public static function checkDistinctSignatures(methods:Array<MethodPlan>):Void {
 		for (j in 1...methods.length) {
 			var b = methods[j];
 			for (i in 0...j) {

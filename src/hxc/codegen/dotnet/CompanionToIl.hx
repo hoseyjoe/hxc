@@ -314,6 +314,8 @@ class CompanionToIl {
 			}
 		}
 		bases.push(genericObjectSig(g));
+		// A generic interface's members that mention no type parameter come here, not through planClass.
+		TclassToIl.checkDistinctSignatures(methods);
 		var companion = typePlan(plan, "companion", companionPath(c), TypeAttrs.PUBLIC | TypeAttrs.INTERFACE | TypeAttrs.ABSTRACT, bases, methods);
 		g.plans.insert(g.plans.indexOf(plan), companion);
 		g.companionPlans.set(c, companion);
