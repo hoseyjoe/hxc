@@ -2,6 +2,7 @@
 //   verify <dll>          ILVerify over method bodies and type definitions
 //   dump <dll> <items>    prints the metadata named by a comma-separated item list
 //   stress-fieldlookup <dll>  calls the assembly's haxe.lang.FieldLookup from many threads at once
+//   stress-arrayforward <dll> makes the first cast of one unserialized array from many threads at once
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -21,7 +22,8 @@ static class Program {
 		if (args.Length == 2 && args[0] == "verify") return Verify(Path.GetFullPath(args[1]));
 		if (args.Length == 3 && args[0] == "dump") return Dump(Path.GetFullPath(args[1]), args[2]);
 		if (args.Length == 2 && args[0] == "stress-fieldlookup") return StressFieldLookup(Path.GetFullPath(args[1]));
-		Console.Error.WriteLine("usage: HxcCheck verify <dll> | dump <dll> <items> | stress-fieldlookup <dll>");
+		if (args.Length == 2 && args[0] == "stress-arrayforward") return StressArrayForward(Path.GetFullPath(args[1]));
+		Console.Error.WriteLine("usage: HxcCheck verify <dll> | dump <dll> <items> | stress-fieldlookup <dll> | stress-arrayforward <dll>");
 		return 2;
 	}
 
@@ -89,6 +91,67 @@ static class Program {
 		foreach (var p in problems.Take(20)) Console.WriteLine(p);
 		Console.WriteLine("stress-fieldlookup: " + threads * perThread + " names from " + threads + " threads, " + problems.Count + " problems");
 		return problems.IsEmpty ? 0 : 1;
+	}
+
+	// Haxe issue 8314's forward under a race. Each of 200 rounds calls the assembly's P.make(), which
+	// returns a fresh Array`1<object> of [1,2,3] from haxe.Unserializer, and starts 8 threads behind a
+	// barrier. Each casts that one array with P.toInts(a:Dynamic):Array<Int> and pushes its index onto what
+	// it got, the pushes under a lock since an Array is not thread-safe. Every thread must get the same
+	// Array`1<int>, holding 1, 2, 3 and then each index once, and the original's length must follow it. Any
+	// exception fails too.
+	static int StressArrayForward(string path) {
+		const int threads = 8, rounds = 200;
+		var p = Assembly.LoadFrom(path).GetType("P", true)!;
+		var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+		var make = p.GetMethod("make", flags)!.CreateDelegate<Func<object>>();
+		var toInts = p.GetMethod("toInts", flags)!.CreateDelegate<Func<object, object>>();
+		var problems = new List<string>();
+		var watch = System.Diagnostics.Stopwatch.StartNew();
+		for (var round = 0; round < rounds; round++) {
+			var a = make();
+			var got = new object?[threads];
+			var errors = new System.Collections.Concurrent.ConcurrentQueue<string>();
+			var gate = new object();
+			var start = new Barrier(threads);
+			var workers = new Thread[threads];
+			for (var t = 0; t < threads; t++) {
+				var me = t;
+				workers[t] = new Thread(() => {
+					start.SignalAndWait();
+					try {
+						var r = toInts(a);
+						got[me] = r;
+						lock (gate) r.GetType().GetMethod("push")!.Invoke(r, [me]);
+					} catch (Exception e) {
+						errors.Enqueue(e.GetType().Name + ": " + e.Message);
+					}
+				});
+				workers[t].Start();
+			}
+			foreach (var w in workers) w.Join();
+			var where = "round " + round + ": ";
+			foreach (var e in errors) problems.Add(where + e);
+			var first = got[0];
+			if (first == null || first.GetType() != a.GetType().GetGenericTypeDefinition().MakeGenericType(typeof(int))) {
+				problems.Add(where + "thread 0 got " + (first == null ? "null" : first.GetType().ToString()));
+				continue;
+			}
+			for (var t = 1; t < threads; t++)
+				if (!ReferenceEquals(got[t], first)) problems.Add(where + "thread " + t + " got another array");
+			int Length(object o) => (int)o.GetType().GetField("length")!.GetValue(o)!;
+			var length = Length(first);
+			if (length != 3 + threads) problems.Add(where + "length " + length + ", not " + (3 + threads));
+			if (Length(a) != length) problems.Add(where + "the original's length is " + Length(a) + ", the target's " + length);
+			var store = (int[])first.GetType().GetField("__a")!.GetValue(first)!;
+			var values = store.Take(Math.Min(length, store.Length)).ToArray();
+			var indexes = values.Skip(3).OrderBy(v => v).ToArray();
+			if (!values.Take(3).SequenceEqual([1, 2, 3]) || !indexes.SequenceEqual(Enumerable.Range(0, threads)))
+				problems.Add(where + "elements " + string.Join(",", values));
+		}
+		foreach (var problem in problems.Take(20)) Console.WriteLine(problem);
+		Console.WriteLine("stress-arrayforward: " + rounds + " rounds of " + threads + " threads in " + watch.ElapsedMilliseconds + " ms, "
+			+ problems.Count + " problems");
+		return problems.Count == 0 ? 0 : 1;
 	}
 
 	static int Verify(string path) {

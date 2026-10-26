@@ -36,7 +36,8 @@ private typedef Parent = {c:TClass, params:Array<T>};
 //
 // The class gets, after its constructors, the static `__hx_cast<T_c_c…>(X me)`, its own `X_cast`, which
 // returns `this` when every type argument is the one asked for and otherwise copies the object field by
-// field into a new instantiation, and a parent cast for every generic interface (deep) and generic
+// field into a new instantiation (Array's goes on in hxc's runtime Array.hx, which carries Haxe issue
+// 8314's forward), and a parent cast for every generic interface (deep) and generic
 // superclass. A parent cast's body is types §4's: `this.X_cast<b1..bn>()`, each `bk` the first parent
 // parameter whose argument is the class's k-th parameter, else that parameter itself (gencs passes the
 // class's own parameters, so its parent casts return `this`; decision 2 of plan 3c). A class that is not
@@ -413,7 +414,7 @@ class CompanionToIl {
 				code.op(IlOps.RET, 1, 0);
 			case COwn:
 				var copy = new CastCopy(g, plan, c, code);
-				if (TypeFunctions.hasClassFlag(c, CAbstract)) copy.emitAbstract() else copy.emit();
+				if (c == g.runtimeClass("Array")) copy.emitArray() else if (TypeFunctions.hasClassFlag(c, CAbstract)) copy.emitAbstract() else copy.emit();
 		}
 	}
 
@@ -501,6 +502,23 @@ private class CastCopy {
 		var ex = LClass({ns: ["System"], nested: [], name: "InvalidCastException"}, []);
 		code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(ex), ".ctor", g.sigs.method(true, LVoid, [], 0)), 0, 1);
 		code.op(IlOps.THROW, 1, 0);
+	}
+
+	// Array's own cast: gencs's check for the same type arguments, then `this.__hx_castTo<T_c>()` of hxc's
+	// runtime Array.hx, which reinterprets an untyped array for Haxe issue 8314 and otherwise copies as
+	// emit() does (casts notes §2.4).
+	public function emitArray():Void {
+		var castTo = null;
+		for (m in plan.methods) switch (m.kind) {
+			case MField(cf) if (cf.name == "__hx_castTo" && m.hasThis): castTo = m;
+			case _:
+		}
+		if (castTo == null) throw "internal error: Array has no __hx_castTo";
+		sameArgsReturnThis(code.newLabel());
+		var token = g.mb.memberRef(g.typeTokenOf(plan.thisSig), castTo.name, g.sigs.method(true, castTo.ret, castTo.args, castTo.generics.length));
+		code.ldarg(0);
+		code.opToken(IlOps.CALL, g.mb.methodSpec(token, g.sigs.methodSpec(margs)), 1, 1);
+		code.op(IlOps.RET, 1, 0);
 	}
 
 	public function emit():Void {

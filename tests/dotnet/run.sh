@@ -3,12 +3,14 @@
 #   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>] [-j <jobs>]
 #                       [--no-gencs-cache]
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
-# [@runtimeconfig] [@run-timeout=seconds] [+ extra hxc args]`, its source, `===`, and the expected
-# result. Each case compiles twice into a fresh directory, and its .dll must be byte-identical
-# between the two, pass ILVerify, run (unless @lib) and dump as expected. A @stress-fieldlookup
-# case's .dll must also pass HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup called from many
-# threads at once). A @runtimeconfig case is not run; its <name>.runtimeconfig.json is the result
-# instead, so a case can build for a .NET version this machine does not have.
+# [@stress-arrayforward] [@runtimeconfig] [@run-timeout=seconds] [+ extra hxc args]`, its source, `===`,
+# and the expected result. Each case compiles twice into a fresh directory, and its .dll must be
+# byte-identical between the two, pass ILVerify, run (unless @lib) and dump as expected. A
+# @stress-fieldlookup case's .dll must also pass HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup
+# called from many threads at once), and a @stress-arrayforward case's HxcCheck's stress-arrayforward
+# (its P.toInts making the first cast of one array from many threads at once). A @runtimeconfig case
+# is not run; its <name>.runtimeconfig.json is the result instead, so a case can build for a .NET
+# version this machine does not have.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
 # and a case whose expectation has no [run] section takes the gencs output as that expectation.
@@ -474,7 +476,7 @@ gencs_prepare() {
 # not exist yet, and prints its report.
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 serial=0 stress=0 config=0 limit t
+	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 limit t
 	for t in $tags; do
 		case "$t" in
 			@lib) lib=1 ;;
@@ -483,7 +485,7 @@ run_case() {
 			@gencs) gencs=1 ;;
 			@serial) serial=1; gencs=1 ;;
 			@run-timeout=*) ;;
-			@stress-fieldlookup) stress=1 ;;
+			@stress-fieldlookup | @stress-arrayforward) stress="$stress ${t#@}" ;;
 			@runtimeconfig) config=1 ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
 		esac
@@ -585,10 +587,10 @@ run_case() {
 				fi
 			fi
 		fi
-		if [ $stress = 1 ]; then
-			local sout
-			if ! sout="$(exec dotnet "$checkdll" stress-fieldlookup "$dll_m" 2>&1)"; then problem="${problem}stress-fieldlookup failed:"$'\n'"${sout}"$'\n'; fi
-		fi
+		local mode sout
+		for mode in $stress; do
+			if ! sout="$(exec dotnet "$checkdll" "$mode" "$dll_m" 2>&1)"; then problem="${problem}${mode} failed:"$'\n'"${sout}"$'\n'; fi
+		done
 		if [ -n "$dump" ]; then
 			local dout
 			dout="$(exec dotnet "$checkdll" dump "$dll_m" "$dump" 2>&1)"
