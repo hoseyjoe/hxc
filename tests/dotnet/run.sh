@@ -3,7 +3,8 @@
 #   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>] [-j <jobs>]
 #                       [--no-gencs-cache]
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
-# [@stress-arrayforward] [@runtimeconfig] [@run-timeout=seconds] [+ extra hxc args]`, its source, `===`,
+# [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds]
+# [+ extra hxc args]`, its source, `===`,
 # and the expected result. Each case compiles twice into a fresh directory, and its .dll must be
 # byte-identical between the two, pass ILVerify, run (unless @lib) and dump as expected. A
 # @stress-fieldlookup case's .dll must also pass HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup
@@ -17,6 +18,15 @@
 # @gencs compares runs, so it cannot go with @lib or @runtimeconfig (nor can @serial). A @gencs case
 # is expected to compile: unless its expectation has a [compile] section, hxc failing or writing no
 # .dll fails the case.
+# A @netlib case gets fixture .NET libraries, the projects in tests/dotnet/netlib/<Name>/. A bare @netlib
+# passes ValLib, and @netlib=Name[,Name...] passes the named ones (LibA, LibB, M4Lib, ValLib), as
+# `--net-lib <dir>/<Name>.dll` to both hxc compiles and to gencs's haxe command, and as a <Reference> in
+# the csproj gencs's output is built with. Only the named libraries are passed, but every fixture .dll is
+# copied beside hxc's output (after the determinism check) and beside gencs's, so a library that is
+# referenced and not passed is found as a user's would be (LibA references LibB). The fixtures are built
+# once per run into $HXC_TEST_TMP/netlib (dotnet build -c Release -o), and the build is skipped while a
+# hash of their sources and the .NET SDK version is unchanged. That hash is part of the gencs cache key
+# of every @netlib case.
 # A @serial case is a @gencs case whose program takes `gen <file>` and `rt <in> <file>`: gen writes
 # `name<TAB>serialized` lines to <file> and prints them, rt unserializes each line of <in>, serializes
 # it again, writes the lines to <file> and prints them. Both builds run gen (the [run] comparison
@@ -43,8 +53,9 @@
 # and run. The key covers the case (name, tags, extra args, source and run time limit),
 # gencs.csproj.in, this script's gencs steps, the Haxe version, path and std files, the global hxcs
 # (haxelib's path for it, its haxelib.json, git HEAD and files), the .NET SDK version and the time
-# zone, so only a case whose gencs results could differ goes through gencs again. Problems from
-# gencs's build or a timed-out run are not cached, and nothing is when the Haxe version is wrong.
+# zone (and, for a @netlib case, the fixtures' hash), so only a case whose gencs results could differ
+# goes through gencs again. Problems from gencs's build or a timed-out run are not cached, and nothing
+# is when the Haxe version is wrong.
 # --no-gencs-cache neither reads nor writes the cache; entries unused for 30 days are removed.
 # Bash's forks are slow on Windows, so the steps for each case avoid subshells where they can.
 set -u
@@ -144,6 +155,54 @@ paths() {
 	esac
 }
 
+# The fixture libraries of @netlib cases: built into $netlibdir by netlib_build, which sets $netlib_hash.
+netlibdir="$tmproot/netlib"
+netlibdir_m="$tmproot_m/netlib"
+netlib_hash=""
+
+# Sets $netlibs to the names of the fixture libraries that tags $1 pass: ValLib for @netlib,
+# the listed ones for @netlib=Name[,Name...], none without the tag.
+netlib_names() {
+	local t
+	netlibs=""
+	for t in $1; do
+		case "$t" in
+			@netlib) netlibs="$netlibs ValLib" ;;
+			@netlib=*) netlibs="$netlibs ${t#@netlib=}" ;;
+		esac
+	done
+	netlibs="${netlibs//,/ }"
+	netlibs="${netlibs# }"
+}
+
+# Builds the fixture libraries into $netlibdir, unless the hash of their sources and of the .NET SDK
+# version is still the one the last build stored there. The projects build from a copy of their
+# sources, so the checkout gets no obj directories, and the finished directory replaces $netlibdir in
+# one move. LibA references LibB, so building LibA already puts LibB.dll in the output.
+netlib_build() {
+	local stamp="" src="$tmproot/netlib-src.$$" out="$tmproot/netlib-out.$$" p log
+	netlib_hash="$({
+		cd "$here/netlib" && find . -type f \( -name '*.cs' -o -name '*.csproj' \) | LC_ALL=C sort | xargs sha1sum
+		dotnet --version
+	} | sha1sum)"
+	netlib_hash="${netlib_hash%% *}"
+	[ -f "$netlibdir/.hash" ] && read -r stamp < "$netlibdir/.hash"
+	[ "$stamp" = "$netlib_hash" ] && return 0
+	rm -rf "$src" "$out"
+	mkdir "$src" && cp -R "$here"/netlib/* "$src/" && rm -rf "$src"/*/obj "$src"/*/bin || return 1
+	for p in "$src"/*/*.csproj; do
+		if ! log="$(dotnet build "$p" -c Release -o "$out" -nologo -v q 2>&1)"; then
+			printf '%s\n' "$log"
+			rm -rf "$src" "$out"
+			return 1
+		fi
+	done
+	printf '%s\n' "$netlib_hash" > "$out/.hash"
+	rm -rf "$netlibdir"
+	mv "$out" "$netlibdir"
+	rm -rf "$src"
+}
+
 # Sets $norm to $1 with line endings as \n, directory $2 (by default the case directory) as $CASE,
 # no trailing whitespace on any line and no trailing blank lines. sed only runs when a line has
 # trailing whitespace, or the text has a byte sed's locale may read differently.
@@ -207,18 +266,25 @@ reap_all() {
 }
 
 # Generates the C# for case $1 (module $3) in $2 with gencs and fills in its project, or writes
-# $2/problem. Runs in a subshell.
+# $2/problem. Runs in a subshell. A @netlib case's libraries go to gencs as --net-lib and into the
+# project as references.
 gencs_generate() {
-	local i="$1" d="$2" module="$3" glog mainclass
+	local i="$1" d="$2" module="$3" glog mainclass n nargs=() refs=""
+	netlib_names "${c_tags[$i]}"
+	for n in $netlibs; do
+		nargs+=(--net-lib "$netlibdir_m/$n.dll")
+		refs="$refs<Reference Include=\"$netlibdir_m/$n.dll\" />"
+	done
+	[ -n "$refs" ] && refs="<ItemGroup>$refs</ItemGroup>"
 	set -f
 	# --std is hxc's std; gencs gets the std that belongs to its own Haxe.
 	unset HAXE_STD_PATH
-	if glog="$("$haxe" --cwd "$(native "$d")" --haxelib-global -cp . -main "$module" --cs g -D no-compilation ${c_extra[$i]} 2>&1)"; then
+	if glog="$("$haxe" --cwd "$(native "$d")" --haxelib-global -cp . -main "$module" --cs g -D no-compilation ${c_extra[$i]} "${nargs[@]}" 2>&1)"; then
 		mainclass="$(sed -n '/^begin main/,/^end main/{/^begin main/d;/^end main/d;p;}' "$d/g/hxcs_build.txt" 2>/dev/null | tr -d '\r' | head -n 1)"
 		if [ -z "$mainclass" ]; then
 			printf 'gencs wrote no main class in hxcs_build.txt\n' > "$d/problem"
 		else
-			sed -e "s/@NAME@/${module##*.}/" -e "s/@MAIN@/$mainclass/" "$here/gencs.csproj.in" > "$d/g/${module##*.}.csproj"
+			sed -e "s/@NAME@/${module##*.}/" -e "s/@MAIN@/$mainclass/" -e "s|</Project>|${refs//&/\\&}</Project>|" "$here/gencs.csproj.in" > "$d/g/${module##*.}.csproj"
 		fi
 	else
 		printf 'gencs could not compile the case:\n%s\n' "$glog" > "$d/problem"
@@ -235,6 +301,9 @@ gencs_run() {
 		printf 'gencs output did not build:\n%s\n' "$(printf '%s\n' "$blog" | grep -F "/${c_name[$i]}/" | sort -u | head -n 20)" > "$d/problem"
 		return
 	fi
+	# Every fixture library goes beside the program, not only the ones passed.
+	netlib_names "${c_tags[$i]}"
+	[ -n "$netlibs" ] && cp "$netlibdir"/*.dll "$d/g/bin/"
 	# A @serial case: gen writes gen.txt, then rt of gen.txt (gencs reading itself) is the reference.
 	[ $serial = 1 ] && args=(gen gen.txt)
 	run_program "$d" "$limit" "$dll" "${args[@]}"
@@ -294,7 +363,7 @@ gencs_fingerprint() {
 	fi
 	read_exact "$here/gencs.csproj.in"
 	printf '%s\n' "$text"
-	declare -f gencs_generate gencs_run run_program case_limit native source_file
+	declare -f gencs_generate gencs_run run_program case_limit native source_file netlib_names
 	printf '%s\n' "$gencs_batch"
 	dotnet --version 2>&1
 	printf '%(%z %Z)T\n' -1
@@ -367,15 +436,18 @@ gencs_prepare() {
 		gencs_cache="$tmproot/gencs-cache"
 		# A key hashes the fingerprint's hash and the case's fields, each with its length; one sha1sum
 		# hashes them all.
-		local fp f n=0 h rest limit
+		local fp f n=0 h rest limit nlh
 		fp="$(gencs_fingerprint | sha1sum)"
 		fp="${fp%% *}"
 		mkdir -p "$gencsroot/.keys"
 		for i in "${todo[@]}"; do
 			case_limit "${c_tags[$i]}"
+			netlib_names "${c_tags[$i]}"
+			nlh=""
+			[ -n "$netlibs" ] && nlh="$netlib_hash"
 			{
 				printf '%s\n' "$fp"
-				for f in "${c_name[$i]}" "${c_tags[$i]}" "${c_extra[$i]}" "${c_source[$i]}" "$limit"; do
+				for f in "${c_name[$i]}" "${c_tags[$i]}" "${c_extra[$i]}" "${c_source[$i]}" "$limit" "$nlh"; do
 					printf '%d:%s\n' "${#f}" "$f"
 				done
 			} > "$gencsroot/.keys/$i"
@@ -476,7 +548,7 @@ gencs_prepare() {
 # not exist yet, and prints its report.
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 limit t
+	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 limit t n netargs=()
 	for t in $tags; do
 		case "$t" in
 			@lib) lib=1 ;;
@@ -487,6 +559,7 @@ run_case() {
 			@run-timeout=*) ;;
 			@stress-fieldlookup | @stress-arrayforward) stress="$stress ${t#@}" ;;
 			@runtimeconfig) config=1 ;;
+			@netlib | @netlib=?*) ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
 		esac
 	done
@@ -504,6 +577,16 @@ run_case() {
 		failed=$((failed + 1))
 		return
 	fi
+	netlib_names "$tags"
+	for n in $netlibs; do
+		if [ ! -f "$netlibdir/$n.dll" ]; then
+			echo "FAIL $name"
+			echo "@netlib names $n, and tests/dotnet/netlib has no such library"
+			failed=$((failed + 1))
+			return
+		fi
+		netargs+=(--net-lib "$netlibdir_m/$n.dll")
+	done
 	casedir="$6"
 	local file casedir_m
 	source_file "$module"
@@ -518,8 +601,8 @@ run_case() {
 	# --haxelib-global, which only counts after the library, keeps the global hxcs.
 	set -f
 	local cout ccode=0
-	cout="$("$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs a/P --haxelib-global -D dotnet $extra 2>&1)" || ccode=$?
-	"$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs b/P --haxelib-global -D dotnet $extra > /dev/null 2>&1
+	cout="$("$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs a/P --haxelib-global -D dotnet $extra "${netargs[@]}" 2>&1)" || ccode=$?
+	"$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs b/P --haxelib-global -D dotnet $extra "${netargs[@]}" > /dev/null 2>&1
 	set +f
 
 	local result="" problem="" dll="" dll_m f
@@ -541,6 +624,9 @@ run_case() {
 				problem="${problem}not deterministic: ${f##*/}"$'\n'
 			fi
 		done
+		# Every fixture library goes beside the program, not only the ones passed. After the
+		# determinism check, which compares what hxc wrote.
+		[ -n "$netlibs" ] && cp "$netlibdir"/*.dll "$casedir/a/P/"
 		local vout
 		if ! vout="$(exec dotnet "$checkdll" verify "$dll_m" 2>&1)"; then problem="${problem}${vout}"$'\n'; fi
 		if [ $config = 1 ]; then
@@ -666,6 +752,17 @@ flush
 	echo $? > "$resdir/hxccheck.status"
 ) &
 start_job
+# The fixture libraries, when a case wants any: gencs needs them from its first step on.
+for i in "${!c_name[@]}"; do
+	netlib_names "${c_tags[$i]}"
+	if [ -n "$netlibs" ]; then
+		if ! netlib_build; then
+			echo "could not build the @netlib fixtures" >&2
+			exit 1
+		fi
+		break
+	fi
+done
 gencs_prepare
 reap_all
 code=1

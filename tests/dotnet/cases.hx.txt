@@ -14037,3 +14037,276 @@ class P {
 	}
 }
 ===
+#
+# @netlib: the fixture .NET libraries in tests/dotnet/netlib. Plan: docs/superpowers/plans/2026-10-26-dotnet-interop-members.
+# ValLib (a bare @netlib) holds the value-level shapes: Nullable<T>, structs, ref/out parameters.
+# Nullable<T> in Dynamic, Reflect, Std.isOfType, the Serializer and arrays, as gencs does. Passes today (regression).
+--- netlib-nullable-dynamic @gencs @netlib
+import cs.system.Nullable_1;
+import cs.system.DateTime;
+import cs.system.Guid;
+import vallib.Nul;
+import vallib.Model;
+import vallib.Pt;
+
+class Holder {
+	public var n:Nullable_1<Int>;
+	public var dt:Nullable_1<DateTime>;
+	public function new() {}
+}
+
+class P {
+	static function show(d:Dynamic) return d == null ? "null" : Std.string(d) + ":" + Type.getClassName(Type.getClass(d));
+	static function main() {
+		var some = Nul.Maybe(true), none = Nul.Maybe(false);
+		// Nullable into Dynamic
+		var d1:Dynamic = some, d2:Dynamic = none;
+		trace("dyn", show(d1), show(d2), d1 == null, d2 == null);
+		trace("trace direct", some, none);
+		trace("isOfType", Std.isOfType(d1, Int), Std.isOfType(d2, Int));
+		trace("ShowObj", Nul.ShowObj(some), Nul.ShowObj(none));
+		// Dynamic into Nullable
+		var dd:Dynamic = 4;
+		var back:Nullable_1<Int> = dd;
+		trace("from dyn", back.HasValue, back.Value);
+		var dn:Dynamic = null;
+		var back2:Nullable_1<Int> = dn;
+		trace("from dyn null", back2.HasValue);
+		// Reflection on a Haxe object with a Nullable field
+		var h = new Holder();
+		h.n = some;
+		trace("Reflect.field", show(Reflect.field(h, "n")), show(Reflect.field(h, "dt")));
+		Reflect.setField(h, "n", 12);
+		trace("Reflect.setField", h.n.HasValue, h.n.Value);
+		Reflect.setField(h, "n", null);
+		trace("Reflect.setField null", h.n.HasValue);
+		// Reflection on a .NET object's Nullable property
+		var m = new Model();
+		m.NProp = some;
+		trace("Reflect.field net", show(Reflect.field(m, "NProp")), show(Reflect.field(m, "NDate")));
+		Reflect.setProperty(m, "NProp", 21);
+		trace("Reflect.setProperty net", m.NProp.Value);
+		// Serializer
+		h.n = some;
+		trace("serialize", haxe.Serializer.run(h));
+		var l = Nul.ListOf();
+		trace("get_Item", l.get_Item(0).HasValue, l.get_Item(1).HasValue, Nul.ShowList(l));
+		var arr:Array<Nullable_1<Int>> = [some, none];
+		trace("array", arr.length, arr[0].Value, arr[1].HasValue, haxe.Serializer.run(arr));
+		var dyn:Dynamic = arr;
+		trace("dyn array", dyn[0], dyn[1]);
+		var dd:Dynamic = 4.0;
+		try { var back:Nullable_1<Int> = dd; trace("from dyn float", back.Value); } catch (e:Dynamic) trace("from dyn float throws", Type.getClassName(Type.getClass(e)));
+	}
+}
+===
+[run]
+P.hx:20: dyn, 5:Int, null, false, true
+P.hx:21: trace direct, 5, null
+P.hx:22: isOfType, true, false
+P.hx:23: ShowObj, obj System.Int32 5, obj null
+P.hx:27: from dyn, true, 4
+P.hx:30: from dyn null, false
+P.hx:34: Reflect.field, 5:Int, null
+P.hx:36: Reflect.setField, true, 12
+P.hx:38: Reflect.setField null, false
+P.hx:42: Reflect.field net, 5:Int, null
+P.hx:44: Reflect.setProperty net, 21
+P.hx:47: serialize, cy6:Holdery2:dtny1:ni5g
+P.hx:49: get_Item, true, false, 1;null;3;
+P.hx:51: array, 2, 5, false, ai5nh
+P.hx:53: dyn array, 5, null
+P.hx:55: from dyn float throws, System.InvalidCastException
+# Nullable<T> as a Map value and as Null<Nullable<T>>. A deliberate divergence: gencs throws (see [gencs]), hxc reads the value
+# (spec: Interop divergences from gencs).
+--- netlib-nullable-better @gencs @netlib
+import cs.system.Nullable_1;
+class P {
+	static function main() {
+		var some = vallib.Nul.Maybe(true);
+		var mp = new Map<String, Nullable_1<Int>>();
+		mp.set("a", some);
+		trace("map", mp.get("a").HasValue, mp.get("a").Value);
+		var nn:Null<Nullable_1<Int>> = some;
+		trace("Null<Nullable>", nn.Value);
+	}
+}
+===
+[run]
+P.hx:7: map, true, 5
+P.hx:9: Null<Nullable>, 5
+[gencs]
+Unhandled exception. Method "get_HasValue" not found on type System.Int32
+[exit 127]
+# ref and out arguments: locals, fields, statics, captured locals, by-ref structs and out Nullable<T>.
+--- netlib-byref @gencs @netlib
+import vallib.Refs;
+import vallib.Pt;
+class Box { public var v:Int = 0; public var s:String; public function new() {} }
+class P {
+	static var sv:Int = 1;
+	static function main() {
+		var i = 0;
+		trace("TryParse", Refs.TryParse("42", i), i);
+		Refs.Inc(i);
+		trace("Inc local", i);
+		var b = new Box();
+		Refs.Inc(b.v);
+		trace("Inc field", b.v);
+		Refs.Inc(sv);
+		trace("Inc static", sv);
+		var s:String = null;
+		Refs.SetS(s);
+		trace("SetS", s);
+		Refs.SetS(b.s);
+		trace("SetS field", b.s);
+		var p = new Pt(1);
+		Refs.SetPt(p);
+		trace("SetPt", p.X, Refs.ReadIn(p));
+		var o:Dynamic = null;
+		Refs.SetObj(o);
+		trace("SetObj", o);
+		var f = function() { Refs.Inc(i); return i; };
+		trace("captured", f(), i);
+		var n = vallib.Nul.Maybe(false);
+		vallib.Nul.OutNullable(n);
+		trace("out nullable", n.Value);
+	}
+}
+===
+[run]
+P.hx:8: TryParse, true, 42
+P.hx:10: Inc local, 43
+P.hx:13: Inc field, 1
+P.hx:15: Inc static, 2
+P.hx:18: SetS, set
+P.hx:20: SetS field, set
+P.hx:23: SetPt, 101, 101
+P.hx:26: SetObj, 5
+P.hx:28: captured, 44, 43
+P.hx:31: out nullable, 9
+# ref and out arguments that are not variables of the parameter's type are refused.
+--- netlib-byref-refused @netlib
+import vallib.Refs;
+class P {
+	static function main() {
+		var d:Dynamic = 0;
+		Refs.Inc(d);
+		var ni:Null<Int> = 1;
+		Refs.Inc(ni);
+		var a = [1, 2];
+		Refs.Inc(a[0]);
+		var f = 1.0;
+		Refs.TryParse("3", cast f);
+		Refs.Inc(3);
+		trace(d, ni, a, f);
+	}
+}
+===
+[compile]
+P.hx:5: characters 3-14 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+P.hx:7: characters 3-15 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+P.hx:9: characters 3-17 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+P.hx:11: characters 3-29 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+P.hx:12: characters 3-14 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+# M4Lib (@netlib=M4Lib): NativeArray across native calls, then the InterfaceImpl sets of Haxe classes implementing .NET interfaces.
+--- netlib-native-arrays @gencs @netlib=M4Lib
+import m4.*;
+import cs.NativeArray;
+
+class Files implements IFiles {
+	public var got:Array<String> = [];
+	public function new() {}
+	public function OnFiles(paths:NativeArray<String>):Void {
+		for (p in paths) got.push(p);
+	}
+}
+class P {
+	static function main() {
+		Sys.println(Lists.Sum(cs.Lib.nativeArray([1, 2, 3], false)));
+		var a = new NativeArray<Int>(3);
+		Lists.Fill(a);
+		Sys.println(a[1] + " " + a.Length);
+		var parts = Lists.Split("a,b,c");
+		Sys.println(parts.Length + " " + parts[2]);
+		for (s in parts) Sys.print(s + ";");
+		Sys.println("");
+		Sys.println(cs.Lib.array(parts));
+		var fl = Lists.Floats(3);
+		Sys.println(fl[2]);
+		var sum:Float = 0;
+		for (x in fl) sum += x;
+		Sys.println(sum);
+		Sys.println(Lists.Join(parts));
+		var objs = new NativeArray<Dynamic>(2);
+		objs[0] = 1; objs[1] = "x";
+		Sys.println(Lists.Len(objs));
+		var f = new Files();
+		Dialogs.Open(f);
+		Sys.println(f.got);
+		var made = NativeArray.make("p", "q");
+		Sys.println(Lists.Join(made));
+		var b = haxe.io.Bytes.ofString("hi");
+		var bd:haxe.io.BytesData = b.getData();
+		Sys.println(bd.Length);
+		var dyn:Dynamic = parts;
+		Sys.println(dyn.Length);
+		Sys.println(Std.isOfType(parts, NativeArray));
+		Sys.println(Type.getClassName(Type.getClass(parts)));
+	}
+}
+===
+[run]
+6
+10 3
+3 c
+a;b;c;
+[a,b,c]
+2.5
+4.5
+a|b|c
+2
+[a.txt,b.txt]
+p|q
+2
+3
+True
+System.String[]
+--- netlib-interface-impls @gencs @netlib=M4Lib
+import m4.*;
+interface IHx { function hx():String; }
+interface IHxPing extends IPing { function hx2():String; }
+class A implements IFiles implements IHx implements IPingMore {
+	public function new() {}
+	public function OnFiles(p:cs.NativeArray<String>):Void {}
+	public function hx() return "hx";
+	public function Ping() return "ping";
+	public function More() return "more";
+}
+class B extends A implements IPing {
+	override public function Ping() return "pingB";
+}
+class C implements IHxPing {
+	public function new() {}
+	public function Ping() return "pingC";
+	public function hx2() return "hx2";
+}
+class P {
+	static function names(o:Dynamic) {
+		var l = [for (i in cs.Lib.getNativeType(o).GetInterfaces()) i.FullName]; l.sort(Reflect.compare);
+		return l.join(",");
+	}
+	static function main() {
+		Sys.println(names(new A()));
+		Sys.println(names(new B()));
+		Sys.println(names(new C()));
+		var p:IPing = new B();
+		Sys.println(p.Ping());
+	}
+}
+===
+[run]
+IHx,M4.IFiles,M4.IPing,M4.IPingMore,haxe.lang.IHxObject
+IHx,M4.IFiles,M4.IPing,M4.IPingMore,haxe.lang.IHxObject
+IHxPing,M4.IPing,haxe.lang.IHxObject
+pingB
