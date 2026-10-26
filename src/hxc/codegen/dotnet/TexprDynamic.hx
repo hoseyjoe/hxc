@@ -315,8 +315,13 @@ class TexprDynamic {
 	// Pushes the receiver, the name and its hash, the start of every Runtime field call.
 	function fieldHead(obj:TExpr, name:String):Void {
 		tl.texpr(RValue(LObject), obj);
+		nameAndHash(name, obj.pos);
+	}
+
+	// Pushes the name and its hash, used at `pos`, after the receiver.
+	function nameAndHash(name:String, pos:Position):Void {
 		code.opToken(IlOps.LDSTR, g.mb.userString(name), 0, 1);
-		code.ldcI4(hash(name, obj.pos));
+		code.ldcI4(hash(name, pos));
 	}
 
 	// `obj.name` through Runtime.getField(obj, "name", hash, throwErrors), or getField_f when the access
@@ -378,20 +383,35 @@ class TexprDynamic {
 		finish(LObject, own(e), ret);
 	}
 
+	// Runtime.callField(receiver, "name", hash, new object[]{values}) on object locals the caller has
+	// already stored, as a place read and written more than once needs (TexprToIl.place); `pos` is where
+	// the name is used. Leaves the call's object result.
+	function localFieldCall(receiver:Int, name:String, pos:Position, values:Array<Int>):Void {
+		code.ldloc(receiver);
+		nameAndHash(name, pos);
+		pushObjectArray(values.length, i -> code.ldloc(values[i]));
+		runtimeCall("callField", LObject);
+	}
+
 	// C#'s `new object[]{...}`, or null for no values.
 	function pushObjects(args:Array<TExpr>):Void {
-		if (args.length == 0) {
+		for (a in args) if (strip(a).expr.match(TUnop(Spread, _, _))) throw new Unsupported("the spread operator", false);
+		pushObjectArray(args.length, i -> tl.texpr(RValue(LObject), args[i]));
+	}
+
+	// `new object[]{...}` of `count` values, each pushed as an object by `push(i)`, or null for none.
+	function pushObjectArray(count:Int, push:Int->Void):Void {
+		if (count == 0) {
 			code.op(IlOps.LDNULL, 0, 1);
 			return;
 		}
 		var objToken = g.typeTokenOf(LObject);
-		code.ldcI4(args.length);
+		code.ldcI4(count);
 		code.opToken(IlOps.NEWARR, objToken, 1, 1);
-		for (i in 0...args.length) {
-			if (strip(args[i]).expr.match(TUnop(Spread, _, _))) throw new Unsupported("the spread operator", false);
+		for (i in 0...count) {
 			code.op(IlOps.DUP, 1, 2);
 			code.ldcI4(i);
-			tl.texpr(RValue(LObject), args[i]);
+			push(i);
 			code.opToken(IlOps.STELEM, objToken, 3, 0);
 		}
 	}

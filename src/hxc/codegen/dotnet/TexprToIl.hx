@@ -1199,23 +1199,8 @@ class TexprToIl {
 			case TParenthesis(e1) | TMeta(_, e1):
 				return place(e1);
 			case TArray(e1, e2) if (calls.isDynamicArrayAccess(e1)):
-				// Through Runtime.callField's "__get" and "__set".
+				// Through Runtime.callField's "__get" and "__set", on the array and index stored once.
 				var arr = -1, idx = -1;
-				function head(name:String) {
-					code.ldloc(arr);
-					code.opToken(IlOps.LDSTR, g.mb.userString(name), 0, 1);
-					code.ldcI4(dyn.hash(name, e1.pos));
-				}
-				function args(values:Array<Int>) {
-					code.ldcI4(values.length);
-					code.opToken(IlOps.NEWARR, g.typeTokenOf(LObject), 1, 1);
-					for (i in 0...values.length) {
-						code.op(IlOps.DUP, 1, 2);
-						code.ldcI4(i);
-						code.ldloc(values[i]);
-						code.opToken(IlOps.STELEM, g.typeTokenOf(LObject), 3, 0);
-					}
-				}
 				return {
 					sig: LObject,
 					receiver: false,
@@ -1227,17 +1212,11 @@ class TexprToIl {
 						idx = code.addLocal(LObject);
 						code.stloc(idx);
 					},
-					load: () -> {
-						head("__get");
-						args([idx]);
-						dyn.runtimeCall("callField", LObject);
-					},
+					load: () -> dyn.localFieldCall(arr, "__get", e1.pos, [idx]),
 					store: () -> {
 						var v = code.addLocal(LObject);
 						code.stloc(v);
-						head("__set");
-						args([idx, v]);
-						dyn.runtimeCall("callField", LObject);
+						dyn.localFieldCall(arr, "__set", e1.pos, [idx, v]);
 						code.op(IlOps.POP, 1, 0);
 					}
 				};

@@ -139,7 +139,9 @@ class DotnetCtx {
 		return classes.get(IlPaths.key(p));
 	}
 
-	var companions:Null<Map<String, TClass>> = null;
+	// companionClass's index, built on first use; a leave-out round clears it, since a class left out has
+	// no companion.
+	public var companions:Null<Map<String, TClass>> = null;
 
 	// The hxgeneric class or interface whose companion interface `s` is, or null (CompanionToIl).
 	public function companionClass(s:IlSigNorm):Null<TClass> {
@@ -495,6 +497,7 @@ class GenerateDotnet {
 			g.companionOrder = [];
 			g.castParents.clear();
 			g.castNames.clear();
+			g.companions = null;
 			// Enums first, so the classes that refer to one see whether it was left out.
 			for (e in hxEnums) {
 				var mt = TEnumDecl(e);

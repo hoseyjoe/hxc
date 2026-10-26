@@ -251,7 +251,11 @@ losing writes that gencs keeps.
 - **The `Array` indexer is missing.** `Array`'s companion has an `object this[int]` indexer that comes
   from hxcs's `@:classCode`, which is milestone 4. Until then element access on an `Array<Dynamic>`
   goes through `Runtime.callField` `"__get"`/`"__set"`, as hxc already does for `Dynamic` arrays, and
-  `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`.
+  `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`. So an element write through
+  an `Array<Dynamic>` that holds a typed array converts the value as the same write on a `Dynamic`
+  does (`__set`, then `genericCast`): `a[1] = 3.7` stores 4 in an `Array<Int>`, and `a[1] = "q"`
+  throws `FormatException`. gencs's indexer casts with `(T)value` and throws `InvalidCastException`
+  for both.
 
 *Parent casts.* gencs's `P_cast<…>() { return this.X_cast<own params>(); }` always returns `this`.
 `FallbackPromise<T> implements Thenable<T>` shows it. Given a `FallbackPromise<Dynamic>` in a
@@ -342,7 +346,10 @@ hxcs, with gencs's output kept for contrast:
      to `object[]`, which fails for an `int[]`);
    - an `Array<Int>` passed as `Array<Any>` (a C# compile error in gencs).
 4. **`Array`'s `object this[int]` indexer is missing** until milestone 4, so `get_Item` and
-   `set_Item` are absent from `getInstanceFields(Array)`.
+   `set_Item` are absent from `getInstanceFields(Array)`. An element write through a companion-typed
+   `Array` (`a[i] = v` on an `Array<Dynamic>` holding an `Array<Int>`) converts `v` as a `Dynamic`
+   receiver's write does, where gencs's indexer throws `InvalidCastException` (case
+   `cast-array-view`).
 
 *Reproduced hxcs bugs.* These stay, because data depends on them: the map and `List` copy that shares
 `hashes`/`_keys` and gives the original a `k => null`; `getResponseHeaderValues` throwing a

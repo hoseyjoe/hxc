@@ -10909,6 +10909,8 @@ class P {
 --- cast-array-view @gencs
 // A typed Array<X> passed as Array<Dynamic>: gencs passes the same object (Array<Dynamic> is the companion
 // interface), so writes reach the caller's array and a wrong-typed write throws from genericCast. @gencs.
+// An element write `a[i] = v` through the Array<Dynamic> converts v as the same write on a Dynamic does
+// (callField "__set"), where gencs's companion indexer casts and throws: the spec's recorded divergence 4.
 class P {
 	static var sDyn:Array<Dynamic>;
 
@@ -10944,6 +10946,8 @@ class P {
 		run("cast Str->Dyn push int", () -> { var ids = ["a", "b"]; var params:Array<Dynamic> = cast ids.copy(); params.push(5); Std.string(params); });
 		run("Dynamic write wrong", () -> { var ai = [1, 2]; var d:Dynamic = ai; d[0] = 2.5; d.push("7"); Std.string(ai); });
 		run("Box<Int> as Box<Dynamic>", () -> { var b = new Box<Int>(1); var t:Box<Dynamic> = b; t.v = 2.5; b.v; });
+		run("index write float into int", () -> { var ai = [1, 2]; var a:Array<Dynamic> = ai; a[1] = 3.7; Std.string(ai); });
+		run("index write string into int", () -> { var ai = [1, 2]; var a:Array<Dynamic> = ai; a[1] = "q"; Std.string(ai); });
 	}
 }
 
@@ -10965,6 +10969,21 @@ push 1.5 and '7' into int: [1,2,7]
 cast Str->Dyn push int: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
 Dynamic write wrong: [2,2,7]
 Box<Int> as Box<Dynamic>: 2
+index write float into int: [1,4]
+index write string into int: EXC System.FormatException: The input string 'q' was not in a correct format.
+[gencs]
+arg: [42,2,3,99]
+arg wrong type: EXC System.FormatException: The input string 's' was not in a correct format.
+local: [1,2,3,4] true TClass(Array`1[System.Int32])
+return: [1,2,3,4]
+static: [1,2,3,4]
+closure: [42,2,99]
+push 1.5 and '7' into int: [1,2,7]
+cast Str->Dyn push int: EXC System.InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.String'.
+Dynamic write wrong: [2,2,7]
+Box<Int> as Box<Dynamic>: 2
+index write float into int: EXC System.InvalidCastException: Unable to cast object of type 'System.Double' to type 'System.Int32'.
+index write string into int: EXC System.InvalidCastException: Unable to cast object of type 'System.String' to type 'System.Int32'.
 
 # Types notes §8.11 (probe enumargs): enum constructor arguments of generic class types.
 --- generic-enum-arguments @gencs
@@ -11059,8 +11078,8 @@ map dynamic: [1,x]
 filter dynamic: [1,x]
 sources: [1,2,3] [a,b] [1,x]
 
---- dynamic-argument-subclass-super
 # `super` in a subclass of Base<Dynamic> is the class, not the companion: its calls stay direct.
+--- dynamic-argument-subclass-super
 class Base<T> {
 	public function new() {}
 	public function f():Array<T> return [];
@@ -11083,3 +11102,24 @@ class P {
 ===
 [run]
 [1,2] 2 4 5 [1,2]
+
+# A generic class without a companion interface (here @:nativeGen) keeps X<object>, so an enum argument
+# of it that mentions the enum's type parameter is refused.
+--- enum-argument-without-companion-is-an-error
+@:nativeGen class N<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+}
+enum En<T> {
+	A(n:N<T>);
+}
+class P {
+	static function main() {
+		var e = A(new N(1));
+		Sys.println(e);
+	}
+}
+===
+[compile]
+P.hx:6: characters 2-12 : dotnet: enum arguments of generic classes without a companion interface are not supported yet
+P.hx:10: characters 11-22 : dotnet: En (left out: enum arguments of generic classes without a companion interface) is not supported yet

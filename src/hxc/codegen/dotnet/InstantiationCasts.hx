@@ -16,8 +16,8 @@ import hxc.codegen.dotnet.IlData;
 // which gives the object itself when its type arguments are the ones asked for, and otherwise copies it
 // into a new instantiation (CompanionToIl's X_cast). An interface's helper is on its `X__Statics_`
 // class. A class that is not hxgeneric keeps its type arguments and gets C#'s cast. A value typed as the
-// companion (an X<Dynamic>) is cast the same way; nothing casts a value to the companion, which every
-// instantiation implements.
+// companion (an X<Dynamic>) is cast the same way. A value going to the companion, which every
+// instantiation implements, gets no __hx_cast: a typed one needs nothing, anything else a castclass.
 class InstantiationCasts {
 	// The reference `from` on the stack as `to`, an instantiation of a generic Haxe class: nothing when
 	// the erased instantiations are equal; otherwise castclass to the companion, the helper with `to`'s
