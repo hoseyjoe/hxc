@@ -418,9 +418,12 @@ class TexprOps {
 	// t7probe/teq).
 	function equalityTypeOperand(e:TExpr):Null<TypeOperand> {
 		var k = typeOperand(e);
-		if (k == null && !tl.inRuntimeClass() && TypeFunctions.follow(e.type).match(TInst(_, []))
-			&& IlPaths.sigEq(tl.sig(e.type), TexprCalls.systemType))
-			return OValue;
+		if (k == null && !tl.inRuntimeClass()) switch (TypeFunctions.follow(e.type)) {
+			// Only an extern can be System.Type, so no Haxe class operand gets a sig (and a checkKept) here.
+			case TInst(c, []) if (TypeFunctions.hasClassFlag(c, CExtern) && IlPaths.sigEq(tl.sig(e.type), TexprCalls.systemType)):
+				return OValue;
+			case _:
+		}
 		return k;
 	}
 

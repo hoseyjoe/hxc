@@ -173,7 +173,8 @@ abstracts over these, and .NET value types and enums. It erases every other argu
 classes, interfaces, Haxe enums, anonymous structures, function types, `Any`, `Null<X>` of anything
 but `String`, and every generic instantiation. `Array<C>`, `Array<Null<Int>>`, `Array<Array<Int>>`,
 `Map<String,C>` and `List<C>` are all ``…`1<object>``, at every nesting level. An argument that is
-`Dynamic` (also through a typedef or `Null<>`) makes the static type the **companion interface** of
+`Dynamic` (also through a typedef or `Null<>`), or an unbound monomorph (gencs's `has_tdyn`), makes the
+static type the **companion interface** of
 the class (`global::Array`, `global::haxe.ds.StringMap`), and the `new` builds the ``<object>``
 instantiation. `Type.resolveClass("G")` and a class constant `G` give ``typeof(G`1<object>)``, found
 through the interface's `GenericInterface` attribute.
@@ -230,6 +231,9 @@ losing writes that gencs keeps.
   non-Haxe-generic generic type over its type parameters (`var l:List_1<T>`) is a "native generic",
   like `@:nativeGen`: it keeps its real type arguments, has no companion and no casts, and
   `Type.resolveClass` gives `null` for it. hxc runs gencs's scan for this.
+  An unbound monomorph argument counts as `Dynamic`, as gencs's `has_tdyn` has it, which reflection
+  sees in field and signature types: a field `var arr = []` is of type `Array`, the companion, and
+  `Std.downcast(d, Box)` is `d as global::Box`.
 - **Companion interfaces.** Each generic Haxe class and interface `pack.X<T…>` gets a non-generic
   interface `pack.X` (no arity), carrying `haxe.lang.GenericInterface(typeof(X<object…>))` and the
   base interfaces `haxe.lang.IHxObject` and `haxe.lang.IGenericObject`. It declares `X_cast<T_c>()`,

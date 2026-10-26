@@ -106,6 +106,7 @@ class TexprFlow {
 		var st = tl.unNull(own);
 		var isString = st.match(LString);
 		// A Class or Enum value against types compares as `==` on them does (TexprOps.typeEquality).
+		// isTypeCase needs no System.Type operand (equalityTypeOperand): a pattern constant cannot be a System.Type value.
 		var isType = ext == null && IlPaths.sigEq(st, TexprCalls.systemType) && Lambda.foreach(cases, c -> Lambda.foreach(c.values, TexprOps.isTypeCase));
 		// A Float compares as C#'s == does (gencs's SwitchToIf): NaN matches nothing, -0.0 matches 0.
 		// A Dynamic compares with Runtime.eq, as gencs's `if (Runtime.eq(__temp_switch1, "clear"))`.
