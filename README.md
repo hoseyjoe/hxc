@@ -176,9 +176,9 @@ beyond calling referenced assemblies (properties of .NET interfaces, generic .NE
 `Nullable<T>`, delegates, indexers, types that a `--net-lib` assembly's own references define).
 `Array` has no `object this[int]` indexer yet (hxcs adds it with `@:classCode`), so C# code cannot index
 an `Array` and `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`.
-`-resource` files are not embedded yet, so `haxe.Resource.getString` and `getBytes` return `null`
-and `listNames` throws. The next step for the .NET generator is .NET interop, which also brings
-these. Until then, standard-library code that needs them compiles to stubs: `Thread.create`,
+`-resource` is not supported yet: with `-D dotnet` it is a compile error, since `haxe.Resource`
+would find nothing. The next step for the .NET generator is .NET interop, which also brings these.
+Until then, standard-library code that needs them compiles to stubs: `Thread.create`,
 `EReg.matched`, `Socket.select` and `Socket.setTimeout`, `Sys.command` and `sys.io.Process` among
 them.
 

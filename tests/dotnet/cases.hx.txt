@@ -57,6 +57,18 @@ class P {
 ===
 [compile]
 dotnet: -D dotnet-version must be a whole number, 10 or later, like 11 (not net11.0)
+# -resource is not embedded yet (manifest resources are milestone 4), so it is one error, without a
+# position since it comes from the command line, collected with the build's other errors.
+--- resource-is-an-error + --resource P.hx@first --resource P.hx@second
+class P {
+	static function main() {
+		untyped __cs__("x");
+	}
+}
+===
+[compile]
+dotnet: -resource is not supported with -D dotnet until milestone 4
+P.hx:3: characters 11-22 : dotnet: untyped code is not supported yet
 --- hello @gencs @stress-fieldlookup
 class P {
 	static function main() {
@@ -13401,8 +13413,9 @@ printer pretty <r k="v">
 # .NET indexer (milestone 4), so http-response-parsing waits in m4.cases.txt. This calls readHttpResponse,
 # customRequest's own step once the request is written, with its error handling. getResponseHeaderValues
 # throws NullReferenceException in gencs when no header repeated (responseHeadersSameKey is null), a gencs
-# bug the spec reproduces (Decision 5); the eof run pins it. The header names are sorted with a comparator that returns 0 for equal strings: with
-# `a < b ? -1 : 1`, hxcs's quicksort gave an order that followed the StringMap's per-process key order.
+# bug the spec reproduces (Decision 5); the eof run pins it. The header names are sorted with a comparator
+# that returns 0 for equal strings: with `a < b ? -1 : 1`, hxcs's quicksort gave an order that followed the
+# StringMap's per-process key order.
 --- http-response-reading @gencs
 import haxe.io.Bytes;
 import haxe.io.BytesInput;

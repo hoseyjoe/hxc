@@ -411,6 +411,10 @@ class GenerateDotnet {
 			else
 				version = v;
 		}
+		// -resource files would be manifest resources, which come with milestone 4; until then haxe.Resource
+		// would find none, so it is an error rather than ignored. It comes from the command line: no position.
+		if (ctx.resources.keys().hasNext())
+			g.error("-resource is not supported with -D dotnet until milestone 4", Position.nullPos);
 		var identities = new Map<String, ModuleBuilder.AssemblyIdentity>();
 		mb.externScope = function(path:IlPath) {
 			for (lib in ctx.netLibs) if (lib.definesType(path)) {

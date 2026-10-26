@@ -487,7 +487,17 @@ and `List` copy, and two threads casting one array at once.
    indexer until milestone 4).
 4. **Interop.** `@:nativeGen`, attributes, properties, nullability, delegates/events, overloads,
    generics that cross into referenced assemblies, the inline-C# subset, `Array`'s companion
-   indexer (hxcs's `@:classCode`), manifest resources.
+   indexer (hxcs's `@:classCode`), manifest resources (`-resource` is a compile error until then).
+   - The first measurement step re-measures the server app classes that milestone 3 leaves out,
+     once the IChatHandler (properties of .NET interfaces) and `ToolPlugin.ToolFunction` (a type from
+     a `--net-lib` assembly's own references) causes are fixed. A class whose declaration fails gets
+     no plan, so its method bodies were never lowered in 3b or 3c, and 3c-type refusals there
+     (casts, companions, the `Array` forward, generic reflection) are unmeasured: `CSServer` and the
+     `ai.*` chain, 24 classes and about 13.9k lines (task 12's report has the list).
+   - An extern method whose declared signature does not match its IL signature by
+     `ExternMembers.method`'s match is refused: haxeui-cs's `UIImage.DeviceScale(Visual)`, whose
+     converted `Avalonia.Visual` parameter does not match the metadata's (the desktop app's probe), and
+     `InputElement.Focus()` called without its optional arguments.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
