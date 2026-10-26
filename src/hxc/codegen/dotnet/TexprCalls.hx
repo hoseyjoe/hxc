@@ -498,9 +498,9 @@ class TexprCalls {
 				// A method a class's companion interface declares (TexprDynamic.companionMember): the interface's.
 				companionCall(ret, obj, tl.dyn.companionMember(c, cf), args, callee.type);
 			case TField(obj, FInstance(c, params, cf)):
-				var m = haxeMethod(c, params, cf, args, callee.type);
 				// super.m() calls the base class's method itself.
 				var isSuper = strip(obj).expr.match(TConst(TSuper));
+				var m = haxeMethod(c, params, cf, args, callee.type, !isSuper);
 				// A static constructor has no `this` to call the base method on non-virtually (gencs's C#,
 				// `base.m()` in a static method, does not compile either).
 				if (isSuper && tl.splitCtor) throw new Unsupported("super.method() calls in constructors", true);
@@ -925,10 +925,17 @@ class TexprCalls {
 		}
 	}
 
-	// A Haxe class's instance method, the overload the call reaches.
-	function haxeMethod(c:TClass, params:TParams, cf:TClassField, args:Array<TExpr>, calleeType:T):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm, owner:IlSigNorm} {
+	// A Haxe class's instance method, the overload the call reaches. A virtual call of an @:overload override
+	// that erasure gave a bridge reaches, as gencs's does, the overload it overrides, whose slot the bridge takes.
+	function haxeMethod(c:TClass, params:TParams, cf:TClassField, args:Array<TExpr>, calleeType:T,
+			isVirtual = false):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm, owner:IlSigNorm} {
 		g.types.checkKept(TClassDecl(c));
 		var target = pickOverload(c, params, cf, args, false);
+		var declaring = g.ownerOf.get(target);
+		if (isVirtual && declaring != null && declaring.c != null) {
+			var o = TclassToIl.overriddenOverload(g, declaring.c, target);
+			if (o != null) target = o;
+		}
 		var plan = g.ownerOf.get(target);
 		if (plan == null || !g.methodTokens.exists(target)) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
 		var hxArgs = tl.ownerArgs(c, params, plan);

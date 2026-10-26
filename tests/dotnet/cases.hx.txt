@@ -9282,24 +9282,48 @@ class P {
 	}
 }
 ===
---- erased-interface-implementation-refusal
-// A class implementing a generic interface whose type arguments erasure changes (IQ<C> is IQ`1<object>)
-// needs gencs's overloads of the interface's signature, plan 3c; until then it is refused, never left
-// to fail when the CLR loads the type.
-class C { public var n = 1; public function new() {} }
-interface IQ<T> { function g(x:T):Void; function h():T; }
-class Q implements IQ<C> { public function new() {} public function g(x:C):Void Sys.println(x.n); public function h():C return new C(); }
+--- erased-signature-refusals
+// Shapes left refused. A generic interface's Null<T> instantiated with String is a haxe.lang.Null<string>
+// in its CLR signature, which a String implementation cannot reach (gencs's C# fails with CS0535 and
+// CS0738). An override of an @:overload'ed method of G<C> that changes only the return type takes the
+// slot with C#'s covariant return in gencs, which hxc does not write.
+class C { public function new() {} }
+interface I<T> { function f(x:Null<T>):Int; }
+class CS implements I<String> {
+	public function new() {}
+	public function f(x:Null<String>):Int return x == null ? 0 : x.length;
+}
+interface J<T> { function g():Null<T>; }
+class CJ implements J<String> {
+	public function new() {}
+	public function g():Null<String> return "j";
+}
+class G<T> {
+	public function new() {}
+	@:overload public function g(x:Int):T return null;
+	@:overload public function g(x:String):String return "G.g(String)";
+}
+class S extends G<C> {
+	public function new() super();
+	@:overload override public function g(x:Int):C return new C();
+}
 class P {
 	static function main() {
-		var q:IQ<C> = new Q();
-		q.g(new C());
-		Sys.println(q.h().n);
+		var i:I<String> = new CS();
+		Sys.println(i.f("abc"));
+		var j:J<String> = new CJ();
+		Sys.println(j.g());
+		Sys.println(new S().g(1));
 	}
 }
 ===
 [compile]
-P.hx:6: characters 1-138 : dotnet: implementations of generic interfaces whose type arguments are erased (IQ.g) are not supported yet
-P.hx:9: characters 17-24 : dotnet: Q (left out: implementations of generic interfaces whose type arguments are erased (IQ.g)) is not supported yet
+P.hx:7: lines 7-10 : dotnet: implementations of a generic interface's Null<T> with String (I.f) are not supported yet
+P.hx:12: lines 12-15 : dotnet: implementations of a generic interface's Null<T> with String (J.g) are not supported yet
+P.hx:23: characters 13-63 : dotnet: overrides of overloaded methods that change only the return type are not supported yet
+P.hx:27: characters 21-29 : dotnet: CS (left out: implementations of a generic interface's Null<T> with String (I.f)) is not supported yet
+P.hx:29: characters 21-29 : dotnet: CJ (left out: implementations of a generic interface's Null<T> with String (J.g)) is not supported yet
+P.hx:31: characters 15-27 : dotnet: S (left out: overrides of overloaded methods that change only the return type) is not supported yet
 --- inlined-alloc-storage @gencs
 // hxcs's inlined Array.alloc makes map's storage an object[] behind Array<object>, as gencs erases the
 // inlined method's type parameter there (`new Array<object>((object[]) new object[n])`), so other
@@ -9697,6 +9721,10 @@ class Fixed<T> implements I1<Int> {
 	public function new() {}
 	public function a():Int return 1;
 }
+class Nested<T> implements I1<Array<T>> {
+	public function new() {}
+	public function a():Array<T> return [];
+}
 class Partial<T> implements I2<String, T> {
 	public function new() {}
 	public function b(x:String):T return null;
@@ -9725,7 +9753,7 @@ class P {
 		Sys.println(Type.getInstanceFields(X));
 		Sys.println(Type.getInstanceFields(Y));
 		Sys.println(Type.getInstanceFields(Fin));
-		var all:Array<Dynamic> = [new Perm<Int, String>(), new Fixed<String>(), new Partial<Int>(), new Both<Int>(), new Derived<Int>(), new DerivedFixed(), new Derived2<Int, String>(), new ImplExt<Int>()];
+		var all:Array<Dynamic> = [new Perm<Int, String>(), new Fixed<String>(), new Nested<Int>(), new Partial<Int>(), new Both<Int>(), new Derived<Int>(), new DerivedFixed(), new Derived2<Int, String>(), new ImplExt<Int>()];
 		for (x in all) Sys.println(Type.getClassName(Type.getClass(x)) + ": " + Type.getInstanceFields(Type.getClass(x)));
 	}
 }
@@ -9736,6 +9764,7 @@ class P {
 [Fin_cast,I1_cast,a]
 Perm: [Perm_cast,I2_cast,b]
 Fixed: [Fixed_cast,I1_cast,a,t]
+Nested: [Nested_cast,I1_cast,a]
 Partial: [Partial_cast,I2_cast,b]
 Both: [Both_cast,I1_cast,I2_cast,a,b]
 Derived: [Derived_cast,I1_cast,Base_cast,a]
@@ -11874,3 +11903,337 @@ class P {
 [compile]
 P.hx:9: characters 15-35 : dotnet: Std.isOfType with a generic class that has no companion interface is not supported yet
 P.hx:10: characters 23-24 : dotnet: Std.isOfType with a generic class that has no companion interface is not supported yet
+# Types notes §8.10 (probe erasediface).
+--- erased-interface-overload @gencs
+// A class implementing a generic interface instantiated with an erased type argument.
+class C { public function new() {} public function toString() return "C"; }
+interface IQ<T> { function f(x:T):T; function g():Array<T>; }
+class Q implements IQ<C> {
+	public function new() {}
+	public function f(x:C):C return x;
+	public function g():Array<C> return [new C()];
+}
+class QI implements IQ<Int> {
+	public function new() {}
+	public function f(x:Int):Int return x + 1;
+	public function g():Array<Int> return [1];
+}
+class P {
+	static function main() {
+		var q:IQ<C> = new Q();
+		Sys.println(q.f(new C()));
+		Sys.println(q.g());
+		var qi:IQ<Int> = new QI();
+		Sys.println(qi.f(1));
+		Sys.println(Type.getInstanceFields(Q));
+		Sys.println(Type.getInstanceFields(QI));
+	}
+}
+===
+[run]
+C
+[C]
+2
+[IQ_cast,f,f,g]
+[IQ_cast,f,g]
+# Std notes L7, B7. The method list is sorted with a comparator that returns 0 for equal strings; the
+# researcher's `a < b ? -1 : 1` made hxcs's quicksort leave the list in an order that depends on its input
+# (GetMethods order), so its QDyn list was unsorted.
+--- explicit-impl-erased-generic-interface @gencs
+class Pt { public var x:Int = 0; public function new() {} public function toString() return "Pt"; }
+interface IQ<T> { function get(i:Int):T; function put(v:T):Void; var last(default, null):T; }
+class QPt implements IQ<Pt> {
+	public var last(default, null):Pt;
+	public function new() {}
+	public function get(i:Int):Pt return last;
+	public function put(v:Pt):Void last = v;
+}
+class QInt implements IQ<Int> {
+	public var last(default, null):Int = 0;
+	public function new() {}
+	public function get(i:Int):Int return last + i;
+	public function put(v:Int):Void last = v;
+}
+class QArr implements IQ<Array<Int>> {
+	public var last(default, null):Array<Int>;
+	public function new() {}
+	public function get(i:Int):Array<Int> return last;
+	public function put(v:Array<Int>):Void last = v;
+}
+class QDyn implements IQ<Dynamic> {
+	public var last(default, null):Dynamic;
+	public function new() {}
+	public function get(i:Int):Dynamic return last;
+	public function put(v:Dynamic):Void last = v;
+}
+class P {
+	static function t(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + (Std.isOfType(e, String) ? "String " + e : Type.getClassName(Type.getClass(e))));
+	}
+	static function main() {
+		var q:IQ<Pt> = new QPt();
+		q.put(new Pt());
+		t("QPt get", () -> q.get(0));
+		var qi:IQ<Int> = new QInt();
+		qi.put(4);
+		t("QInt get", () -> qi.get(2));
+		var qa:IQ<Array<Int>> = new QArr();
+		qa.put([1]);
+		t("QArr get", () -> qa.get(0));
+		var qd:IQ<Dynamic> = new QDyn();
+		qd.put("d");
+		t("QDyn get", () -> qd.get(0));
+		for (c in ([QPt, QInt, QArr, QDyn] : Array<Class<Dynamic>>)) {
+			var cls:Class<Dynamic> = c;
+			t("fields " + Type.getClassName(cls), () -> {
+				var fl:cs.Flags<cs.system.reflection.BindingFlags> = new cs.Flags(cs.system.reflection.BindingFlags.Instance) | cs.system.reflection.BindingFlags.Public | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.DeclaredOnly;
+				var ms = [for (m in cs.Lib.toNativeType(cls).GetMethods(fl)) Std.string(m) + (m.IsPublic ? " public" : " nonpublic") ];
+				ms.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+				return "\n  " + ms.join("\n  ");
+			});
+		}
+		t("dyn call", () -> Reflect.callMethod(q, Reflect.field(q, "get"), [0]));
+		t("dyn field", () -> Reflect.field(q, "last"));
+	}
+}
+===
+[run]
+QPt get Pt
+QInt get 6
+QArr get [1]
+QDyn get d
+fields QPt
+  Pt get(Int32) public
+  System.Object IQ_cast[T_c]() public
+  System.Object __hx_getField(System.String, Int32, Boolean, Boolean, Boolean) public
+  System.Object __hx_invokeField(System.String, Int32, System.Object[]) public
+  System.Object __hx_setField(System.String, Int32, System.Object, Boolean) public
+  System.Object global::IQ<System.Object>.get(Int32) nonpublic
+  Void __hx_getFields(Array`1[System.String]) public
+  Void put(Pt) public
+  Void put(System.Object) public
+fields QInt
+  Double __hx_getField_f(System.String, Int32, Boolean, Boolean) public
+  Double __hx_setField_f(System.String, Int32, Double, Boolean) public
+  Int32 get(Int32) public
+  System.Object IQ_cast[T_c]() public
+  System.Object __hx_getField(System.String, Int32, Boolean, Boolean, Boolean) public
+  System.Object __hx_invokeField(System.String, Int32, System.Object[]) public
+  System.Object __hx_setField(System.String, Int32, System.Object, Boolean) public
+  Void __hx_getFields(Array`1[System.String]) public
+  Void put(Int32) public
+fields QArr
+  Array`1[System.Int32] get(Int32) public
+  System.Object IQ_cast[T_c]() public
+  System.Object __hx_getField(System.String, Int32, Boolean, Boolean, Boolean) public
+  System.Object __hx_invokeField(System.String, Int32, System.Object[]) public
+  System.Object __hx_setField(System.String, Int32, System.Object, Boolean) public
+  System.Object global::IQ<System.Object>.get(Int32) nonpublic
+  Void __hx_getFields(Array`1[System.String]) public
+  Void put(Array`1[System.Int32]) public
+  Void put(System.Object) public
+fields QDyn
+  Double __hx_getField_f(System.String, Int32, Boolean, Boolean) public
+  Double __hx_setField_f(System.String, Int32, Double, Boolean) public
+  System.Object IQ_cast[T_c]() public
+  System.Object __hx_getField(System.String, Int32, Boolean, Boolean, Boolean) public
+  System.Object __hx_invokeField(System.String, Int32, System.Object[]) public
+  System.Object __hx_setField(System.String, Int32, System.Object, Boolean) public
+  System.Object get(Int32) public
+  Void __hx_getFields(Array`1[System.String]) public
+  Void put(System.Object) public
+dyn call Pt
+dyn field Pt
+--- erased-interface-overload-shapes @gencs
+// gencs's overloads for erased generic interfaces (types notes §3): an overload of a method the class
+// declares comes in front of it, one of an inherited method or an explicit implementation in front of
+// the class's fields, after the static __hx_cast, the last made first; a final class's overload is
+// final; a class whose superclass already has the overload gets none, and an interface's own
+// interfaces get them too. A class re-implementing an interface its superclass implements lists its
+// *_cast members differently in hxc (filtered out here).
+class C { public function new() {} public function toString() return "C"; }
+interface IQ<T> { function f(x:T):T; function h(x:T, n:Int):Void; function get():T; }
+interface IQ2<T> extends IQ<T> { function k(x:T):Void; }
+interface IR<T> { function f(x:T):T; }
+class B {
+	public function new() {}
+	public function f(x:C):C return x;
+	public function h(x:C, n:Int):Void Sys.println("B.h " + n);
+	public function get():C return new C();
+}
+class Q2 extends B implements IQ<C> {
+	public function new() super();
+	public function own():Int return 1;
+}
+class GX<T> extends B implements IQ<C> {
+	public var t:T;
+	public function new() super();
+}
+class Q implements IQ<C> implements IR<C> {
+	public function new() {}
+	public function f(x:C):C { Sys.println("Q.f"); return x; }
+	public function h(x:C, n:Int):Void Sys.println("Q.h " + n);
+	public function get():C return new C();
+}
+class S extends Q implements IQ<C> {
+	public function new() super();
+	override public function f(x:C):C { Sys.println("S.f"); return x; }
+}
+final class F implements IQ<C> {
+	public function new() {}
+	public function f(x:C):C return x;
+	public function h(x:C, n:Int):Void Sys.println("F.h " + n);
+	public function get():C return new C();
+}
+class X<T> implements IQ2<C> {
+	public var t:T;
+	public function new() {}
+	public function f(x:C):C return x;
+	public function h(x:C, n:Int):Void Sys.println("X.h " + n);
+	public function get():C return new C();
+	public function k(x:C):Void Sys.println("X.k");
+}
+class P {
+	static function methods(c:Class<Dynamic>):String {
+		var fl:cs.Flags<cs.system.reflection.BindingFlags> = new cs.Flags(cs.system.reflection.BindingFlags.Instance) | cs.system.reflection.BindingFlags.Public | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.DeclaredOnly;
+		var ms = [
+			for (m in cs.Lib.toNativeType(c).GetMethods(fl))
+				if (!StringTools.startsWith(m.Name, "__hx_") && !StringTools.endsWith(m.Name, "_cast"))
+					Std.string(m) + (m.IsPublic ? " public" : " nonpublic") + (m.IsVirtual ? " virtual" : "") + (m.IsFinal ? " final" : "")
+		];
+		ms.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		return "\n  " + ms.join("\n  ");
+	}
+	static function main() {
+		var qs:Array<IQ<C>> = [new Q(), new S(), new F(), new X<Int>()];
+		for (q in qs) {
+			Sys.println(q.f(new C()));
+			q.h(new C(), 2);
+			Sys.println(q.get());
+		}
+		var x:IQ2<C> = new X<String>();
+		x.k(new C());
+		var r:IR<C> = new S();
+		Sys.println(r.f(new C()));
+		for (c in ([Q2, GX, Q, F, X] : Array<Class<Dynamic>>))
+			Sys.println(Type.getClassName(c) + " " + Type.getInstanceFields(c) + methods(c));
+		Sys.println("S " + [for (f in Type.getInstanceFields(S)) if (!StringTools.endsWith(f, "_cast")) f] + methods(S));
+	}
+}
+===
+# gencs's C# for this overflows the stack (types notes §3: its overload calls itself), so its [run] is
+# hand-written.
+--- erased-interface-inherited-implementation
+// An erased interface's method implemented by an inherited method: gencs's overload `object f(object x)
+// { return this.f((C) x); }` calls itself, C# picking the overload of the most derived class, until the
+// stack overflows. hxc's calls the inherited method.
+class C { public function new() {} public function toString() return "C"; }
+interface IQ<T> { function f(x:T):T; function h(x:T, n:Int):Void; }
+class B {
+	public function new() {}
+	public function f(x:C):C return x;
+	public function h(x:C, n:Int):Void Sys.println("B.h " + n);
+}
+class Q2 extends B implements IQ<C> {
+	public function new() super();
+}
+class GX<T> extends B implements IQ<C> {
+	public function new() super();
+}
+class O extends Q2 {
+	public function new() super();
+	override public function f(x:C):C { Sys.println("O.f"); return x; }
+}
+class P {
+	static function main() {
+		var qs:Array<IQ<C>> = [new Q2(), new GX<Int>(), new O()];
+		for (q in qs) {
+			Sys.println(q.f(new C()));
+			q.h(new C(), 1);
+		}
+	}
+}
+===
+[run]
+C
+B.h 1
+C
+B.h 1
+O.f
+C
+B.h 1
+--- overloaded-override-erased-signature @gencs
+// An @:overload'ed method of a generic superclass overridden through an erased type argument (S extends
+// G<C> overriding f(x:C), whose slot is G`1<object>'s f(object)): as gencs's FixOverrides writes it, an
+// override with the slot's signature calls the method, which becomes a new virtual overload. gencs does
+// the same for a further @:overload override (T's) and calls each through the overload's slot, so a T
+// held as an S runs T's method.
+class C { public function new() {} public function toString() return "C"; }
+class G<T> {
+	public function new() {}
+	@:overload public function f(x:T):String return "G.f(T)";
+	@:overload public function f(x:Int, y:Int):String return "G.f(Int,Int)";
+}
+class S extends G<C> {
+	public function new() super();
+	@:overload override public function f(x:C):String return "S.f(C) " + x;
+}
+class T extends S {
+	public function new() super();
+	@:overload override public function f(x:C):String return "T.f(C) " + x;
+}
+class P {
+	static function main() {
+		var s = new S();
+		Sys.println(s.f(new C()));
+		Sys.println(s.f(1, 2));
+		var g:G<C> = s;
+		Sys.println(g.f(new C()));
+		var t:G<C> = new T();
+		Sys.println(t.f(new C()));
+		var st:S = new T();
+		Sys.println(st.f(new C()));
+		var d:Dynamic = s;
+		Sys.println(d.f(new C()));
+		Sys.println(Type.getInstanceFields(S));
+		Sys.println(Type.getInstanceFields(T));
+		var fl:cs.Flags<cs.system.reflection.BindingFlags> = new cs.Flags(cs.system.reflection.BindingFlags.Instance) | cs.system.reflection.BindingFlags.Public | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.DeclaredOnly;
+		for (c in ([S, T] : Array<Class<Dynamic>>)) {
+			var ms = [
+				for (m in cs.Lib.toNativeType(c).GetMethods(fl))
+					if (!StringTools.startsWith(m.Name, "__hx_")) Std.string(m) + (m.IsPublic ? " public" : " nonpublic") + (m.IsVirtual ? " virtual" : "")
+						+ (Std.string(m.Attributes).indexOf("VtableLayoutMask") >= 0 ? " newslot" : "")
+			];
+			ms.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+			Sys.println(Type.getClassName(c) + "\n  " + ms.join("\n  "));
+		}
+	}
+}
+===
+# Q.get's Haxe signature is Array's companion, I`1<object>.get's is Array`1<object>: an explicit
+# implementation casts it. gencs's C# for it fails with CS0738, so the case is not @gencs and its [run] is
+# hand-written.
+--- erased-interface-dynamic-argument
+interface I<T> {
+	function get():Array<T>;
+	function one():T;
+}
+class Q implements I<Dynamic> {
+	public function new() {}
+	public function get():Array<Dynamic> return [1, "a"];
+	public function one():Dynamic return 5;
+}
+class P {
+	static function main() {
+		var q = new Q();
+		var i:I<Dynamic> = q;
+		Sys.println(i.get());
+		Sys.println(i.one());
+		Sys.println(q.get());
+	}
+}
+===
+[run]
+[1,a]
+5
+[1,a]

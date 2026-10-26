@@ -116,17 +116,29 @@ typedef ClassPlan = {
 private typedef ImplementedInterface = {c:TClass, params:Array<T>, sig:IlSigNorm};
 
 // An interface method `im` of `iface` that the method `target` of `owner` (the class or a superclass,
-// with type arguments `ownerParams` in terms of the class's type parameters) implements with the same
-// parameter types and another return type. As gencs's FixOverrides writes it, the class gets an
-// explicit implementation `global::<interface>.<name>` with the interface's signature `want`, which
-// calls the method and casts its result.
+// with type arguments `ownerParams` in terms of the class's type parameters) implements with other
+// types. As gencs's FixOverrides writes it, the class gets a method with the interface's signature
+// `want`, which casts the arguments, calls the method and casts its result: for the same parameter types
+// and another return type an explicit implementation `global::<interface>.<name>` (`explicit`); for other
+// parameter types, which only an interface whose type arguments erasure changes has (`IQ<C>` is
+// ``IQ`1<object>``), a public overload of the method's name.
 typedef InterfaceBridge = {
 	iface:ImplementedInterface,
 	im:TClassField,
 	want:{args:Array<IlSigNorm>, ret:IlSigNorm},
 	target:TClassField,
 	owner:TClass,
-	ownerParams:Array<T>
+	ownerParams:Array<T>,
+	explicit:Bool
+};
+
+// The class's own methods that implement an interface method (`own`); the bridges gencs adds in front of
+// the class's fields, last made first (`bridges`); and the overloads it adds as the overloads of a method
+// of the class itself, written in front of it (`overloads`).
+private typedef InterfaceImpls = {
+	own:ObjectMap<TClassField, Bool>,
+	bridges:Array<InterfaceBridge>,
+	overloads:ObjectMap<TClassField, Array<InterfaceBridge>>
 };
 
 class TypeAttrs {
@@ -288,6 +300,9 @@ class TclassToIl {
 				var generics = [for (p in f.params) p.name];
 				if (!shape.match(OSame) && TypeFunctions.hasClassFieldFlag(f, CfAbstract))
 					throw new Unsupported("abstract overrides that change the signature", true);
+				// The overloads an erased interface needs of the method, which gencs writes in front of it.
+				var made = impls == null ? null : impls.overloads.get(f);
+				if (made != null) for (b in made) methods.push(bridgeMethod(g, c, b));
 				switch (shape) {
 					case OSame:
 						methods.push({
@@ -398,12 +413,14 @@ class TclassToIl {
 			checkParameterlessBase(g, c);
 			methods.push(implicitCtor(c.pos, TypeFunctions.hasClassFlag(c, CAbstract)));
 		}
-		for (m in CompanionToIl.castMethods(g, c)) methods.push(m);
-		// gencs adds each bridge in front of the class's fields, so the last one made comes first.
-		if (impls != null) for (b in impls.bridges) {
-			if (isStruct) throw new Unsupported("interface methods implemented with other types", true);
-			methods.push(bridgeMethod(g, c, b));
-		}
+		if (isStruct && impls != null && (impls.bridges.length > 0 || impls.overloads.keys().hasNext()))
+			throw new Unsupported("interface methods implemented with other types", true);
+		// gencs adds each bridge in front of the class's fields, so the last one made comes first, after
+		// the static __hx_cast and before the cast methods.
+		var casts = CompanionToIl.castMethods(g, c);
+		for (m in casts) if (!m.hasThis) methods.push(m);
+		if (impls != null) for (b in impls.bridges) methods.push(bridgeMethod(g, c, b));
+		for (m in casts) if (m.hasThis) methods.push(m);
 		for (cf in c.orderedFields) addMethod(cf, false, false);
 		for (r in ReflectionMembers.members(g, c)) methods.push(ReflectionMembers.plan(g, c, r));
 		var toString = isInterface ? null : c.fields.get("toString");
@@ -530,13 +547,14 @@ class TclassToIl {
 			|| cf.kind.match(Method(MethInline));
 	}
 
-	// The class's own methods that implement an interface method, and the bridges for interface methods
-	// it implements with other types, in the order gencs adds them to the class (last made first). The
-	// CLR matches an implementation by name and exact signature, so an interface method without one it
-	// would match throws.
-	static function interfaceImpls(g:DotnetCtx, c:TClass, interfaces:Array<ImplementedInterface>):{own:ObjectMap<TClassField, Bool>, bridges:Array<InterfaceBridge>} {
+	// The class's own methods that implement an interface method, and the bridges and overloads for
+	// interface methods it implements with other types (InterfaceImpls). The CLR matches an
+	// implementation by name and exact signature, so an interface method without one it would match throws.
+	static function interfaceImpls(g:DotnetCtx, c:TClass, interfaces:Array<ImplementedInterface>):InterfaceImpls {
 		var own = new ObjectMap<TClassField, Bool>();
 		var bridges:Array<InterfaceBridge> = [];
+		var overloads = new ObjectMap<TClassField, Array<InterfaceBridge>>();
+		var made:Array<InterfaceBridge> = [];
 		var ihx = g.runtimeClass("cs.internal.IHxObject");
 		for (i in interfaces) {
 			// The reflection members, which the class or HxObject has, implement IHxObject.
@@ -557,6 +575,8 @@ class TclassToIl {
 				}
 				for (f in [im].concat(im.overloads)) {
 					var name:String, want:{args:Array<IlSigNorm>, ret:IlSigNorm};
+					// Whether erasure makes the interface's CLR signature differ from its Haxe types applied.
+					var erased = false;
 					if (isExternInterface) {
 						var m = g.externs.method(i.c, f);
 						if (m.genericCount > 0) throw new Unsupported("generic .NET interface methods", true);
@@ -572,23 +592,76 @@ class TclassToIl {
 					} else {
 						name = DotnetNames.fieldName(i.c, f.name);
 						want = methodSig(g, i.c, i.params, f);
-						// gencs implements an interface whose type arguments erasure changes (`IQ<C>` is
-						// ``IQ`1<object>``) with overloads of the interface's signature, plan 3c.
-						if (!sameSig(want, haxeMethodSig(g, i.c, i.params, f)))
-							throw new Unsupported("implementations of generic interfaces whose type arguments are erased (" + DotnetTypes.haxePath(TClassDecl(i.c))
-								+ "." + f.name + ")", true);
+						erased = !sameSig(want, haxeMethodSig(g, i.c, i.params, f));
 					}
 					var other = findImplementation(g, c, f.name, name, want, own);
 					if (other == null) continue;
 					if (isExternInterface || f.params.length > 0 || other.cf.params.length > 0 || im.overloads.length > 0)
 						throw new Unsupported("interface methods implemented with other types", true);
-					var found = methodSig(g, other.owner, other.params, other.cf);
-					if (!IlPaths.sigsEq(found.args, want.args)) throw new Unsupported("interface methods implemented with other parameter types", true);
-					bridges.push({iface: i, im: f, want: want, target: other.cf, owner: other.owner, ownerParams: other.params});
+					var found = slotSig(g, other.owner, other.params, other.cf);
+					// A Null<T> the interface instantiates with String is a haxe.lang.Null<string> in its CLR
+					// signature, which no conversion reaches from a string (gencs's C# for it fails with CS0535).
+					var takes = want.args.concat([want.ret]), gives = found.args.concat([found.ret]);
+					for (k in 0...takes.length) if (g.types.isNullOf(takes[k]) && !IlPaths.sigEq(takes[k], gives[k]))
+						throw new Unsupported("implementations of a generic interface's Null<T> with String (" + DotnetTypes.haxePath(TClassDecl(i.c)) + "."
+							+ f.name + ")", true);
+					var explicit = IlPaths.sigsEq(found.args, want.args);
+					if (!explicit && !erased) throw new Unsupported("interface methods implemented with other parameter types", true);
+					var b = {iface: i, im: f, want: want, target: other.cf, owner: other.owner, ownerParams: other.params, explicit: explicit};
+					if (!explicit) {
+						// One overload of a name and signature, which a superclass may already have, as gencs adds
+						// none when the class has one.
+						if (hasOverload(made, name, want) || inheritsOverload(g, c, name, want)) continue;
+						made.push(b);
+						if (other.owner == c) {
+							// The last one made comes first.
+							var l = overloads.get(other.cf);
+							if (l == null) overloads.set(other.cf, l = []);
+							l.unshift(b);
+							continue;
+						}
+					}
+					bridges.push(b);
 				}
 			}
 		}
-		return {own: own, bridges: bridgeOrder(c, bridges)};
+		return {own: own, bridges: bridgeOrder(c, bridges), overloads: overloads};
+	}
+
+	// Whether `made` has an overload `name` whose signature, with the class type arguments `inst` put in
+	// when given, is `want`.
+	static function hasOverload(made:Array<InterfaceBridge>, name:String, want:{args:Array<IlSigNorm>, ret:IlSigNorm}, ?inst:Array<IlSigNorm>):Bool {
+		for (b in made) {
+			if (b.explicit || DotnetNames.fieldName(b.iface.c, b.im.name) != name) continue;
+			var w = inst == null ? b.want : {
+				args: [for (a in b.want.args) DotnetTypes.substitute(a, inst, [])],
+				ret: DotnetTypes.substitute(b.want.ret, inst, [])
+			};
+			if (sameSig(w, want)) return true;
+		}
+		return false;
+	}
+
+	// Whether a superclass of `c` has the overload `name` with the signature `want` (in terms of c's type
+	// parameters) that an erased interface it implements gave it.
+	static function inheritsOverload(g:DotnetCtx, c:TClass, name:String, want:{args:Array<IlSigNorm>, ret:IlSigNorm}):Bool {
+		var s = c.superClass;
+		if (s == null) return false;
+		var params = s.params;
+		while (true) {
+			var sc = s.c;
+			if (TypeFunctions.hasClassFlag(sc, CExtern)) return false;
+			var impls = try g.types.withParams(sc.params, [], () -> interfaceImpls(g, sc, interfaceClosure(g, sc))) catch (_:Unsupported) null;
+			if (impls != null) {
+				var made = impls.bridges.copy();
+				for (l in impls.overloads) made = made.concat(l);
+				if (hasOverload(made, name, want, g.types.classArgs(sc, params))) return true;
+			}
+			var next = sc.superClass;
+			if (next == null) return false;
+			params = [for (t in next.params) TypeFunctions.applyParams(sc.params, params, t)];
+			s = {c: next.c, params: params};
+		}
 	}
 
 	// The bridges in the order gencs adds them in front of the class's fields: it goes through the
@@ -611,10 +684,14 @@ class TclassToIl {
 			case TFun(sig): [for (a in sig.args) a.name];
 			case _: throw "internal error: a method without a function type";
 		}
+		var name = DotnetNames.fieldName(b.iface.c, b.im.name);
+		// An overload is virtual, which in a final class C# makes final.
+		var flags = if (b.explicit) MethodAttrs.PRIVATE | MethodAttrs.FINAL;
+			else MethodAttrs.PUBLIC | (TypeFunctions.hasClassFlag(c, CFinal) ? MethodAttrs.FINAL : 0);
 		return {
 			kind: MInterfaceBridge(b),
-			name: "global::" + displayName(c, b.iface.sig) + "." + DotnetNames.fieldName(b.iface.c, b.im.name),
-			flags: MethodAttrs.PRIVATE | MethodAttrs.FINAL | MethodAttrs.VIRTUAL | MethodAttrs.HIDE_BY_SIG | MethodAttrs.NEW_SLOT,
+			name: b.explicit ? "global::" + displayName(c, b.iface.sig) + "." + name : name,
+			flags: flags | MethodAttrs.VIRTUAL | MethodAttrs.HIDE_BY_SIG | MethodAttrs.NEW_SLOT,
 			hasThis: true,
 			ret: b.want.ret,
 			args: b.want.args,
@@ -660,10 +737,13 @@ class TclassToIl {
 				if (TypeFunctions.hasClassFlag(cur, CExtern)) return null;
 				if (DotnetNames.fieldName(cur, cf.name) != name) throw other;
 				for (f in [cf].concat(cf.overloads)) {
-					if (!sameSig(methodSig(g, cur, params, f), want)) continue;
-					// An override that took its slot's signature (OInline) no longer has the one the interface wants.
-					if (!sameSig(slotSig(g, cur, params, f), want))
-						throw new Unsupported("interface methods implemented by overrides that change the signature", true, f.pos);
+					// An override that took its slot's signature (OInline) has that one, which the interface may want.
+					if (!sameSig(slotSig(g, cur, params, f), want)) {
+						// If not, it no longer has the one the interface wants.
+						if (sameSig(methodSig(g, cur, params, f), want))
+							throw new Unsupported("interface methods implemented by overrides that change the signature", true, f.pos);
+						continue;
+					}
 					if (cur == c) own.set(f, true);
 					else if (isFinalMethod(cur, f)) throw new Unsupported("interface methods implemented by a final inherited method", true);
 					return null;
@@ -716,6 +796,16 @@ class TclassToIl {
 		var params = [for (t in s.params) TypeFunctions.applyParams(owner.params, ownerArgs, t)];
 		while (true) {
 			var base = s.c.fields.get(cf.name);
+			if (base != null && base.overloads.length == 0) {
+				// An @:overload override of an overloaded method is matched, as gencs's FixOverrides does,
+				// with the overloads where they are declared.
+				var root = overloadedRoot(s.c, params, base);
+				if (root != null) {
+					s = root.s;
+					params = root.s.params;
+					base = root.cf;
+				}
+			}
 			if (base != null) {
 				if (TypeFunctions.hasClassFlag(s.c, CExtern)) {
 					if (s.c.params.length > 0 || owner.params.length > 0) throw new Unsupported("overriding methods of generic .NET classes", true);
@@ -730,6 +820,17 @@ class TclassToIl {
 				}
 				if (base.overloads.length > 0) {
 					for (f in [base].concat(base.overloads)) if (sameSig(methodSig(g, s.c, params, f), sig)) return OSame;
+					// The overload it overrides by Haxe types, whose CLR signature erasure changed (G<C>'s
+					// `f(x:T)` is ``G`1<object>``'s `f(object)`): gencs overrides that one with a bridge to the
+					// method, which becomes a new overload. With the same parameter types, C#'s covariant return
+					// would take the slot instead.
+					if (cf.params.length > 0) throw changed;
+					var own = haxeMethodSig(g, owner, ownerArgs, cf);
+					for (f in [base].concat(base.overloads)) if (f.params.length == 0 && sameSig(haxeMethodSig(g, s.c, params, f), own)) {
+						var slot = methodSig(g, s.c, params, f);
+						if (IlPaths.sigsEq(slot.args, sig.args)) throw new Unsupported("overrides of overloaded methods that change only the return type", true);
+						return OOverload(slot);
+					}
 					throw changed;
 				}
 				var slot = slotSig(g, s.c, params, base);
@@ -743,6 +844,45 @@ class TclassToIl {
 			params = [for (t in next.params) TypeFunctions.applyParams(s.c.params, params, t)];
 			s = {c: next.c, params: params};
 		}
+	}
+
+	// The overload of a superclass that a call of `c`'s @:overload override `cf` reaches when erasure changed
+	// the signature of the overload it overrides (OOverload): that overload, whose slot the override's
+	// bridge takes, as gencs's typer resolves the call to the overload where it is declared; else null.
+	public static function overriddenOverload(g:DotnetCtx, c:TClass, cf:TClassField):Null<TClassField> {
+		if (cf.params.length > 0 || cf.overloads.length > 0 || !TypeFunctions.hasClassFieldFlag(cf, CfOverride)
+			|| !TypeFunctions.hasClassFieldFlag(cf, CfOverload))
+			return null;
+		return g.types.withParams(c.params, [], function():Null<TClassField> {
+			var own = TypeFunctions.extractParamTypes(c.params);
+			var root = overloadedRoot(c, own, cf);
+			if (root == null) return null;
+			var hx = haxeMethodSig(g, c, own, cf);
+			for (f in [root.cf].concat(root.cf.overloads))
+				if (f.params.length == 0 && sameSig(haxeMethodSig(g, root.s.c, root.s.params, f), hx))
+					return sameSig(methodSig(g, root.s.c, root.s.params, f), methodSig(g, c, own, cf)) ? null : f;
+			return null;
+		});
+	}
+
+	// The field with overloads of a superclass of `c` (which has type arguments `params`, in terms of the
+	// class being planned) that `c`'s field `cf` overrides through @:overload overrides, with that class and
+	// its type arguments (`cf` itself when it has overloads); null when there is none.
+	static function overloadedRoot(c:TClass, params:Array<T>, cf:TClassField):Null<{s:TClassWithParams, cf:TClassField}> {
+		var cur = c, f = cf;
+		while (f.overloads.length == 0) {
+			if (!TypeFunctions.hasClassFieldFlag(f, CfOverride) || !TypeFunctions.hasClassFieldFlag(f, CfOverload)) return null;
+			var next:Null<TClassField> = null;
+			while (next == null) {
+				var s = cur.superClass;
+				if (s == null || TypeFunctions.hasClassFlag(s.c, CExtern)) return null;
+				params = [for (t in s.params) TypeFunctions.applyParams(cur.params, params, t)];
+				cur = s.c;
+				next = cur.fields.get(cf.name);
+			}
+			f = next;
+		}
+		return {s: {c: cur, params: params}, cf: f};
 	}
 
 	// The CLR signature of the method `cf` of `owner`, which an override of it takes: its own, or for an
@@ -1206,8 +1346,8 @@ class TclassToIl {
 		}
 	}
 
-	// An explicit interface implementation (InterfaceBridge): `return (<ret>) this.<method>(args)`, and
-	// the MethodImpl row that makes it the interface method's implementation.
+	// An interface bridge (InterfaceBridge): `return (<ret>) this.<method>((<arg>) args)`, and for an
+	// explicit implementation the MethodImpl row that makes it the interface method's implementation.
 	@:access(hxc.codegen.dotnet.TexprToIl)
 	static function interfaceBridgeBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, b:InterfaceBridge, code:IlCode, lower:TexprToIl):Void {
 		var target = g.methodPlans.get(b.target), ownerPlan = g.planOf.get(b.owner), im = g.methodPlans.get(b.im);
@@ -1231,6 +1371,8 @@ class TclassToIl {
 			lower.convert(ret, m.ret);
 			code.op(IlOps.RET, 1, 0);
 		}
+		// The CLR finds an overload by its name and signature.
+		if (!b.explicit) return;
 		// A method a generic interface's companion declares is no member of the interface's instantiation.
 		var imOwner = g.ownerOf.get(b.im);
 		var decl = if (b.iface.c.params.length == 0 || imOwner != null && imOwner.classParams.length == 0) im.token;

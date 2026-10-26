@@ -348,7 +348,13 @@ hxcs, with gencs's output kept for contrast:
    - closure calls with an array argument that needs a cast;
    - `map` and `filter` on a typed array held as `Array<Dynamic>` (gencs's inlined loops cast `__a`
      to `object[]`, which fails for an `int[]`);
-   - an `Array<Int>` passed as `Array<Any>` (a C# compile error in gencs).
+   - an `Array<Int>` passed as `Array<Any>` (a C# compile error in gencs);
+   - a method of an erased generic interface (`IQ<C>` is ``IQ`1<object>``) implemented by an
+     inherited method: gencs's overload `object f(object x) { return this.f((C) x); }` calls itself
+     until the stack overflows, hxc's calls the inherited method (case
+     `erased-interface-inherited-implementation`);
+   - `class Q implements I<Dynamic>` returning `Array<Dynamic>` for `I`'s `Array<T>` (a C# compile
+     error in gencs, CS0738; case `erased-interface-dynamic-argument`).
 4. **`Array`'s `object this[int]` indexer is missing** until milestone 4, so `get_Item` and
    `set_Item` are absent from `getInstanceFields(Array)`. An element write through a companion-typed
    `Array` (`a[i] = v` on an `Array<Dynamic>` holding an `Array<Int>`) converts `v` as a `Dynamic`
