@@ -470,6 +470,8 @@ class TclassToIl {
 			});
 		}
 
+		checkDistinctSignatures(methods);
+
 		var flags = TypeAttrs.PUBLIC;
 		if (isInterface) {
 			flags |= TypeAttrs.INTERFACE | TypeAttrs.ABSTRACT;
@@ -497,6 +499,28 @@ class TclassToIl {
 			emptyCtor: emptyCtor,
 			token: 0
 		};
+	}
+
+	// Two methods of one name, static-ness, generic arity and CLR signature are invalid metadata (ECMA-335
+	// II.22.26), and a call through Dynamic could reach either. Erasure gives two overloads one signature
+	// when their Haxe types differ only in type arguments: `f(a:Array<C>)` and `f(a:Array<D>)` are both
+	// ``f(Array`1<object>)``. gencs's C# for them fails with CS0111. Constructors count too.
+	static function checkDistinctSignatures(methods:Array<MethodPlan>):Void {
+		for (j in 1...methods.length) {
+			var b = methods[j];
+			for (i in 0...j) {
+				var a = methods[i];
+				if (a.name != b.name || a.hasThis != b.hasThis || a.generics.length != b.generics.length) continue;
+				if (!IlPaths.sigEq(a.ret, b.ret) || !IlPaths.sigsEq(a.args, b.args)) continue;
+				var name = switch (b.kind) {
+					case MField(cf): cf.name;
+					case _: b.name == ".ctor" ? "new" : b.name;
+				}
+				// At the later of the two in the source (constructors' overloads are planned last first).
+				var pos = a.pos != null && b.pos != null && a.pos.file == b.pos.file && a.pos.min > b.pos.min ? a.pos : b.pos;
+				throw new Unsupported("overloads that type-argument erasure makes identical (" + name + ")", true, pos);
+			}
+		}
 	}
 
 	// The interfaces the class lists and the ones they extend, as C# writes them all on the type. As

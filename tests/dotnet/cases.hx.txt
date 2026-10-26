@@ -2693,6 +2693,35 @@ type public beforefieldinit OvC extends Ov
   method family static hidebysig void __hx_ctor__OvC(OvC, string)
   method family static hidebysig void __hx_ctor__OvC(OvC, float64, float64)
   method family static hidebysig void __hx_ctor__OvC(OvC, int32)
+# Overloads whose Haxe types differ only in type arguments, which erasure makes one CLR signature
+# (``f(Array`1<object>)``): two such MethodDefs are invalid metadata, and a call through Dynamic could
+# reach either. gencs's C# for them fails with CS0111, so the class is refused, methods and
+# constructors alike.
+--- erased-identical-overloads-is-an-error
+class C { public function new() {} }
+class D { public function new() {} }
+class Q {
+	public function new() {}
+	@:overload public function f(a:Array<C>):String return "C";
+	@:overload public function f(a:Array<D>):String return "D";
+}
+class R {
+	@:overload public function new(a:Array<C>) {}
+	@:overload public function new(a:Array<D>) {}
+}
+class P {
+	static function main() {
+		var d:Dynamic = new Q();
+		Sys.println(d.f([new D()]));
+		new R([new C()]);
+	}
+}
+===
+[compile]
+P.hx:6: characters 13-60 : dotnet: overloads that type-argument erasure makes identical (f) are not supported yet
+P.hx:10: characters 13-47 : dotnet: overloads that type-argument erasure makes identical (new) are not supported yet
+P.hx:14: characters 19-26 : dotnet: Q (left out: overloads that type-argument erasure makes identical (f)) is not supported yet
+P.hx:16: characters 3-19 : dotnet: R (left out: overloads that type-argument erasure makes identical (new)) is not supported yet
 --- create-empty-instance-of-abstract-class-is-an-error
 abstract class Abs {
 	public function new() {}
