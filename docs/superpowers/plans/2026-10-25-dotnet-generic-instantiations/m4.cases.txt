@@ -220,3 +220,98 @@ round 17: 7 of 7 same as the first
 round 18: 7 of 7 same as the first
 round 19: 7 of 7 same as the first
 done
+
+# Set aside from plan 3c Task 11: sys.Http.customRequest parses its URL with EReg.matched (std notes A5,
+# M4), so the case throws NotSupportedException before it reads anything. http-response-reading covers
+# readHttpResponse and getResponseHeaderValues in 3c.
+# Std notes A6 (a fake socket, no network). getResponseHeaderValues is called only where a header
+# repeats; gencs's NullReferenceException otherwise is kept as a gencs bug and not exercised. The header
+# names are sorted with a comparator that returns 0 for equal strings: with the researcher's `a < b ? -1 : 1`,
+# hxcs's quicksort gave an order that followed the StringMap's per-process key order (seen in repeated runs).
+--- http-response-parsing @gencs
+import haxe.io.Bytes;
+import haxe.io.BytesInput;
+import haxe.io.BytesOutput;
+
+class Fake extends sys.net.Socket {
+	public var sent:BytesOutput = new BytesOutput();
+	public function new(response:String) {
+		super();
+		@:privateAccess this.input = new BytesInput(Bytes.ofString(response));
+		@:privateAccess this.output = sent;
+	}
+	override public function connect(host:sys.net.Host, port:Int):Void {}
+	override public function setTimeout(t:Float):Void {}
+	override public function shutdown(r:Bool, w:Bool):Void {}
+	override public function close():Void {}
+}
+
+class P {
+	static function run(name:String, response:String, ?post:Bool = false) {
+		var h = new sys.Http("http://127.0.0.1:8080/path?x=1");
+		h.addHeader("X-A", "1");
+		var out = new BytesOutput();
+		var status = -1;
+		h.onStatus = s -> status = s;
+		h.onError = e -> Sys.println(name + " error: " + e);
+		h.onData = d -> Sys.println(name + " data: " + StringTools.replace(d, "\n", "\n"));
+		var f = new Fake(response);
+		h.customRequest(post, out, f);
+		Sys.println(name + " status " + status);
+		if (h.responseHeaders == null) { Sys.println(name + " no headers"); return; }
+		var keys = [for (k in h.responseHeaders.keys()) k];
+		keys.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+		Sys.println(name + " headers " + keys.map(k -> k + "=" + h.responseHeaders.get(k)).join(";"));
+		if (name == "len") Sys.println(name + " multi " + h.getResponseHeaderValues("Set-Cookie"));
+		Sys.println(name + " body " + StringTools.replace(out.getBytes().toString(), "\n", "\n"));
+		Sys.println(name + " request " + StringTools.replace(StringTools.replace(f.sent.getBytes().toString(), "\r", "\r"), "\n", "\n"));
+	}
+	static function main() {
+		run("len", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-B: b\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n\r\nhello");
+		run("eof", "HTTP/1.1 200 OK\r\nX-C: c\r\n\r\nuntil end");
+		run("404", "HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\n\r\nno");
+		run("bad", "garbage\r\n\r\n");
+		run("post", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", true);
+	}
+}
+===
+[run]
+len status 200
+len headers Content-Length=5;Set-Cookie=b=2;X-B=b
+len multi [a=1,b=2]
+len body hello
+len request GET /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+
+eof status 200
+eof headers X-C=c
+eof body until end
+eof request GET /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+
+404 error: Http Error #404
+404 status 404
+404 headers Content-Length=2
+404 body no
+404 request GET /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1
+
+
+bad error: Response status error
+bad status -1
+bad no headers
+post status 200
+post headers Content-Length=0
+post body
+post request POST /path?x=1 HTTP/1.1
+Host: 127.0.0.1
+Connection: close
+X-A: 1

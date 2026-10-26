@@ -392,6 +392,12 @@ import cs.system.Object;
 	}
 
 	public static function callMethod(obj:Dynamic, methods:NativeArray<MethodBase>, methodLength:Int, args:cs.NativeArray<Dynamic>):Dynamic {
+		return callMethodCasting(obj, methods, methodLength, args, true);
+	}
+
+	// hxc: callMethod, which casts an argument that is another instantiation of a generic Haxe class only
+	// when `castInstances` is true; otherwise the call throws ArgumentException, as hxcs's does.
+	static function callMethodCasting(obj:Dynamic, methods:NativeArray<MethodBase>, methodLength:Int, args:cs.NativeArray<Dynamic>, castInstances:Bool):Dynamic {
 		if (methodLength == 0)
 			throw "No available methods";
 		var length = args.length;
@@ -476,7 +482,7 @@ import cs.system.Object;
 				} else if (!cs.Lib.getNativeType(arg).IsAssignableFrom(param)) {
 					oargs[i] = cast(arg, IConvertible).ToType(param, null);
 				}
-			} else if (arg != null && param.IsGenericType && !param.ContainsGenericParameters && Std.isOfType(arg, cs.internal.HxObject.IGenericObject) && !param.IsAssignableFrom(cs.Lib.getNativeType(arg))) {
+			} else if (castInstances && arg != null && param.IsGenericType && !param.ContainsGenericParameters && Std.isOfType(arg, cs.internal.HxObject.IGenericObject) && !param.IsAssignableFrom(cs.Lib.getNativeType(arg))) {
 				// hxc: another instantiation of a generic Haxe class goes through __hx_cast, as a typed call
 				// converts it; hxcs's reflection call throws ArgumentException (plan 3c, decision 4). A
 				// parameter with an open type parameter (a generic method's definition) has no instantiation.
@@ -568,6 +574,11 @@ import cs.system.Object;
 	#end
 
 	public static function slowCallField(obj:Dynamic, field:String, args:cs.NativeArray<Dynamic>):Dynamic {
+		return slowCallFieldCasting(obj, field, args, true);
+	}
+
+	// hxc: slowCallField, with callMethodCasting's `castInstances`.
+	static function slowCallFieldCasting(obj:Dynamic, field:String, args:cs.NativeArray<Dynamic>, castInstances:Bool):Dynamic {
 		if (field == "toString" && (args == null || args.length == 0)) {
 			return obj.ToString();
 		}
@@ -614,7 +625,7 @@ import cs.system.Object;
 			throw 'Method "$field" not found on type $t';
 		}
 
-		return Runtime.callMethod(obj, mis, last, args);
+		return Runtime.callMethodCasting(obj, mis, last, args, castInstances);
 	}
 
 	@:overload public static function callField(obj:Dynamic, field:String, fieldHash:Int, args:cs.NativeArray<Dynamic>):Dynamic {

@@ -194,7 +194,10 @@ enum ValueType {
 				throw 'Constructor $constr needs parameters';
 			return ret;
 		} else {
-			return cs.internal.Runtime.slowCallField(e, constr, cs.Lib.nativeArray(params, true));
+			// hxc: an argument of another instantiation of a generic Haxe class throws ArgumentException, as
+			// hxcs's reflection call does, which the Unserializer's enum constructor arguments of array or map
+			// type reproduce (plan 3c, decision 5); a closure call casts it (decision 4).
+			return @:privateAccess cs.internal.Runtime.slowCallFieldCasting(e, constr, cs.Lib.nativeArray(params, true), false);
 		}
 	}
 
