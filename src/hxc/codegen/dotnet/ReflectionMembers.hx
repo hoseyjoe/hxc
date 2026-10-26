@@ -166,11 +166,15 @@ class ReflectionMembers {
 	}
 
 	// invokeField's cases: the class's own methods, and in one case calling Runtime.slowCallField, the
-	// overriding ones and those of superclasses outside the model.
-	static function invokeCases(c:TClass):{own:Array<Entry>, old:Array<Entry>} {
+	// overriding ones and those of superclasses outside the model. An @:overload override that erasure
+	// made a new overload (TclassToIl.overriddenOverload) is the class's own, as gencs's FixOverrides
+	// leaves it.
+	static function invokeCases(g:DotnetCtx, c:TClass):{own:Array<Entry>, old:Array<Entry>} {
 		var own = [], old = [];
 		for (e in collect(c, CMethods)) {
-			if (!c.fields.exists(e.cf.name) || TypeFunctions.hasClassFieldFlag(e.cf, CfOverride)) old.push(e) else own.push(e);
+			var isOld = !c.fields.exists(e.cf.name)
+				|| TypeFunctions.hasClassFieldFlag(e.cf, CfOverride) && (e.owner != c || TclassToIl.overriddenOverload(g, c, e.cf) == null);
+			if (isOld) old.push(e) else own.push(e);
 		}
 		return {own: own, old: old};
 	}
@@ -198,7 +202,7 @@ class ReflectionMembers {
 			if (root || getCases(g, c, false).length > 0) r.push(RGetField);
 			if (root || getCases(g, c, true).length > 0) r.push(RGetField_f);
 		}
-		if (!declared("__hx_invokeField") && (root || invokeCases(c).own.length > 0)) r.push(RInvokeField);
+		if (!declared("__hx_invokeField") && (root || invokeCases(g, c).own.length > 0)) r.push(RInvokeField);
 		if (!declared("__hx_getFields") && (root || listed(c).length > 0)) r.push(RGetFields);
 		return r;
 	}
@@ -563,7 +567,7 @@ private class ReflectionEmitter {
 					}
 				});
 			case RInvokeField:
-				var ic = @:privateAccess ReflectionMembers.invokeCases(c);
+				var ic = @:privateAccess ReflectionMembers.invokeCases(g, c);
 				var cases = [];
 				if (ic.old.length > 0) cases.push({hashes: [for (e in ic.old) hashOf(e.cf)], body: slowCall});
 				for (e in ic.own) cases.push({hashes: [hashOf(e.cf)], body: invokeCase.bind(e)});
@@ -686,6 +690,11 @@ private class ReflectionEmitter {
 	// An own method: each argument from `dynargs` (an optional one null when `dynargs` is shorter),
 	// converted to the parameter's type, then the call; a Void method gives null.
 	function invokeCase(e:Entry):Void {
+		var overridden = TclassToIl.overriddenOverload(g, c, e.cf);
+		if (overridden != null) {
+			slotCase(overridden);
+			return;
+		}
 		var m = {cf: e.cf, owner: e.owner};
 		var args = [];
 		var types = argTypes(m);
@@ -717,6 +726,27 @@ private class ReflectionEmitter {
 			args.push(localExpr(tmp));
 		}
 		pushBoxed(call(m, args));
+		ret(1);
+	}
+
+	// An @:overload override that erasure made a new overload: as gencs writes its case,
+	// `(this as G<object>).f((object) dynargs[0], ...)`, a call of the overload `root` it overrides, each
+	// argument converted to that overload's CLR parameter type.
+	function slotCase(root:TClassField):Void {
+		var plan = g.ownerOf.get(root), target = g.methodPlans.get(root);
+		if (plan == null || plan.c == null || target == null) throw "internal error: no method " + root.name;
+		var inst = g.types.classArgs(plan.c, ownerArgs(plan.c));
+		var owner = DotnetCtx.instanceOf(plan, inst);
+		code.ldarg(0);
+		for (i in 0...target.args.length) {
+			code.ldarg(3);
+			code.ldcI4(i);
+			code.opToken(IlOps.LDELEM, g.typeTokenOf(LObject), 2, 1);
+			fromDynamic(DotnetTypes.substitute(target.args[i], inst, []));
+		}
+		var r = DotnetTypes.substitute(target.ret, inst, []);
+		code.opToken(IlOps.CALLVIRT, g.memberOf(plan, owner, root), target.args.length + 1, r.match(LVoid) ? 0 : 1);
+		if (r.match(LVoid)) code.op(IlOps.LDNULL, 0, 1) else lower.convert(r, LObject);
 		ret(1);
 	}
 }

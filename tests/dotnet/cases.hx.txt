@@ -12049,8 +12049,8 @@ dyn field Pt
 // declares comes in front of it, one of an inherited method or an explicit implementation in front of
 // the class's fields, after the static __hx_cast, the last made first; a final class's overload is
 // final; a class whose superclass already has the overload gets none, and an interface's own
-// interfaces get them too. A class re-implementing an interface its superclass implements lists its
-// *_cast members differently in hxc (filtered out here).
+// interfaces get them too. A class listing an interface its superclass implements has a cast of its own
+// (S, and NI2 with an interface erasure does not change).
 class C { public function new() {} public function toString() return "C"; }
 interface IQ<T> { function f(x:T):T; function h(x:T, n:Int):Void; function get():T; }
 interface IQ2<T> extends IQ<T> { function k(x:T):Void; }
@@ -12093,6 +12093,9 @@ class X<T> implements IQ2<C> {
 	public function get():C return new C();
 	public function k(x:C):Void Sys.println("X.k");
 }
+interface IG<T> { function a():T; }
+class NI implements IG<String> { public function new() {} public function a():String return "a"; }
+class NI2 extends NI implements IG<String> { public function new() super(); }
 class P {
 	static function methods(c:Class<Dynamic>):String {
 		var fl:cs.Flags<cs.system.reflection.BindingFlags> = new cs.Flags(cs.system.reflection.BindingFlags.Instance) | cs.system.reflection.BindingFlags.Public | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.DeclaredOnly;
@@ -12117,7 +12120,10 @@ class P {
 		Sys.println(r.f(new C()));
 		for (c in ([Q2, GX, Q, F, X] : Array<Class<Dynamic>>))
 			Sys.println(Type.getClassName(c) + " " + Type.getInstanceFields(c) + methods(c));
-		Sys.println("S " + [for (f in Type.getInstanceFields(S)) if (!StringTools.endsWith(f, "_cast")) f] + methods(S));
+		Sys.println("S " + Type.getInstanceFields(S) + methods(S));
+		Sys.println("NI2 " + Type.getInstanceFields(NI2));
+		var ig:IG<String> = new NI2();
+		Sys.println(ig.a());
 	}
 }
 ===
@@ -12167,7 +12173,8 @@ B.h 1
 // G<C> overriding f(x:C), whose slot is G`1<object>'s f(object)): as gencs's FixOverrides writes it, an
 // override with the slot's signature calls the method, which becomes a new virtual overload. gencs does
 // the same for a further @:overload override (T's) and calls each through the overload's slot, so a T
-// held as an S runs T's method.
+// held as an S runs T's method. Each overriding class has its own __hx_invokeField case, which calls the
+// overload's slot with the arguments as they come.
 class C { public function new() {} public function toString() return "C"; }
 class G<T> {
 	public function new() {}
@@ -12181,8 +12188,12 @@ class S extends G<C> {
 class T extends S {
 	public function new() super();
 	@:overload override public function f(x:C):String return "T.f(C) " + x;
+	public function more():String return "more";
 }
 class P {
+	static function tr(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + Type.getClassName(Type.getClass(e)));
+	}
 	static function main() {
 		var s = new S();
 		Sys.println(s.f(new C()));
@@ -12195,13 +12206,18 @@ class P {
 		Sys.println(st.f(new C()));
 		var d:Dynamic = s;
 		Sys.println(d.f(new C()));
+		tr("s dyn2", () -> d.f(1, 2));
+		tr("t refl1", () -> Reflect.callMethod(st, Reflect.field(st, "f"), [new C()]));
+		tr("t refl2", () -> Reflect.callMethod(st, Reflect.field(st, "f"), [1, 2]));
+		var dt:Dynamic = st;
+		tr("t dyn2", () -> dt.f(1, 2));
 		Sys.println(Type.getInstanceFields(S));
 		Sys.println(Type.getInstanceFields(T));
 		var fl:cs.Flags<cs.system.reflection.BindingFlags> = new cs.Flags(cs.system.reflection.BindingFlags.Instance) | cs.system.reflection.BindingFlags.Public | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.DeclaredOnly;
 		for (c in ([S, T] : Array<Class<Dynamic>>)) {
 			var ms = [
 				for (m in cs.Lib.toNativeType(c).GetMethods(fl))
-					if (!StringTools.startsWith(m.Name, "__hx_")) Std.string(m) + (m.IsPublic ? " public" : " nonpublic") + (m.IsVirtual ? " virtual" : "")
+					Std.string(m) + (m.IsPublic ? " public" : " nonpublic") + (m.IsVirtual ? " virtual" : "")
 						+ (Std.string(m.Attributes).indexOf("VtableLayoutMask") >= 0 ? " newslot" : "")
 			];
 			ms.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
@@ -12210,9 +12226,10 @@ class P {
 	}
 }
 ===
-# Q.get's Haxe signature is Array's companion, I`1<object>.get's is Array`1<object>: an explicit
-# implementation casts it. gencs's C# for it fails with CS0738, so the case is not @gencs and its [run] is
-# hand-written.
+# Q.get's Haxe signature is Array's companion, I`1<object>.get's is Array`1<object>, so Q gets an explicit
+# implementation that casts it, which the CLR needs to load Q; `i.get()` through I<Dynamic> goes through
+# __hx_invokeField, not through it. gencs's C# for it fails with CS0738, so the case is not @gencs and its
+# [run] is hand-written.
 --- erased-interface-dynamic-argument
 interface I<T> {
 	function get():Array<T>;
@@ -12237,3 +12254,33 @@ class P {
 [1,a]
 5
 [1,a]
+--- relisted-interface-casts @gencs
+// A class that lists a generic interface has a cast of its own for it (a new slot returning this), even
+// when its superclass has one: deep (NI3's IG through IG2), in the order it lists them (NI4), and not when
+// it lists nothing (NI5). A generic class overrides the inherited cast instead (GS).
+interface IG<T> { function a():T; }
+interface IG2<T> extends IG<T> { function b():T; }
+interface IH<T> { function h():T; }
+class NI implements IG<String> { public function new() {} public function a():String return "a"; }
+class NI2 extends NI implements IG<String> { public function new() super(); }
+class NI3 extends NI implements IG2<String> { public function new() super(); public function b():String return "b"; }
+class NI4 extends NI implements IH<Int> implements IG<String> { public function new() super(); public function h():Int return 1; }
+class NI5 extends NI2 { public function new() super(); }
+class NI6 extends NI2 implements IG<String> { public function new() super(); }
+class GB<T> implements IG<T> { public function new() {} public function a():T return null; }
+class GS<T> extends GB<T> implements IG<T> { public function new() super(); }
+class P {
+	static function main() {
+		var fl:cs.Flags<cs.system.reflection.BindingFlags> = new cs.Flags(cs.system.reflection.BindingFlags.Instance) | cs.system.reflection.BindingFlags.Public | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.DeclaredOnly;
+		for (c in ([NI, NI2, NI3, NI4, NI5, NI6, GB, GS] : Array<Class<Dynamic>>)) {
+			var ms = [for (m in cs.Lib.toNativeType(c).GetMethods(fl)) if (StringTools.endsWith(m.Name, "_cast")) m.Name + (Std.string(m.Attributes).indexOf("VtableLayoutMask") >= 0 ? " newslot" : " override")];
+			Sys.println(Type.getClassName(c) + " " + Type.getInstanceFields(c) + " " + ms);
+		}
+		var g:IG<String> = new NI6();
+		Sys.println(g.a());
+		var d:Dynamic = new NI2();
+		var i:IG<String> = d;
+		Sys.println(i.a());
+	}
+}
+===

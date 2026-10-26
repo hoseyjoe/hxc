@@ -121,11 +121,7 @@ class CompanionToIl {
 			}
 			r.push({c: p, params: params});
 		}
-		function iface(i:TClass, params:Array<T>) {
-			for (sup in listed(i)) iface(sup.c, [for (t in sup.params) apply(i, params, t)]);
-			if (hasCompanion(g, i)) add(i, params);
-		}
-		for (i in listed(c)) iface(i.c, i.params);
+		for (p in listedParents(g, c)) add(p.c, p.params);
 		var s = c.superClass;
 		if (s != null && !TypeFunctions.hasClassFlag(s.c, CExtern)) {
 			for (p in parents(g, s.c)) add(p.c, [for (t in p.params) apply(s.c, s.params, t)]);
@@ -135,14 +131,30 @@ class CompanionToIl {
 		return r;
 	}
 
+	// The generic interfaces the class lists (deep, each one's own interfaces before it); one reached twice
+	// keeps its last place.
+	static function listedParents(g:DotnetCtx, c:TClass):Array<Parent> {
+		var r:Array<Parent> = [];
+		function iface(i:TClass, params:Array<T>) {
+			for (sup in listed(i)) iface(sup.c, [for (t in sup.params) apply(i, params, t)]);
+			if (!hasCompanion(g, i)) return;
+			for (k in 0...r.length) if (r[k].c == i) {
+				r.splice(k, 1);
+				break;
+			}
+			r.push({c: i, params: params});
+		}
+		for (i in listed(c)) iface(i.c, i.params);
+		return r;
+	}
+
 	// The parents the class declares a cast member for: all of them for an hxgeneric class; for another
-	// class, the interfaces whose cast it does not inherit.
+	// class, the generic interfaces it lists, even one whose cast a superclass has (gencs writes the cast
+	// in each class that lists the interface).
 	static function declaredParents(g:DotnetCtx, c:TClass):Array<Parent> {
 		if (isInterface(c) || TypeFunctions.hasClassFlag(c, CExtern)) return [];
-		var all = parents(g, c);
-		if (hasCompanion(g, c)) return all;
-		var inherited = c.superClass == null ? [] : castNames(g, c.superClass.c);
-		return [for (p in all) if (isInterface(p.c) && inherited.indexOf(castName(p.c)) < 0) p];
+		if (hasCompanion(g, c)) return parents(g, c);
+		return listedParents(g, c);
 	}
 
 	// The names of the cast members a class has, declared or inherited. Each class asks for its
@@ -190,11 +202,11 @@ class CompanionToIl {
 		if (isInterface(c) || TypeFunctions.hasClassFlag(c, CExtern)) return [];
 		var inherited = c.superClass == null ? [] : castNames(g, c.superClass.c);
 		var isFinal = TypeFunctions.hasClassFlag(c, CFinal) || TypeFunctions.hasMeta(":struct", c.meta);
-		// virtual, an override of an inherited cast, or in a final class one that only implements the
-		// companion's member.
+		// virtual, an override of an inherited cast in an hxgeneric class (another class's hides it, as C#'s
+		// `virtual` does), or in a final class one that only implements the companion's member.
 		function flags(name:String):Int {
 			var f = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.VIRTUAL;
-			if (inherited.indexOf(name) >= 0) return f;
+			if (hasCompanion(g, c) && inherited.indexOf(name) >= 0) return f;
 			return f | MethodAttrs.NEW_SLOT | (isFinal ? MethodAttrs.FINAL : 0);
 		}
 		var r:Array<MethodPlan> = [];

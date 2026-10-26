@@ -651,17 +651,27 @@ class TclassToIl {
 		while (true) {
 			var sc = s.c;
 			if (TypeFunctions.hasClassFlag(sc, CExtern)) return false;
-			var impls = try g.types.withParams(sc.params, [], () -> interfaceImpls(g, sc, interfaceClosure(g, sc))) catch (_:Unsupported) null;
-			if (impls != null) {
-				var made = impls.bridges.copy();
-				for (l in impls.overloads) made = made.concat(l);
-				if (hasOverload(made, name, want, g.types.classArgs(sc, params))) return true;
-			}
+			if (hasOverload(madeOverloads(g, sc), name, want, g.types.classArgs(sc, params))) return true;
 			var next = sc.superClass;
 			if (next == null) return false;
 			params = [for (t in next.params) TypeFunctions.applyParams(sc.params, params, t)];
 			s = {c: next.c, params: params};
 		}
+	}
+
+	// The overloads that erased interfaces give the class `c`, in terms of its own type parameters (none
+	// when it cannot be declared), remembered for the round.
+	static function madeOverloads(g:DotnetCtx, c:TClass):Array<InterfaceBridge> {
+		var known = g.interfaceOverloads.get(c);
+		if (known != null) return known;
+		var impls = try g.types.withParams(c.params, [], () -> interfaceImpls(g, c, interfaceClosure(g, c))) catch (_:Unsupported) null;
+		var r:Array<InterfaceBridge> = [];
+		if (impls != null) {
+			for (b in impls.bridges) if (!b.explicit) r.push(b);
+			for (l in impls.overloads) r = r.concat(l);
+		}
+		g.interfaceOverloads.set(c, r);
+		return r;
 	}
 
 	// The bridges in the order gencs adds them in front of the class's fields: it goes through the

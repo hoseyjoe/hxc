@@ -56,6 +56,8 @@ class DotnetCtx {
 	// CompanionToIl's parent casts and cast names of each class, remembered for the round.
 	public final castParents = new ObjectMap<TClass, Array<{c:TClass, params:Array<T>}>>();
 	public final castNames = new ObjectMap<TClass, Array<String>>();
+	// TclassToIl's overloads that erased interfaces give each class, remembered for the round.
+	public final interfaceOverloads = new ObjectMap<TClass, Array<InterfaceBridge>>();
 	final closureClasses:Array<TClass> = [];
 
 	final stdRoots:Array<String>;
@@ -497,6 +499,7 @@ class GenerateDotnet {
 			g.companionOrder = [];
 			g.castParents.clear();
 			g.castNames.clear();
+			g.interfaceOverloads.clear();
 			g.companions = null;
 			// Enums first, so the classes that refer to one see whether it was left out.
 			for (e in hxEnums) {
