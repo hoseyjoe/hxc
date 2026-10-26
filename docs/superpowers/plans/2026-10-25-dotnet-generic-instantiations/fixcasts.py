@@ -24,9 +24,11 @@ decl_re = re.compile(r'public (?:sealed |abstract )?(?:class|interface) (\w+)(?:
 ns_re = re.compile(r'namespace ([\w.]+)\s*\{')
 decls = {}  # fullname -> (params, [(parentfull, args)])
 for p, s in files.items():
-    m = ns_re.search(s)
-    ns = m.group(1) if m else ''
+    nss = [(m.start(), m.group(1)) for m in ns_re.finditer(s)]
     for d in decl_re.finditer(s):
+        ns = ''
+        for st, n in nss:
+            if st < d.start(): ns = n
         name = d.group(1)
         full = (ns + '.' + name) if ns else name
         params = split_args(d.group(2)) if d.group(2) else []
@@ -59,9 +61,13 @@ def ancestors(full, seen=None):
 
 meth_re = re.compile(r'(public (?:virtual |override )?object (\w+)_cast<([^>]*)>\(\)\s*\{\s*(?:#line[^\n]*\n\s*)?return this\.(\w+)_cast<)([^>]*)(>\(\);)')
 for p, s in list(files.items()):
-    m = ns_re.search(s); ns = m.group(1) if m else ''
-    # find which class each method belongs to: nearest preceding declaration
-    decl_pos = [(d.start(), ((ns + '.' + d.group(1)) if ns else d.group(1)) + ('`' + str(len(split_args(d.group(2)))) if d.group(2) else '')) for d in decl_re.finditer(s)]
+    nss = [(m.start(), m.group(1)) for m in ns_re.finditer(s)]
+    def nsat(pos):
+        r = ''
+        for st, n in nss:
+            if st < pos: r = n
+        return r
+    decl_pos = [(d.start(), ((nsat(d.start()) + '.' + d.group(1)) if nsat(d.start()) else d.group(1)) + ('`' + str(len(split_args(d.group(2)))) if d.group(2) else '')) for d in decl_re.finditer(s)]
     def owner(pos):
         o = None
         for st, f in decl_pos:

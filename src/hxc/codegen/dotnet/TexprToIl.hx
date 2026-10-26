@@ -87,6 +87,9 @@ class TexprToIl {
 	// class's static constructor.
 	public var splitCtor = false;
 
+	// The method's Haxe return type where it has one: `return e` casts into it as a store does (texprTo).
+	public var retType:Null<T> = null;
+
 	public function new(g:DotnetCtx, code:IlCode, ret:IlSigNorm) {
 		this.g = g;
 		this.code = code;
@@ -684,7 +687,7 @@ class TexprToIl {
 					texpr(RVoid, e1);
 					if (code.reachable()) flow.exitMethod(false);
 				} else {
-					texpr(RValue(this.ret), e1);
+					texprTo(this.ret, retType, e1);
 					if (code.reachable()) flow.exitMethod(true);
 				}
 			case TParenthesis(e1) | TMeta(_, e1):

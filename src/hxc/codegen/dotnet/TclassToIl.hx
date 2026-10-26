@@ -1354,6 +1354,7 @@ class TclassToIl {
 							if (!plan.isStruct && !hasSuperCall(body)) initsAndBaseCtor(g, plan, code, lower) else body = withInits(g, plan.c, body);
 						}
 						if (m.ownArgs != null) lower.bindOwnArgs(tf, m.args, m.ownArgs) else lower.bindArgs(tf, m.hasThis ? 1 : 0, m.args);
+						lower.retType = tf.type;
 						statement(lower, RReturn, body);
 						if (failures.length == 0) lower.finish();
 					});

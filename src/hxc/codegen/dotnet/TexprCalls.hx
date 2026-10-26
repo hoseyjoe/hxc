@@ -396,6 +396,14 @@ class TexprCalls {
 		}
 	}
 
+	// The argument types of the constructor of `c` (its own or an ancestor's) that `args` reach, with `params`
+	// applied, as pushArgs takes them; null when there is none.
+	static function ctorTargets(c:TClass, params:TParams, args:Array<TExpr>):Null<Array<T>> {
+		var owner = try TypeFunctions.getConstructorClass(c, params) catch (_:Dynamic) null;
+		var r = owner == null ? null : OverloadResolution.maybeResolveConstructorOverload(c, params, args);
+		return r == null ? null : argTypes(TypeFunctions.applyParams(owner.c.params, owner.tl, r.cf.type));
+	}
+
 	// The argument types of the function type `t`, as a call applies them; null when it is no function.
 	static function argTypes(t:T):Null<Array<T>> {
 		return switch (TypeFunctions.follow(t)) {
@@ -1006,7 +1014,7 @@ class TexprCalls {
 			var stat = TclassToIl.ctorOf(plan, r.cf).stat;
 			var margs = g.types.classArgs(s.c, s.params);
 			code.ldarg(0);
-			pushArgs(args, [for (i in 1...stat.args.length) DotnetTypes.substitute(stat.args[i], [], margs)]);
+			pushArgs(args, [for (i in 1...stat.args.length) DotnetTypes.substitute(stat.args[i], [], margs)], ctorTargets(s.c, s.params, args));
 			code.opToken(IlOps.CALL, TclassToIl.staticCtorRef(g, plan, stat, margs), args.length + 1, 0);
 			return;
 		}
@@ -1019,7 +1027,7 @@ class TexprCalls {
 		var ctor = haxeCtor(s.c, s.params, args);
 		if (ctor.token == 0) throw "internal error: no constructor of " + Globals.sTypePath(s.c.path);
 		code.ldarg(0);
-		pushArgs(args, ctor.args);
+		pushArgs(args, ctor.args, ctorTargets(s.c, s.params, args));
 		code.opToken(IlOps.CALL, ctor.token, args.length + 1, 0);
 	}
 
@@ -1064,7 +1072,7 @@ class TexprCalls {
 			code.opToken(IlOps.INITOBJ, g.typeTokenOf(t), 1, 0);
 			code.ldloc(tmp);
 		} else {
-			pushArgs(args, ctor.args);
+			pushArgs(args, ctor.args, ctorTargets(c, params, args));
 			code.opToken(IlOps.NEWOBJ, ctor.token, args.length, 1);
 		}
 		tl.coerce(t, ret);

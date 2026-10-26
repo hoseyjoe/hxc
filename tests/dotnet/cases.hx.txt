@@ -943,9 +943,10 @@ type public beforefieldinit Over extends haxe.lang.HxObject
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method family static hidebysig void __hx_ctor__Over(Over)
-# The cast from G<String> to G<Int> was refused here until plan 3c; it goes through __hx_cast now, as
+# A Dynamic method overridden with a String return, and a cast from G<String> to G<Int>. This was
+# class-declarations-that-are-errors, whose cast was refused until plan 3c; it goes through __hx_cast now, as
 # gencs's does.
---- class-declarations-that-are-errors
+--- covariant-override-and-instantiation-cast
 class A {
 	public function new() {}
 	public function get():Dynamic return 1;
@@ -10223,6 +10224,67 @@ ternary: [2,2]
 explicit cast: [2,2]
 generic fn: [2,2]
 return cast: [2,2]
+# A Dynamic holding an Array<Int> passed where the Haxe type is Array<C> (erased Array<object>): a method
+# argument, a constructor's, a generic class's constructor's, super(...)'s, and `return d`. gencs gives each
+# __hx_cast<object>, except `return d`, a plain C# cast there that throws; hxc's copies (decision 4 of plan 3c).
+--- cast-constructor-arguments @gencs
+class C {
+	public function new() {}
+}
+
+class H {
+	public var a:Array<C>;
+
+	public function new(a:Array<C>)
+		this.a = a;
+}
+
+class K extends H {
+	public function new(d:Dynamic)
+		super(d);
+}
+
+class GH<T> {
+	public var a:Array<T>;
+
+	public function new(a:Array<T>)
+		this.a = a;
+}
+
+class P {
+	static function take(a:Array<C>)
+		return a.length + " " + Std.string(Type.typeof(a));
+
+	static function ret(d:Dynamic):Array<C>
+		return d;
+
+	static function run(n:String, f:Void->Dynamic) {
+		try Sys.println(n + " " + f()) catch (e:Dynamic) Sys.println(n + " EXC " + Type.getClassName(Type.getClass(e)));
+	}
+
+	static function main() {
+		var ai = [1, 2];
+		var d:Dynamic = ai;
+		run("static arg", () -> take(d));
+		run("ctor arg", () -> take(new H(d).a));
+		run("super arg", () -> take(new K(d).a));
+		run("generic ctor arg", () -> take(new GH<C>(d).a));
+		run("return", () -> take(ret(d)));
+	}
+}
+===
+[run]
+static arg 2 TClass(Array`1[System.Object])
+ctor arg 2 TClass(Array`1[System.Object])
+super arg 2 TClass(Array`1[System.Object])
+generic ctor arg 2 TClass(Array`1[System.Object])
+return 2 TClass(Array`1[System.Object])
+[gencs]
+static arg 2 TClass(Array`1[System.Object])
+ctor arg 2 TClass(Array`1[System.Object])
+super arg 2 TClass(Array`1[System.Object])
+generic ctor arg 2 TClass(Array`1[System.Object])
+return EXC System.InvalidCastException
 # Recorded divergence split from cast-contexts (decision: where gencs throws on a path that should work,
 # hxc lets it work). gencs: `return: EXC System.InvalidCastException: ...` and `closure call: EXC
 # System.ArgumentException: ...`. Expected [run]: the converted copy gencs itself gives `return cast d` ([2,2]).
@@ -10566,8 +10628,11 @@ class P {
 }
 ===
 # The same with an abstract over a generic interface, a typed IMap, and `return d` (Decision 4). gencs's parent
-# cast (FP.Th_cast, StringMap.haxe_IMap_cast) returns `this`, so every line but the last throws
-# InvalidCastException in gencs (`return d` is C#'s plain cast there); hxc's copies (decision 2 of plan 3c).
+# cast (FP.Th_cast, StringMap.haxe_IMap_cast) returns `this`, so plain gencs throws InvalidCastException on all 7
+# lines; hxc's copies (decision 2 of plan 3c).
+# Provenance: plain Haxe 4.3.7 gencs prints `EXC System.InvalidCastException` for each line; the same C# with its
+# parent casts rewritten by docs/superpowers/plans/2026-10-25-dotnet-generic-instantiations/fixcasts.py prints this
+# expectation except `ret Map: EXC System.InvalidCastException` (`return d` stays C#'s plain cast there).
 --- abstract-target-casts-fixed
 // Casts into places typed by an abstract over a generic interface (Pr<Int> over Th<Int>) and by IMap<String,Int>
 // itself, from a Dynamic holding the object instantiation, and `return d` into a Map<String,Int>. gencs throws

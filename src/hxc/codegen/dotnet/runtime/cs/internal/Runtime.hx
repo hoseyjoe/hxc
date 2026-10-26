@@ -472,9 +472,10 @@ import cs.system.Object;
 				} else if (!cs.Lib.getNativeType(arg).IsAssignableFrom(param)) {
 					oargs[i] = cast(arg, IConvertible).ToType(param, null);
 				}
-			} else if (arg != null && param.IsGenericType && Std.isOfType(arg, cs.internal.HxObject.IGenericObject) && !param.IsAssignableFrom(cs.Lib.getNativeType(arg))) {
+			} else if (arg != null && param.IsGenericType && !param.ContainsGenericParameters && Std.isOfType(arg, cs.internal.HxObject.IGenericObject) && !param.IsAssignableFrom(cs.Lib.getNativeType(arg))) {
 				// hxc: another instantiation of a generic Haxe class goes through __hx_cast, as a typed call
-				// converts it; hxcs's reflection call throws ArgumentException (plan 3c, decision 4).
+				// converts it; hxcs's reflection call throws ArgumentException (plan 3c, decision 4). A
+				// parameter with an open type parameter (a generic method's definition) has no instantiation.
 				oargs[i] = instanceCast(arg, param);
 			}
 		}
