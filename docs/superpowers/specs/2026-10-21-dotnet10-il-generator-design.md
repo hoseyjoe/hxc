@@ -533,8 +533,9 @@ and `List` copy, and two threads casting one array at once.
 ### Interop divergences from gencs (milestone 4)
 
 Where gencs's output fails at run time or its C# does not compile, hxc either refuses cleanly or does
-better. Each case that does better is a test with a `[gencs]` section that shows what gencs does, and
-each is listed here.
+better. Each case that does better is a test, and each is listed here. Where gencs's build runs, the
+test has a `[gencs]` section that shows what it does; where gencs's C# does not compile, there is no run
+to compare, so the test is not `@gencs` and the entry quotes the C# compiler's error.
 
 - `HasValue` and `Value` on a `Nullable<Int>` read out of a `Map<String, Nullable<Int>>` work in hxc
   (`netlib-nullable-better`). gencs throws at that first read: `Method "get_HasValue" not found on type

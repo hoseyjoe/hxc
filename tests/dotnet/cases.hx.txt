@@ -14634,7 +14634,8 @@ P.hx:19: true
 P.hx:21: Panel
 
 # Typing is unchanged: a --net-lib signature naming a type of an assembly that is not passed is not
-# found, in Haxe 4.3.7 as in hxc (the beside assemblies are for lowering only, never for typing).
+# found, in Haxe 4.3.7 as in hxc. This guards that typing does not follow a --net-lib's references; it
+# cannot catch a leak of NetRefs's reference-only libraries, which are read only after typing.
 # Haxe 4.3.7 prints a second line, `P.hx:4: characters 23-26 : Class<liba.Holder> has no field Get`,
 # which hxc does not (a milestone-1 diagnostic difference, out of 4a's scope; the expectation is hxc's).
 --- netlib-dependency-not-typed @netlib=LibA
@@ -14666,3 +14667,22 @@ class P {
 ===
 [compile]
 P.hx:8: characters 11-24 : dotnet: no referenced assembly defines the .NET type Nope.Missing
+# The reference pack missing when a type needs it: no .NET 99 SDK is installed (not 11, which a machine
+# may have). The extern is netlib-framework-extern's.
+--- netlib-framework-extern-no-pack + -D dotnet-version=99
+@:native("System.Text.Json.JsonSerializerOptions") extern class JsonSerializerOptions {
+	public function new();
+	public var IncludeFields:Bool;
+	public var MaxDepth:Int;
+}
+
+class P {
+	static function main() {
+		var opts = new JsonSerializerOptions();
+		opts.IncludeFields = true;
+		trace(opts.IncludeFields);
+	}
+}
+===
+[compile]
+P.hx:9: characters 14-41 : dotnet: the .NET 99 reference pack (Microsoft.NETCore.App.Ref) was not found; it is needed for System.Text.Json.JsonSerializerOptions

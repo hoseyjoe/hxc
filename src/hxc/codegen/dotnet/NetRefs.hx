@@ -3,6 +3,7 @@ package hxc.codegen.dotnet;
 import sys.FileSystem;
 import hxc.context.Context;
 import hxc.codegen.dotnet.IlData;
+import hxc.codegen.dotnet.PeData.PeErrorMessage;
 
 // The assembly that defines a .NET type, for lowering: a loaded library (ctx.netLibs) first, then the
 // assemblies the --net-libs reference, transitively and breadth first, each found beside the file that
@@ -12,10 +13,14 @@ import hxc.codegen.dotnet.IlData;
 // must not see them.
 class NetRefs {
 	final ctx:Context;
-	// the files read, by path; null when one is not an assembly
+	// the files read, by path; null when one could not be read
 	final byFile = new Map<String, Null<NetLibrary>>();
+	// why a file could not be read, by path
+	final unreadable = new Map<String, String>();
 	// the assembly a reference names from a directory, keyed by "<dir>\n<lower-case name>"
 	final located = new Map<String, Null<NetLibrary>>();
+	// for a reference not located, by the same key: the candidate files that could not be read, and why
+	final locateFailures = new Map<String, Array<String>>();
 	// definer's answers, by IlPaths.key
 	final found = new Map<String, Null<NetLibrary>>();
 	// for a type not found, by IlPaths.key: the missing references that could have defined it
@@ -50,10 +55,10 @@ class NetRefs {
 	public function missing(path:IlPath):String {
 		var s = NetConverter.ilpathS(path);
 		if (definer(path) != null) throw "internal error: " + s + " is defined";
-		if (referencePack() == null)
-			return "the .NET " + NetSetup.dotnetVersion(ctx) + " reference pack (Microsoft.NETCore.App.Ref) was not found; it is needed for " + s;
 		var notes = unresolved.get(IlPaths.key(path));
 		var why = notes == null || notes.length == 0 ? "" : " (" + notes.join("; ") + ")";
+		if (referencePack() == null)
+			return "the .NET " + NetSetup.dotnetVersion(ctx) + " reference pack (Microsoft.NETCore.App.Ref) was not found; it is needed for " + s + why;
 		return "no referenced assembly defines the .NET type " + s + why;
 	}
 
@@ -76,17 +81,38 @@ class NetRefs {
 		return s.substr(s.lastIndexOf("/") + 1);
 	}
 
-	function read(file:String):Null<NetLibrary> {
+	// The reference-only library in `file`, cached unless `keep` is false. Null, with the reason in
+	// `unreadable`, when the file cannot be opened or is not a .NET assembly (a native DLL, a damaged file);
+	// anything else the reader throws is an hxc bug, and propagates.
+	function read(file:String, keep = true):Null<NetLibrary> {
 		if (byFile.exists(file)) return byFile.get(file);
+		var why:Null<String> = null;
 		var lib = new NetLibrary(ctx, file, file, false);
 		lib.refOnly = true;
-		// a file that is not an assembly (a native DLL) does not define the reference
-		var ok = try {
+		try {
+			sys.io.File.read(file, true).close();
+		} catch (_:Dynamic) {
+			why = "could not be opened";
+		}
+		if (why == null) try {
 			lib.load();
-			true;
-		} catch (_:Dynamic) false;
-		byFile.set(file, ok ? lib : null);
-		return ok ? lib : null;
+		} catch (e:PeErrorMessage) {
+			// the message without PeErrorMessage's `PeReader.Error_message("...")` wrapping
+			var m = e.message, open = e.message.indexOf("(\""), close = e.message.lastIndexOf("\")");
+			if (open >= 0 && close > open) m = m.substring(open + 2, close);
+			why = "is not a .NET assembly: " + m;
+		} catch (e:String) {
+			// the readers' errors for data that ends early or points past its end
+			if (e != "No more input" && e != "String.sub / Bytes.sub") throw e;
+			why = "is not a .NET assembly: it is truncated or damaged";
+		}
+		if (why != null) {
+			unreadable.set(file, why);
+			byFile.set(file, null);
+			return null;
+		}
+		if (keep) byFile.set(file, lib);
+		return lib;
 	}
 
 	// The assembly a reference from a file in `dir` names: a loaded library of that name, else the file
@@ -104,17 +130,30 @@ class NetRefs {
 			var cands = [dir + "/" + name + ".dll"];
 			var rp = referencePack();
 			if (rp != null && rp != dir) cands.push(rp + "/" + name + ".dll");
+			var failures = [];
 			for (c in cands) if (FileSystem.exists(c) && !FileSystem.isDirectory(c)) {
 				r = read(c);
 				if (r != null) break;
+				var where = c == cands[0] ? fileName(c) + " beside it" : "the reference pack's " + fileName(c);
+				failures.push(where + " " + unreadable.get(c));
 			}
+			if (r == null && failures.length > 0) locateFailures.set(key, failures);
 		}
 		located.set(key, r);
 		return r;
 	}
 
+	// The files that were there for the assembly `name`, which `referrer` names, but could not be read;
+	// null when there were none.
+	function readFailures(referrer:NetLibrary, name:String):Null<Array<String>> {
+		return locateFailures.get(dirOf(referrer.filePath) + "\n" + name.toLowerCase());
+	}
+
 	function notFound(referrer:NetLibrary, verb:String, name:String):String {
-		return fileName(referrer.filePath) + " " + verb + " " + name + ", which is neither beside it nor in the reference pack";
+		var head = fileName(referrer.filePath) + " " + verb + " " + name;
+		var failures = readFailures(referrer, name);
+		if (failures != null) return head + ", but " + failures.join(" and ");
+		return head + ", which is neither beside it nor in the reference pack";
 	}
 
 	// `lib`, if it defines `path`, else the assembly its forwarders send `path` to.
@@ -140,10 +179,11 @@ class NetRefs {
 	}
 
 	function search(path:IlPath, notes:Array<String>):Null<NetLibrary> {
-		// the --net-libs (not the --net-std directories' libraries), then what they reference
+		// the --net-libs, then what they reference. The --net-std directories' libraries were searched
+		// already and their references are not followed, so they are never queued.
 		var queue = [for (lib in ctx.netLibs) if (ctx.netStdFiles.indexOf(lib.filePath) < 0) lib];
 		var queued = new Map<String, Bool>();
-		for (lib in queue) queued.set(lib.filePath, true);
+		for (lib in ctx.netLibs) queued.set(lib.filePath, true);
 		var i = 0;
 		while (i < queue.length) {
 			var lib = queue[i++];
@@ -153,8 +193,9 @@ class NetRefs {
 			for (name in lib.assemblyRefs()) {
 				var dep = locate(name, dir);
 				if (dep == null) {
+					// a file that is there but cannot be read is always named
 					var note = notFound(lib, "references", name);
-					if (namedFor(name, path.ns) && notes.indexOf(note) < 0) notes.push(note);
+					if ((namedFor(name, path.ns) || readFailures(lib, name) != null) && notes.indexOf(note) < 0) notes.push(note);
 				} else if (!queued.exists(dep.filePath)) {
 					queued.set(dep.filePath, true);
 					queue.push(dep);
@@ -164,9 +205,16 @@ class NetRefs {
 		// a hand-written extern that no assembly references
 		var top:IlPath = path.nested.length > 0 ? {ns: path.ns, nested: [], name: path.nested[0]} : path;
 		var file = indexPack().get(IlPaths.key(top));
-		if (file == null) return null;
-		var lib = read(file);
-		return lib != null && lib.definesType(path) ? lib : null;
+		var lib = file == null ? null : read(file);
+		if (lib != null && lib.definesType(path)) return lib;
+		// the types of a pack assembly that could not be read are missing from the index
+		var rp = referencePack();
+		if (rp != null) {
+			var bad = [for (f => why in unreadable) if (dirOf(f) == rp) "the reference pack's " + fileName(f) + " " + why];
+			bad.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
+			for (note in bad) if (notes.indexOf(note) < 0) notes.push(note);
+		}
+		return null;
 	}
 
 	// Reads every assembly of the reference pack once, keeping only which file defines each top-level
@@ -179,19 +227,11 @@ class NetRefs {
 		var files = [for (f in FileSystem.readDirectory(rp)) if (StringTools.endsWith(f.toLowerCase(), ".dll")) f];
 		files.sort((a, b) -> a < b ? -1 : a > b ? 1 : 0);
 		for (f in files) {
-			var file = rp + "/" + f;
-			var lib = byFile.exists(file) ? byFile.get(file) : {
-				var l = new NetLibrary(ctx, file, file, false);
-				l.refOnly = true;
-				try {
-					l.load();
-					l;
-				} catch (_:Dynamic) null;
-			}
+			var lib = read(rp + "/" + f, false);
 			if (lib == null) continue;
 			for (p in lib.topLevelTypes()) {
 				var key = IlPaths.key(p);
-				if (!packIndex.exists(key)) packIndex.set(key, file);
+				if (!packIndex.exists(key)) packIndex.set(key, rp + "/" + f);
 			}
 		}
 		return packIndex;

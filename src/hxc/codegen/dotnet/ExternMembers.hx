@@ -193,7 +193,7 @@ class ExternMembers {
 		var refs = NetRefs.of(ctx);
 		if (refs.definer(path) == null) throw Unsupported.error(refs.missing(path));
 		var underlying = enumUnderlying(path);
-		if (underlying == null) throw new Unsupported("the .NET enum " + NetConverter.ilpathS(path) + " outside the referenced assemblies", false);
+		if (underlying == null) throw Unsupported.error("the .NET type " + NetConverter.ilpathS(path) + " is not an enum");
 		var name = DotnetNames.nativeName(ef.meta);
 		if (name == null) name = ef.name;
 		for (f in rawClass(path).cfields) if (f.fname == name && f.fconstant != null) return {c: f.fconstant, underlying: underlying};
