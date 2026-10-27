@@ -78,6 +78,44 @@ class TexprCalls {
 		}
 	}
 
+	// The extern variable `cf` of `c` that `obj.cf` (or the static `c.cf`) accesses, which `reads` or `writes`,
+	// as C# looks it up (ruling Y): from the receiver's static .NET class, as for a method (rulings M and P),
+	// with protected members as ruling R allows them. `parent`: the .NET type declaring it, which the access
+	// names, with `args` its type arguments, which the member's type takes.
+	public function externField(obj:TExpr, fa:TFieldAccess, c:TClass, cf:TClassField, reads:Bool,
+			writes:Bool):{member:ExternField, parent:IlSigNorm, args:Array<IlSigNorm>} {
+		var inst = instantiation(c, fa);
+		var site:FieldSite = {caller: tl.cls, classArgs: inst};
+		var start = null;
+		if (!fa.match(FStatic(_, _))) {
+			var isSuper = strip(obj).expr.match(TConst(TSuper));
+			var recv = receiverType(obj, c, cf, true);
+			start = receiverClass(recv, c);
+			if (start != null) {
+				site.receiver = start.c;
+				site.receiverArgs = start.args;
+			}
+			if (!isSuper) switch (recv) {
+				case TInst(rc, _) if (!rc.kind.match(KTypeParameter(_))): site.receiverStatic = rc;
+				case _:
+			}
+			if (!isSuper) switch (TypeFunctions.follow(obj.type)) {
+				case TInst(tp, _) if (tp.kind.match(KTypeParameter(_))): site.receiverOpaque = true;
+				case _:
+			}
+		}
+		var b = g.externs.field(c, cf, reads, writes, site);
+		var parent = ExternMembers.subst(b.parent, start != null ? start.args : inst);
+		return {
+			member: b.member,
+			parent: parent,
+			args: switch (parent) {
+				case LClass(_, l) | LValueType(_, l): l;
+				case _: [];
+			}
+		};
+	}
+
 	// The object an instance member is reached through; a value type's address. A field store needs
 	// the address of a variable, not of a copy.
 	function receiver(obj:TExpr, parent:IlSigNorm, forStore = false):Void {
@@ -127,10 +165,11 @@ class TexprCalls {
 				code.opToken(IlOps.LDSFLDA, tl.staticField(c, cf).token, 0, 1);
 				return true;
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c) && cf.kind.match(Var(_))):
-				switch (g.externs.field(c, cf, true, true)) {
+				var x = externField(obj, fa, c, cf, true, true);
+				switch (x.member) {
 					case XField(open, false):
 						var isStatic = fa.match(FStatic(_, _));
-						var parent = parentOf(c, instantiation(c, fa));
+						var parent = x.parent;
 						if (!isStatic) receiver(obj, parent, forStore);
 						var token = g.mb.memberRef(g.typeTokenOf(parent), ExternMembers.memberName(cf), g.sigs.field(open));
 						code.opToken(isStatic ? IlOps.LDSFLDA : IlOps.LDFLDA, token, isStatic ? 0 : 1, 1);
@@ -241,9 +280,9 @@ class TexprCalls {
 				tl.coerce(closureSig(), ret);
 			case FStatic(c, cf) | FInstance(c, _, cf) if (isExtern(c)):
 				var isStatic = fa.match(FStatic(_, _));
-				var inst = instantiation(c, fa);
-				var parent = parentOf(c, inst);
-				switch (g.externs.field(c, cf)) {
+				var x = externField(obj, fa, c, cf, true, false);
+				var parent = x.parent, inst = x.args;
+				switch (x.member) {
 					case XConstant(k, declared):
 						if (!isStatic) throw new Unsupported("instance .NET constants", true);
 						var s = constant(k, declared);
@@ -1204,8 +1243,8 @@ class TexprCalls {
 	// The receiver's static type for rulings M and O, followed: a type parameter's is its one constraint
 	// that is an extern class or interface with a .NET type, or a Haxe class below one (ruling P). A call of
 	// a hand-written extern's method through a type parameter with several constraints, or none of those,
-	// is refused.
-	function receiverType(obj:TExpr, c:TClass, cf:TClassField):T {
+	// is refused (`isField`: an access to a variable).
+	function receiverType(obj:TExpr, c:TClass, cf:TClassField, isField = false):T {
 		var t = TypeFunctions.follow(obj.type);
 		switch (t) {
 			case TInst(tp, _):
@@ -1215,8 +1254,9 @@ class TexprCalls {
 							var k = TypeFunctions.follow(constraints[0]);
 							if (mapsToNet(k)) return k;
 						}
-						throw Unsupported.error("hxc cannot tell which .NET overload of " + ExternMembers.sigS(LClass(g.types.externPath(c), [])) + "."
-							+ ExternMembers.memberName(cf) + " the type parameter " + tp.path.name + "'s constraints select");
+						throw Unsupported.error("hxc cannot tell which .NET " + (isField ? "member " : "overload of ")
+							+ ExternMembers.sigS(LClass(g.types.externPath(c), [])) + "." + ExternMembers.memberName(cf) + " the type parameter "
+							+ tp.path.name + "'s constraints select");
 					case _:
 				}
 			case _:
@@ -1582,25 +1622,25 @@ class TexprCalls {
 	}
 
 	// Whether `e1[i]` is a .NET class's indexer (values notes §3): get_Item and set_Item.
-	function isNetIndexer(e1:TExpr):Bool {
+	function isNetIndexer(e1:TExpr, e2:TExpr):Bool {
 		var r = indexerClass(e1);
-		return r != null && g.externs.indexer(r.c, r.params, tl.cls, r.recv) != null;
+		return r != null && g.externs.indexer(r.c, r.params, tl.cls, r.recv, e2) != null;
 	}
 
 	// Refuses a read-modify-write through the indexer of a .NET struct, whose receiver would have to be kept
 	// as an address across the load and the store.
-	function refuseStructIndexer(e1:TExpr):Void {
+	function refuseStructIndexer(e1:TExpr, e2:TExpr):Void {
 		var r = indexerClass(e1);
-		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls, r.recv);
+		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls, r.recv, e2);
 		if (ix != null && DotnetTypes.isValueType(ix.parent))
 			throw new Unsupported("read-modify-write through an indexer of a .NET struct", false);
 	}
 
-	// The indexer of `e1`'s class, for an access to an element of the Haxe type `element` that `reads` or
-	// `writes`.
-	function netIndexer(e1:TExpr, element:T, reads:Bool, writes:Bool):NetIndexer {
+	// The indexer of `e1`'s class for the index `e2`, for an access to an element of the Haxe type `element` that
+	// `reads` or `writes`.
+	function netIndexer(e1:TExpr, e2:TExpr, element:T, reads:Bool, writes:Bool):NetIndexer {
 		var r = indexerClass(e1);
-		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls, r.recv);
+		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls, r.recv, e2);
 		if (ix == null) throw "internal error: not a .NET indexer";
 		var args = switch (ix.parent) {
 			case LClass(_, l) | LValueType(_, l): l;
@@ -1654,8 +1694,8 @@ class TexprCalls {
 			tl.dyn.fieldCall(ret, e, e1, "__get", [e2]);
 			return;
 		}
-		if (isNetIndexer(e1)) {
-			var ix = netIndexer(e1, e.type, true, false);
+		if (isNetIndexer(e1, e2)) {
+			var ix = netIndexer(e1, e2, e.type, true, false);
 			var get = ix.getToken();
 			receiver(e1, ix.parent);
 			tl.nullOperand(RValue(ix.index), e2, false);

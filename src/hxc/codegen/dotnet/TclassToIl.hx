@@ -1145,6 +1145,15 @@ class TclassToIl {
 		}
 	}
 
+	// The Haxe name of the field `cf`, which @:native renamed when it has a :realPath.
+	static function realName(cf:TClassField):String {
+		for (m in cf.meta) if (m.name == ":realPath" && m.params.length == 1) switch (m.params[0].expr) {
+			case hxc.ast.Ast.ExprDef.EConst(hxc.ast.Ast.Constant.CString(s, _)): return s;
+			case _:
+		}
+		return cf.name;
+	}
+
 	// The method that implements the method of the interface `iface` with the CLR name `name` and signature
 	// `want`: null when one has that signature (a method of the class itself goes into `own`), else the method
 	// of that name with other types, which a bridge calls.
@@ -1155,6 +1164,13 @@ class TclassToIl {
 		var other = new Unsupported("interface methods implemented with other types", true);
 		while (cur != null) {
 			var cf = cur.fields.get(hxName);
+			if (cf == null && TypeFunctions.hasClassFlag(cur, CExtern)) for (f in cur.orderedFields) if (realName(f) == hxName) {
+				// An extern base method that @:native renames, which Haxe takes as the implementation by its Haxe
+				// name; the CLR, and gencs's C# (CS0535), look for the interface method's CLR name.
+				throw Unsupported.error("the interface method " + DotnetTypes.haxePath(TClassDecl(iface)) + "." + hxName + " is implemented by "
+					+ DotnetTypes.haxePath(TClassDecl(cur)) + "." + hxName + ", whose CLR name " + f.name + " differs from the interface method's "
+					+ name);
+			}
 			if (cf != null) {
 				// The .NET base class's own method, which the CLR checks when it loads the type: it maps the
 				// interface method to a public virtual method of exactly its signature. For a non-virtual one C#

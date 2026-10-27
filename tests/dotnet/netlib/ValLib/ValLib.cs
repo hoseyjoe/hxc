@@ -255,4 +255,53 @@ namespace ValLib
     public class FBase { public string F(object o) { return "FBase.F(object)"; } }
     public class FDerived : FBase { public string F(IFoo f) { return "FDerived.F(IFoo " + f.Name() + ")"; } }
     public class FooImpl : IFoo { public virtual string Name() { return "FooImpl"; } }
+    // Ruling X: overloads C# picks by an integer constant's or a null literal's value.
+    public enum Hue { Red, Green }
+    public class Thing { public override string ToString() { return "Thing"; } }
+    public static class ByVal
+    {
+        public static string B(byte b) { return "B(byte)"; }
+        public static string B(object o) { return "B(object)"; }
+        public static string E(Hue c) { return "E(Hue)"; }
+        public static string E(object o) { return "E(object)"; }
+        public static string N(Thing t) { return "N(Thing)"; }
+        public static string N(object o) { return "N(object)"; }
+        public static string S(short s) { return "S(short)"; }
+        public static string S(double d) { return "S(double)"; }
+        public static string P(params object[] a) { return "P(params " + (a == null ? "null" : a.Length.ToString()) + ")"; }
+        public static string P(object o) { return "P(object)"; }
+        public static string O(int a, Thing t) { return "O(int,Thing)"; }
+        public static string O(int a, object o) { return "O(int,object)"; }
+        public static string I(int i) { return "I(int " + i + ")"; }
+        public static string I(object o) { return "I(object)"; }
+        public static string R(string s) { return "R(" + (s == null ? "null" : s) + ")"; }
+        public static string L(long l) { return "L(long " + l + ")"; }
+    }
+    public class ByValCtor
+    {
+        public string Which;
+        public ByValCtor(byte b) { Which = "ByValCtor(byte)"; }
+        public ByValCtor(object o) { Which = "ByValCtor(object)"; }
+    }
+    public class HueIdx { public string this[object o] { get { return "HueIdx[object]"; } } }
+    public class HueIdxD : HueIdx { public string this[Hue c] { get { return "HueIdxD[Hue]"; } } }
+    // Ruling Y: a derived class's `new` members hide the base's.
+    public class HideBase
+    {
+        public string Name = "HideBase.Name";
+        public int Count = 1;
+        public string Prop { get { return "HideBase.Prop"; } }
+        public string Rw { get; set; } = "HideBase.Rw";
+    }
+    public class HideDerived : HideBase
+    {
+        public new string Name = "HideDerived.Name";
+        public new int Count = 10;
+        public new string Prop { get { return "HideDerived.Prop"; } }
+        public new string Rw { get; set; } = "HideDerived.Rw";
+    }
+    public class HideProt : HideBase
+    {
+        protected new string Name = "HideProt.Name";
+    }
 }

@@ -17233,3 +17233,236 @@ class P {
 	}
 }
 ===
+# Ruling X: an integer constant or a null literal still binds where one overload applies, as in C#: the exact int
+# I(int), a constant that does not fit in a byte (B(object)), a widening (L(long)), a null into the one reference
+# candidate R(string), and a null into an @:overload extern, which gencs casts to the declared type (N(object)).
+--- netlib-extern-constant-and-null-arguments @gencs @netlib
+@:native("ValLib.Thing") extern class Thing { function new():Void; }
+@:native("ValLib.ByVal") extern class ByVal {
+	static function I(x:Int):String;
+	static function B(x:Int):String;
+	static function L(x:Int):String;
+	static function R(s:String):String;
+	@:overload(function(x:Thing):String {})
+	static function N(x:Dynamic):String;
+}
+class P {
+	static inline var K = 2;
+	static function main() {
+		trace(ByVal.I(5));
+		trace(ByVal.I(K + 3));
+		trace(ByVal.B(-1));
+		trace(ByVal.B(300));
+		trace(ByVal.L(7));
+		trace(ByVal.R(null));
+		trace(ByVal.R("s"));
+		trace(ByVal.N(null));
+	}
+}
+===
+# Ruling X: C# converts an int constant to byte when it fits, so B(5) takes both B(byte) and B(object), and C# (gencs)
+# binds B(byte) by betterness, which hxc does not model: refused. Declared Dynamic, the declared object binds
+# B(object) while the argument (an int constant) may take B(byte), so ruling F′ refuses. hxc bound B(object) before.
+--- netlib-extern-int-constant-to-byte-refused @netlib
+@:native("ValLib.ByVal") extern class ByVal {
+	static function B(x:Int):String;
+}
+@:native("ValLib.ByVal") extern class ByValD {
+	@:native("B") static function BD(x:Dynamic):String;
+}
+class P {
+	static function main() {
+		trace(ByVal.B(5));
+		trace(ByValD.BD(5));
+	}
+}
+===
+[compile]
+P.hx:9: characters 9-19 : dotnet: more than one .NET overload of ValLib.ByVal.B may accept (int) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
+P.hx:10: characters 9-21 : dotnet: the .NET overload of ValLib.ByVal.B depends on the argument types (int), and C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload
+# Ruling X: C# converts the constant 0 to any enum, so E(0) takes both E(Hue) and E(object), and C# (gencs) binds
+# E(Hue): refused, a folded 1 - 1 too. hxc bound E(object) before.
+--- netlib-extern-zero-to-enum-refused @netlib
+@:native("ValLib.ByVal") extern class ByVal {
+	static function E(x:Int):String;
+}
+class P {
+	static function main() {
+		trace(ByVal.E(0));
+		trace(ByVal.E(1 - 1));
+		trace(ByVal.E(1));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-19 : dotnet: more than one .NET overload of ValLib.ByVal.E may accept (int) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
+P.hx:7: characters 9-23 : dotnet: more than one .NET overload of ValLib.ByVal.E may accept (int) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
+# Ruling X: C# converts an int constant to short when it fits, so S(5) takes both S(short) and S(double), and C#
+# (gencs) binds S(short): refused. hxc bound S(double) before.
+--- netlib-extern-int-constant-to-short-refused @netlib
+@:native("ValLib.ByVal") extern class ByVal {
+	static function S(x:Int):String;
+}
+class P {
+	static function main() {
+		trace(ByVal.S(5));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-19 : dotnet: more than one .NET overload of ValLib.ByVal.S may accept (int) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
+# Ruling X: a null literal converts to every reference type and is never an exact match, so N(null) declared Dynamic
+# takes both N(Thing) and N(object), and C# (gencs) binds N(Thing): refused. hxc bound N(object) before.
+--- netlib-extern-null-to-class-or-object-refused @netlib
+@:native("ValLib.ByVal") extern class ByVal {
+	static function N(x:Dynamic):String;
+}
+class P {
+	static function main() {
+		trace(ByVal.N(null));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-22 : dotnet: more than one .NET overload of ValLib.ByVal.N accepts (object) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
+# Ruling X: a null literal converts to a params array in its normal form, so P(null) takes both P(params object[])
+# and P(object), and C# (gencs) binds P(params) with a null array: refused. hxc bound P(object) before.
+--- netlib-extern-null-to-params-or-object-refused @netlib
+@:native("ValLib.ByVal") extern class ByVal {
+	static function P(x:Dynamic):String;
+}
+class P {
+	static function main() {
+		trace(ByVal.P(null));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-22 : dotnet: more than one .NET overload of ValLib.ByVal.P accepts (object) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
+# Ruling X: the null the typer pads a left-out optional argument with is a null literal in gencs's C#, so O(1) takes
+# both O(int, Thing) and O(int, object), and C# (gencs) binds O(int, Thing): refused. hxc bound O(int, object) before.
+--- netlib-extern-padded-optional-null-refused @netlib
+@:native("ValLib.ByVal") extern class ByVal {
+	static function O(a:Int, ?o:Dynamic):String;
+}
+class P {
+	static function main() {
+		trace(ByVal.O(1));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-19 : dotnet: more than one .NET overload of ValLib.ByVal.O accepts (int, object) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
+# Ruling X for a constructor: new ByValCtor(5) takes both ByValCtor(byte) and ByValCtor(object), and C# (gencs) binds
+# ByValCtor(byte): refused. hxc bound ByValCtor(object) before.
+--- netlib-extern-int-constant-constructor-refused @netlib
+@:native("ValLib.ByValCtor") extern class ByValCtor {
+	function new(x:Int):Void;
+	var Which:String;
+}
+class P {
+	static function main() {
+		trace(new ByValCtor(5).Which);
+	}
+}
+===
+[compile]
+P.hx:7: characters 9-25 : dotnet: more than one .NET constructor of ValLib.ByValCtor may accept (int) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
+# Ruling X for an indexer: the constant 0 converts to HueIdxD's this[Hue], which hides the base's this[object], and C#
+# (gencs) binds HueIdxD[Hue]; hxc cannot tell whether it applies: refused. hxc bound HueIdx[object] before. A 1 does
+# not convert to the enum, so it reaches the base's indexer, as in C#.
+--- netlib-indexer-zero-to-enum-refused @netlib
+class P {
+	static function main() {
+		var x = new vallib.HueIdxD();
+		trace(x[0]);
+		var i = 0;
+		trace(x[i]);
+	}
+}
+===
+[compile]
+P.hx:4: characters 9-13 : dotnet: hxc cannot tell which .NET indexer of ValLib.HueIdxD an int argument selects (C# converts an integer constant index by its value; index with a variable)
+# Ruling Y: a field or property is looked up from the receiver's static .NET type, as in C#, so HideDerived's `new`
+# members hide HideBase's, where the extern declares them, for a read, a store and a ref argument (an address); through
+# a HideBase receiver the base's bind. A protected hiding field binds through `this` of a subclass (ruling R). hxc bound
+# HideBase's for every access before.
+--- netlib-extern-field-hidden-by-receiver @gencs @netlib
+import vallib.Refs;
+@:native("ValLib.HideBase") extern class HideBase {
+	function new():Void;
+	var Name:String;
+	var Count:Int;
+	var Prop(default, null):String;
+	var Rw:String;
+}
+@:native("ValLib.HideDerived") extern class HideDerived extends HideBase {
+	function new():Void;
+}
+@:native("ValLib.HideBase") extern class HideNamed {
+	function new():Void;
+	var Name:String;
+}
+@:native("ValLib.HideProt") extern class HideProt extends HideNamed {
+	function new():Void;
+}
+class Sub extends HideProt {
+	public function new() super();
+	public function own():String return Name;
+}
+class P {
+	static function main() {
+		var d = new HideDerived();
+		trace(d.Name, d.Prop, d.Rw, d.Count);
+		var b:HideBase = d;
+		trace(b.Name, b.Prop, b.Rw, b.Count);
+		d.Name = "set";
+		d.Rw = "set";
+		Refs.Inc(d.Count);
+		trace(d.Name, d.Rw, d.Count);
+		trace(b.Name, b.Rw, b.Count);
+		trace(new Sub().own());
+	}
+}
+===
+# Ruling Y with ruling R: HideProt's protected Name hides HideBase's, but C# cannot reach it from P, so it binds
+# HideBase.Name; hxc does not model that skip: refused.
+--- netlib-extern-protected-field-refused @netlib
+@:native("ValLib.HideBase") extern class HideBase {
+	function new():Void;
+	var Name:String;
+}
+@:native("ValLib.HideProt") extern class HideProt extends HideBase {
+	function new():Void;
+}
+class P {
+	static function main() {
+		trace(new HideProt().Name);
+	}
+}
+===
+[compile]
+P.hx:10: characters 9-28 : dotnet: hxc cannot tell whether the protected .NET member ValLib.HideProt.Name is accessible here
+# Haxe takes an extern base method that @:native renames (FooImpl's Name, as name) as the implementation of a Haxe
+# interface's name, but the CLR looks for a method of the interface method's CLR name, and gencs's C# fails (CS0535):
+# refused, with a message that names both CLR names.
+--- netlib-extern-renamed-base-method-implements-interface-refused @netlib
+interface INamed {
+	function name():String;
+}
+@:native("ValLib.FooImpl") extern class FooImplR {
+	function new():Void;
+	@:native("Name") function name():String;
+}
+class Mine extends FooImplR implements INamed {
+	public function new() super();
+}
+class P {
+	static function main() {
+		trace(new Mine().name());
+	}
+}
+===
+[compile]
+P.hx:8: lines 8-10 : dotnet: the interface method INamed.name is implemented by FooImplR.name, whose CLR name Name differs from the interface method's name
+P.hx:13: characters 9-19 : dotnet: Mine (left out: the interface method INamed.name is implemented by FooImplR.name, whose CLR name Name differs from the interface method's name) is not supported yet

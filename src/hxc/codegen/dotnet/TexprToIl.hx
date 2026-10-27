@@ -1157,9 +1157,9 @@ class TexprToIl {
 				var elem = calls.pushArrayAndIndex(e1, e2);
 				texpr(RValue(elem), rhs);
 				storeKeeping(ret, elem, () -> code.stelem(elem, () -> g.typeTokenOf(elem)));
-			case TArray(e1, e2) if (calls.isNetIndexer(e1)):
+			case TArray(e1, e2) if (calls.isNetIndexer(e1, e2)):
 				// set_Item(index, value), the value converted to the setter's parameter type.
-				var ix = calls.netIndexer(e1, lhs.type, false, true);
+				var ix = calls.netIndexer(e1, e2, lhs.type, false, true);
 				var set = ix.setToken();
 				calls.receiver(e1, ix.parent, true);
 				nullOperand(RValue(ix.index), e2, false);
@@ -1200,9 +1200,9 @@ class TexprToIl {
 				});
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c)):
 				var isStatic = fa.match(FStatic(_, _));
-				var inst = calls.instantiation(c, fa);
-				var parent = calls.parentOf(c, inst);
-				switch (g.externs.field(c, cf, false, true)) {
+				var x = calls.externField(obj, fa, c, cf, false, true);
+				var parent = x.parent, inst = x.args;
+				switch (x.member) {
 					case XField(open, initOnly):
 						var s = ExternMembers.subst(open, inst);
 						if (initOnly) throw new Unsupported("assignments to read-only .NET fields", true);
@@ -1289,9 +1289,9 @@ class TexprToIl {
 						code.op(IlOps.POP, 1, 0);
 					}
 				};
-			case TArray(e1, e2) if (!isNativeArray(e1.type) && calls.isNetIndexer(e1)):
+			case TArray(e1, e2) if (!isNativeArray(e1.type) && calls.isNetIndexer(e1, e2)):
 				// get_Item and set_Item on the receiver and index stored once.
-				var ix = calls.netIndexer(e1, e.type, true, true);
+				var ix = calls.netIndexer(e1, e2, e.type, true, true);
 				if (ix.isStruct) throw new Unsupported("read-modify-write through an indexer of a .NET struct", false);
 				var get = ix.getToken(), set = ix.setToken();
 				var recv = -1, idx = -1;
