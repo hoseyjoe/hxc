@@ -129,34 +129,51 @@ class TexprOps {
 		}
 	}
 
-	// A .NET struct other than a Nullable<T> and an enum, which `x == null` compares with default(T).
-	function netStruct(s:IlSigNorm):Bool {
-		return switch (s) {
-			case LValueType(p, _): !tl.isHaxeNull(s) && !DotnetTypes.isSystemNullable(s) && g.externs.enumUnderlying(p) == null;
-			case _: false;
+	// The token of the public instance Equals(S) that the non-generic Haxe @:struct class at `p` declares, or 0.
+	function haxeSelfEquals(s:IlSigNorm, p:IlPath):Int {
+		var c = g.classAt(p);
+		if (c == null || TypeFunctions.hasClassFlag(c, CExtern)) return 0;
+		var cf = c.fields.get("Equals");
+		if (cf == null) return 0;
+		for (f in [cf].concat(cf.overloads)) {
+			var plan = g.ownerOf.get(f), m = g.methodPlans.get(f);
+			if (plan == null || m == null || plan.classParams.length > 0 || !TypeFunctions.hasClassFieldFlag(f, CfPublic) || TypeFunctions.hasClassFieldFlag(f, CfStatic)) continue;
+			if (m.name == "Equals" && m.hasThis && m.args.length == 1 && IlPaths.sigEq(m.args[0], s) && m.ret.match(LBool)) return g.memberOf(plan, plan.thisSig, f);
 		}
+		return 0;
 	}
 
 	// `e` is a struct of type `s`; pushes whether it equals default(s), as gencs's `e.Equals(default(S))` is
-	// bound: to the struct's own public Equals(S) when it declares one, else to Object.Equals.
-	function structIsDefault(s:IlSigNorm, e:TExpr):Void {
+	// bound: to the struct's own public Equals(S) when it declares one, else to Object.Equals. With the null
+	// first, gencs's receiver is default(S) and `e` the argument.
+	function structIsDefault(s:IlSigNorm, e:TExpr, nullFirst:Bool):Void {
 		tl.texpr(RValue(s), e);
 		var tmp = code.addLocal(s);
 		code.stloc(tmp);
-		var own = switch (s) {
-			case LValueType(p, []): g.externs.declaresSelfEquals(p);
-			case _: false;
+		var token = switch (s) {
+			case LValueType(p, []): g.externs.declaresSelfEquals(p) ? g.mb.memberRef(g.typeTokenOf(s), "Equals", g.sigs.method(true, LBool, [s], 0)) : haxeSelfEquals(s, p);
+			case _: 0;
 		}
-		if (own) {
-			code.ldloca(tmp);
-			tl.defaultValue(s);
-			code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(s), "Equals", g.sigs.method(true, LBool, [s], 0)), 2, 1);
+		if (token != 0) {
+			var zero = code.addLocal(s);
+			code.ldloca(zero);
+			code.opToken(IlOps.INITOBJ, g.typeTokenOf(s), 1, 0);
+			code.ldloca(nullFirst ? zero : tmp);
+			if (nullFirst) code.ldloc(tmp) else code.ldloc(zero);
+			code.opToken(IlOps.CALL, token, 2, 1);
 			return;
 		}
-		code.ldloc(tmp);
-		code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
-		tl.defaultValue(s);
-		code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+		if (nullFirst) {
+			tl.defaultValue(s);
+			code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+			code.ldloc(tmp);
+			code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+		} else {
+			code.ldloc(tmp);
+			code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+			tl.defaultValue(s);
+			code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+		}
 		code.opToken(IlOps.CALLVIRT, g.mb.memberRef(g.typeTokenOf(LObject), "Equals", g.sigs.method(true, LBool, [LObject], 0)), 2, 1);
 	}
 
@@ -327,14 +344,14 @@ class TexprOps {
 				tl.coerce(LBool, ret);
 				return;
 			}
-			if (netStruct(s)) {
-				structIsDefault(s, other);
+			if (tl.isStruct(s)) {
+				structIsDefault(s, other, isNullConst(e1));
 				if (op.match(OpNotEq)) not();
 				tl.coerce(LBool, ret);
 				return;
 			}
-			if (netEnum(s)) {
-				// A .NET enum against null, as cs.Flags's `has` compares: against default(T), as gencs writes it.
+			if (netEnum(s) || TexprToIl.clrEnum(other.type) != null) {
+				// A .NET or CLR enum against null, as cs.Flags's `has` compares: against default(T), as gencs writes it.
 				tl.texpr(RValue(s), other);
 				tl.defaultValue(s);
 			} else {
@@ -402,6 +419,10 @@ class TexprOps {
 				if (netOperator == null) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 				tl.texpr(RValue(netOperator.args[0]), e1);
 				tl.texpr(RValue(netOperator.args[1]), e2);
+			} else if (equality && s1.match(LIntPtr | LUIntPtr) && IlPaths.sigEq(s1, s2)) {
+				// Two IntPtrs (UIntPtrs) compare as the native integers they are on the stack, as C# builds them in.
+				tl.texpr(RValue(s1), e1);
+				tl.texpr(RValue(s2), e2);
 			} else if (equality && s1.match(LBool) && s2.match(LBool)) {
 				tl.texpr(RValue(LBool), e1);
 				tl.texpr(RValue(LBool), e2);

@@ -548,6 +548,10 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   references only the `--net-lib` files: `CS0012: The type 'BaseCtl' is defined in an assembly that
   is not referenced`. haxeui-cs relies on this when only `HaxeUICs.dll` is passed. With no gencs
   run to compare, the case is not `@gencs`.
+- `x == null` on a generic .NET struct or a generic Haxe `@:struct` class is `Equals(object)` on the boxed value and
+  the boxed `default(T)`. gencs's C# binds `x.Equals(default(T))` to the struct's own `Equals(T)` when it
+  declares one. The two differ only when that `Equals(T)` and `Equals(object)` disagree, which is not
+  normally observable. Non-generic structs, .NET or Haxe, bind as C# does (`struct-own-equals-null`).
 
 ## Left to the builder
 

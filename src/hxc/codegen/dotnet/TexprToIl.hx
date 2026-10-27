@@ -281,8 +281,8 @@ class TexprToIl {
 				defaultValue(to);
 				return;
 			}
-			// null as a .NET value type (Nullable<T>, a struct, an enum) is C#'s default(T), as gencs writes it.
-			if (to.match(LValueType(_, _))) {
+			// null as a .NET value type (Nullable<T>, a struct, an enum, IntPtr) is C#'s default(T), as gencs writes it.
+			if (to.match(LValueType(_, _) | LIntPtr | LUIntPtr)) {
 				code.op(IlOps.POP, 1, 0);
 				defaultValue(to);
 				return;
@@ -863,11 +863,17 @@ class TexprToIl {
 		if (!DotnetTypes.isValueType(from) || !DotnetTypes.isValueType(to) || IlPaths.sigEq(from, to)) return false;
 		if (isHaxeNull(from) || isHaxeNull(to)) return false;
 		if (DotnetTypes.isSystemNullable(from) || DotnetTypes.isSystemNullable(to)) return true;
-		inline function isStruct(s:IlSigNorm) return switch (s) {
-			case LValueType(p, _): g.externs.enumUnderlying(p) == null;
+		return isStruct(from) && isStruct(to) && !(g.isGenericHaxeClass(from) && g.isGenericHaxeClass(to));
+	}
+
+	// A struct, .NET or Haxe's @:struct class, other than a Nullable<T>, a haxe.lang.Null<T> and any enum (a
+	// .NET enum, whose class the assemblies define, or a CLR enum, which is no class): a type whose values
+	// `x == null` and an unsafe cast treat as structs.
+	function isStruct(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LValueType(p, _): !isHaxeNull(s) && !DotnetTypes.isSystemNullable(s) && g.externs.enumUnderlying(p) == null && g.classAt(p) != null;
 			case _: false;
 		}
-		return isStruct(from) && isStruct(to) && !(g.isGenericHaxeClass(from) && g.isGenericHaxeClass(to));
 	}
 
 	// Statements, then the last expression where `ret` wants it. In user code a failing statement is

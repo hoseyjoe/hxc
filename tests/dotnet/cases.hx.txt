@@ -14867,3 +14867,75 @@ P.hx:22: DateTime to Nullable, 1
 P.hx:23: Float to Nullable<Int> throws, System.InvalidCastException
 P.hx:26: Dynamic to Nullable, 4
 P.hx:28: Dynamic Float to Nullable<Int> throws, System.InvalidCastException
+# null into System.IntPtr: Haxe types it as the extern class cs.system.IntPtr, which accepts null; gencs writes
+# default(IntPtr). Ruling 3 covers every .NET value type.
+--- netlib-null-intptr @gencs
+import cs.system.IntPtr;
+class H {
+	public var p:IntPtr = null;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var p:IntPtr = null;
+		trace("local", p == IntPtr.Zero);
+		var h = new H();
+		trace("field", h.p == IntPtr.Zero, h.p != IntPtr.Zero);
+		h.p = null;
+		trace("assigned", h.p == IntPtr.Zero);
+	}
+}
+===
+[run]
+P.hx:9: local, true
+P.hx:11: field, true, false
+P.hx:13: assigned, true
+# A @:nativeGen (CLR) enum against null is gencs's `c == default(Col)`: the first constructor is the default.
+--- clr-enum-null @gencs
+@:nativeGen enum Col { Red; Green; }
+class P {
+	static function main() {
+		var c:Col = null;
+		trace(c == null, c != null, null == c, null != c);
+		c = Green;
+		trace(c == null, c != null, null == c, null != c);
+	}
+}
+===
+[run]
+P.hx:5: true, false, true, false
+P.hx:7: false, true, false, true
+# A Haxe @:struct class with its own Equals(S): gencs's `s.Equals(default(S))` binds to it (the receiver is default(S)
+# when null is on the left), so these results follow the method, not Object.Equals.
+--- struct-own-equals-null @gencs
+@:struct class S {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function Equals(other:S):Bool {
+		trace("Equals", x, other.x);
+		return true;
+	}
+}
+@:struct class Plain {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+}
+class P {
+	static function main() {
+		var s = new S(7);
+		trace(s == null, s != null);
+		trace(null == s, null != s);
+		var p = new Plain(1);
+		var d:Plain = null;
+		trace(p == null, p != null, d == null, null == d);
+	}
+}
+===
+[run]
+P.hx:5: Equals, 7, 0
+P.hx:5: Equals, 7, 0
+P.hx:16: true, false
+P.hx:5: Equals, 0, 7
+P.hx:5: Equals, 0, 7
+P.hx:17: true, false
+P.hx:20: false, true, true, true
