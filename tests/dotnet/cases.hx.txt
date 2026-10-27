@@ -16200,3 +16200,40 @@ class P {
 ===
 [compile]
 P.hx:7: characters 42-51 : dotnet: more than one .NET overload of ValLib.Prot.Go may accept (string)
+# Ruling R through a type-parameter receiver: protected members are not reached (T:MyProt would be accessible in C#, which binds
+# Go(string), but hxc emits the receiver as its constraint's erasure, on which IL does not allow a protected call), so the call is refused.
+--- netlib-extern-protected-type-parameter-receiver-refused @netlib
+@:native("ValLib.Prot") extern class HProt {
+	function new():Void;
+	function Go(s:String):String;
+}
+class MyProt extends HProt {
+	public function new() super();
+	public static function viaMine<T:MyProt>(x:T) return x.Go("x");
+}
+class P {
+	static function main() {
+		trace(MyProt.viaMine(new MyProt()));
+	}
+}
+===
+[compile]
+P.hx:7: characters 55-64 : dotnet: more than one .NET overload of ValLib.Prot.Go may accept (string)
+# T:HProt is a base-typed receiver: C# binds Go(object), and hxc refuses.
+--- netlib-extern-protected-type-parameter-base-receiver-refused @netlib
+@:native("ValLib.Prot") extern class HProt {
+	function new():Void;
+	function Go(s:String):String;
+}
+class MyProt extends HProt {
+	public function new() super();
+	public static function viaBase<T:HProt>(x:T) return x.Go("x");
+}
+class P {
+	static function main() {
+		trace(MyProt.viaBase(new HProt()));
+	}
+}
+===
+[compile]
+P.hx:7: characters 54-63 : dotnet: more than one .NET overload of ValLib.Prot.Go may accept (string)

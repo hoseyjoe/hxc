@@ -980,6 +980,11 @@ class TexprCalls {
 			case TInst(rc, _) if (!rc.kind.match(KTypeParameter(_))): site.receiverStatic = rc;
 			case _:
 		}
+		// A type-parameter receiver (a constraint was taken for a hand-written extern) is no receiver of the caller's class.
+		if (!isSuper) switch (TypeFunctions.follow(obj.type)) {
+			case TInst(tp, _) if (tp.kind.match(KTypeParameter(_))): site.receiverOpaque = true;
+			case _:
+		}
 		if (start != null) {
 			site.receiver = start.c;
 			site.receiverArgs = start.args;

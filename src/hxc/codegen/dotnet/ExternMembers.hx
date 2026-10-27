@@ -58,8 +58,14 @@ typedef ExternCall = {
 	methodArgs:Array<IlSigNorm>,
 	?receiver:TClass,
 	?receiverArgs:Array<IlSigNorm>,
-	?receiverStatic:TClass
+	?receiverStatic:TClass,
+	?receiverOpaque:Bool
 };
+
+// The receiver of a call, for ruling R: its static class (null for `this`, `base` and a static call), or
+// `opaque` for a type parameter, whose members protected access does not reach (C# starts from the
+// constraint, and hxc emits the receiver as that constraint's erasure).
+private typedef Receiver = {cls:Null<TClass>, opaque:Bool};
 
 // The type arguments a call gives the extern class's and the extern method's type parameters.
 private typedef Inst = {cls:Array<IlSigNorm>, meth:Array<IlSigNorm>};
@@ -240,7 +246,7 @@ class ExternMembers {
 			throw new Unsupported("the .NET method " + Globals.sTypePath(c.path) + "." + cf.name + " with these argument types", false);
 		}
 		var caller = call == null ? null : call.caller;
-		var receiverStatic = call == null ? null : call.receiverStatic;
+		var receiverStatic:Null<Receiver> = call == null ? null : {cls: call.receiverStatic, opaque: call.receiverOpaque == true};
 		// The call's type arguments for the declared types (`c`'s and the method's), and for the methods'
 		// parameters (the receiver's class's when the walk starts there, ruling M).
 		var inst:Null<Inst> = call == null ? null : {cls: call.classArgs, meth: call.methodArgs};
@@ -430,7 +436,7 @@ class ExternMembers {
 	// value type; gencs's C# fails there (CS1503). Refuses when the call would bind with such arguments
 	// as their T; a null argument (what the typer pads a left-out one with) is left out.
 	function ruling4(links:Array<{cls:IlClass, parent:IlSigNorm}>, name:String, isStatic:Bool, want:Array<IlSigNorm>,
-			declared:TSignature, typeParams:Int, caller:Null<TClass>, receiverStatic:Null<TClass>, call:Null<ExternCall>, inst:Null<Inst>):Void {
+			declared:TSignature, typeParams:Int, caller:Null<TClass>, receiverStatic:Null<Receiver>, call:Null<ExternCall>, inst:Null<Inst>):Void {
 		var plain = want.copy(), first = -1;
 		for (i in 0...want.length) switch (want[i]) {
 			case LValueType(_, [t]) if (declared.args[i].opt && types.isNullOf(want[i])):
@@ -460,7 +466,7 @@ class ExternMembers {
 	// may apply (ruling E). A link where none applies or may apply passes to the next. `inst`: the call's
 	// type arguments, which the methods' parameters take (ruling I).
 	function resolve(links:Array<{cls:IlClass, parent:IlSigNorm}>, name:String, isStatic:Bool, want:Array<IlSigNorm>,
-			typeParams:Int, caller:Null<TClass>, receiverStatic:Null<TClass>, inst:Null<Inst>):Resolution {
+			typeParams:Int, caller:Null<TClass>, receiverStatic:Null<Receiver>, inst:Null<Inst>):Resolution {
 		for (li in 0...links.length) {
 			var link = links[li];
 			var exact = [], yes = [], unknown = 0;
@@ -497,12 +503,14 @@ class ExternMembers {
 		return flags.contract.indexOf(CMVirtual) >= 0 && flags.vtable.indexOf(VNewSlot) < 0;
 
 	// Ruling R: whether a protected member of the .NET type `path` is accessible: `caller` derives from `path`,
-	// and the receiver's static class `receiver` is `caller` or derives from it (a static member has no
-	// receiver; a null `receiver` is a call whose receiver is `this` or `base`, or has none).
-	function protectedOk(caller:Null<TClass>, path:IlPath, receiver:Null<TClass>, isStatic:Bool):Bool {
+	// and the receiver's static class is `caller` or derives from it (a static member has no receiver; a null
+	// receiver, or a null class, is `this` or `base`; an opaque one, a type parameter, never is).
+	function protectedOk(caller:Null<TClass>, path:IlPath, receiver:Null<Receiver>, isStatic:Bool):Bool {
 		if (!callerReaches(caller, path)) return false;
 		if (isStatic || receiver == null) return true;
-		var c = receiver;
+		if (receiver.opaque) return false;
+		var c = receiver.cls;
+		if (c == null) return true;
 		while (c != null) {
 			if (c == caller) return true;
 			c = c.superClass == null ? null : c.superClass.c;
@@ -989,7 +997,7 @@ class ExternMembers {
 					return switch (a.flags.access) {
 						case FAPublic:
 							a.name;
-						case FAFamily | FAFamOrAssem if (protectedOk(caller, link.cls.cpath, receiver, false)):
+						case FAFamily | FAFamOrAssem if (protectedOk(caller, link.cls.cpath, {cls: receiver, opaque: false}, false)):
 							a.name;
 						case FAFamily | FAFamOrAssem:
 							hidden = true;
