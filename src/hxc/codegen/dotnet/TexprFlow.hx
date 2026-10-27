@@ -24,7 +24,8 @@ import hxc.codegen.dotnet.TexprToIl.strip;
 
 // The control flow of TexprToIl: if, while, switch, return, throw and try, and the spilling of operands
 // that a try would otherwise discard. Shares its state through the TexprToIl that owns it.
-@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.TexprDynamic)
+@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.TexprDynamic,
+	hxc.codegen.dotnet.CsToIl)
 class TexprFlow {
 	final tl:TexprToIl;
 	final g:DotnetCtx;

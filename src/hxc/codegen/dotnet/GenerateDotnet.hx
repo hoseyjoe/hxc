@@ -90,6 +90,11 @@ class DotnetCtx {
 
 	public function report(u:Unsupported):Void {
 		var msg = u.isBug || u.isError ? u.what : u.what + " " + u.verb() + " not supported yet";
+		if (u.isHaxe) {
+			ctx.addDiagnostic(msg, u.pos == null ? Position.nullPos : u.pos);
+			diagnostics++;
+			return;
+		}
 		error(msg, u.pos == null ? Position.nullPos : u.pos);
 	}
 

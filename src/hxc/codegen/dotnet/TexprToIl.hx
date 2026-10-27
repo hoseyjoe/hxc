@@ -50,7 +50,8 @@ enum SpillMode {
 // One method body's expressions as IL. Anything outside the subset this milestone compiles throws
 // Unsupported naming it.
 
-@:allow(hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.TexprDynamic)
+@:allow(hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.TexprDynamic,
+	hxc.codegen.dotnet.CsToIl)
 class TexprToIl {
 	final g:DotnetCtx;
 	final code:IlCode;
@@ -79,6 +80,7 @@ class TexprToIl {
 	final flow:TexprFlow;
 	final calls:TexprCalls;
 	final dyn:TexprDynamic;
+	final inlineCs:CsToIl;
 
 	// The expressions nullOperand marked (stripped): a Null<T> read through Runtime among them keeps its
 	// ofDynamic step.
@@ -106,6 +108,7 @@ class TexprToIl {
 		flow = new TexprFlow(this);
 		calls = new TexprCalls(this);
 		dyn = new TexprDynamic(this);
+		inlineCs = new CsToIl(this);
 	}
 
 	public function bindArg(v:TVar, index:Int, sig:IlSigNorm):Void {

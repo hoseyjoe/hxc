@@ -458,9 +458,11 @@ and `List` copy, and two threads casting one array at once.
     form below, and a recorded divergence: gencs writes `throw e;`, which resets the stack trace.
 
   A bare `throw` or `cs.Lib.rethrow` anywhere else is a lasting error (C# error CS0156): outside a catch, in
-  a local function, or in hxc's own try/finally (`__lock__`). Any other `throw e` is a plain `throw`: an
-  assigned `e`, an outer catch's variable thrown from a nested catch, and the `haxe.Exception` and
-  `Dynamic` catches, which throw a call's result.
+  a local function, or in a finally handler. hxc's own try/finally (`__lock__`, `cs.Lib.lock`) inside a catch
+  puts its body in a try block nested in the catch handler, so a rethrow there is valid
+  (`inline-cs-rethrow-in-lock`); only its finally handler, which holds no Haxe code, would refuse one. Any
+  other `throw e` is a plain `throw`: an assigned `e`, an outer catch's variable thrown from a nested catch,
+  and the `haxe.Exception` and `Dynamic` catches, which throw a call's result.
 
   This covers the server app's 4 patterns unchanged, plus the 5 `__cs__` uses in the `haxe-strings` haxelib
   (`StringBuilder.hx` lines 134/201/278/350, `Strings.hx` line 1366), so no third-party library has to

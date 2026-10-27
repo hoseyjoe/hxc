@@ -18,6 +18,9 @@ class Unsupported {
 	public var isBug = false;
 	// A compile error rather than a missing feature: reported as "dotnet: <what>", and stubbed in std code.
 	public var isError = false;
+	// One of the Haxe compiler's own errors, which gencs raises too: a compile error reported as "<what>",
+	// without "dotnet: ".
+	public var isHaxe = false;
 
 	public function new(what:String, plural:Bool, ?pos:Position) {
 		this.what = what;
@@ -34,6 +37,13 @@ class Unsupported {
 	public static function error(what:String):Unsupported {
 		var u = new Unsupported(what, false);
 		u.isError = true;
+		return u;
+	}
+
+	public static function haxeError(what:String, pos:Position):Unsupported {
+		var u = error(what);
+		u.isHaxe = true;
+		u.pos = pos;
 		return u;
 	}
 

@@ -69,7 +69,7 @@ class P {
 ===
 [compile]
 dotnet: embedded resources (-resource or Context.addResource) are not supported with -D dotnet until milestone 4
-P.hx:3: characters 11-22 : dotnet: untyped code is not supported yet
+P.hx:3: characters 11-22 : dotnet: the inline C# name x is no local, member or type here (C# error CS0103)
 --- hello @gencs @stress-fieldlookup
 class P {
 	static function main() {
@@ -17649,3 +17649,376 @@ class P {
 [compile]
 P.hx:3: characters 3-20 : dotnet: a rethrow (a bare `throw`, cs.Lib.rethrow) must be directly inside a catch (C# error CS0156)
 P.hx:9: characters 18-35 : dotnet: a rethrow (a bare `throw`, cs.Lib.rethrow) must be directly inside a catch (C# error CS0156)
+# Placeholder substitution and result conversion as gencs does them. Names in the C# text (`i + 10`) and .NET
+# members (`{0}.ToUpper()`) are covered by the name-resolution cases.
+--- inline-cs-placeholders @gencs
+// cs.Syntax.code and untyped __cs__ placeholders: each {N} is its argument's value as a unit (`(i + 1) * 3`),
+// in the argument's own type (an Int stays an int, so `{0} * 2` is int arithmetic). A placeholder used twice
+// evaluates its argument twice, as gencs's text substitution does. cs.Syntax.code's result is Dynamic,
+// converted to where it goes (Runtime.toInt, toDouble, toString, toBool); untyped __cs__'s takes the type
+// it is used as, with no conversion.
+class P {
+	var fld:Int = 7;
+	public function new() {}
+	static function take(i:Int):Int return i * 2;
+	static function side():Int { Sys.println("side"); return 3; }
+	function inst():Void {
+		var a:Int = untyped __cs__("{0} + 1", fld);
+		var b:Int = cs.Syntax.code("{0} + 1", this.fld);
+		Sys.println(a + " " + b);
+	}
+	static function main() {
+		var i = 5;
+		var f = 2.5;
+		var s = "hi";
+		var d:Dynamic = 4;
+		var r1:Int = cs.Syntax.code("{0} * 2", i);
+		var r2:Float = cs.Syntax.code("{0} * 2", f);
+		var r3:String = cs.Syntax.code("{0} + \"!\"", s);
+		var r4:Int = cs.Syntax.code("(int){0} + 1", d);
+		var r7:Int = cs.Syntax.code("{0} + {0}", side());
+		var r8 = take(cs.Syntax.code("{0}", 21));
+		var r9:Int = cs.Syntax.code("{0} * 3", i + 1);
+		var r10 = cs.Syntax.code("{0}", "lit");
+		var r11:Int = cs.Syntax.code("{1} - {0}", 1, 10);
+		Sys.println(r1 + "," + r2 + "," + r3 + "," + r4 + "," + r7 + "," + r8 + "," + r9 + "," + r10 + "," + r11);
+		if (cs.Syntax.code("{0} > 3", i)) Sys.println("gt");
+		new P().inst();
+	}
+}
+===
+[run]
+side
+side
+10,5,hi!,5,6,42,18,lit,9
+gt
+8 8
+# Literals, operators, keyword-type casts and `is` in inline C#, with C#'s numeric promotion: an int with a
+# long computes in long, a uint with an int in long, a char in int; `/` of two ints is integer division;
+# comparisons of doubles and unsigned values are C#'s; && and || short-circuit.
+--- inline-cs-operators @gencs
+class P {
+	static function side(tag:String, b:Bool):Bool { Sys.println(tag); return b; }
+	static function main() {
+		var i = 7;
+		var l:cs.StdTypes.Int64 = 5000000000;
+		var u:UInt = 0xEE6B2800;
+		var f = 2.5;
+		var nan = Math.NaN;
+		var o:Dynamic = 42;
+		var ol:Dynamic = l;
+		var mx = 0x7fffffff;
+		var big = 70000;
+		var str:Dynamic = "s";
+		Sys.println(untyped __cs__("{0} + {1}", i, l));
+		Sys.println(untyped __cs__("{0} - 1", u));
+		Sys.println(untyped __cs__("{0} + {1}", u, i));
+		Sys.println(untyped __cs__("{0} / 2", i));
+		Sys.println(untyped __cs__("{0} % 4", i));
+		Sys.println(untyped __cs__("{0} / 2", f));
+		Sys.println(untyped __cs__("-{0} * 3", i));
+		Sys.println(untyped __cs__("'a' + 1"));
+		Sys.println(untyped __cs__("{0} + 1", mx));
+		Sys.println(untyped __cs__("-2147483648"));
+		Sys.println(untyped __cs__("4000000000u > {0}", u));
+		Sys.println(untyped __cs__("{0} < 1.0 || {0} >= 1.0", nan));
+		Sys.println(untyped __cs__("{0} <= 2.5 && {0} != 3", f));
+		Sys.println(untyped __cs__("{0} == 7 && !({0} != 7)", i));
+		Sys.println(untyped __cs__("\"a\tb\" + 'c' + 1 + 2.5f + true"));
+		Sys.println(untyped __cs__("(long){0} * 3", i));
+		Sys.println(untyped __cs__("(int)(long){0}", ol));
+		Sys.println(untyped __cs__("(byte)({0} - 69700) + (sbyte)({0} - 69800) + (short){0}", big));
+		Sys.println(untyped __cs__("(char)65"));
+		Sys.println(untyped __cs__("(double){0} / 2", i));
+		Sys.println(untyped __cs__("(int)-2.7 + (uint)3.9"));
+		Sys.println(untyped __cs__("{0} is int", o));
+		Sys.println(untyped __cs__("{0} is long", ol));
+		Sys.println(untyped __cs__("{0} is string && (string){0} == \"s\"", str));
+		Sys.println(untyped __cs__("(object){0} == null", str));
+		Sys.println(untyped __cs__("{0} && {1}", side("a", false), side("b", true)));
+		Sys.println(untyped __cs__("{0} || {1}", side("c", true), side("d", true)));
+		var b:Bool = cs.Syntax.code("{0} > 6", i);
+		var x:cs.StdTypes.Int64 = cs.Syntax.code("(long){0} * 2", i);
+		Sys.println(b + " " + x);
+	}
+}
+===
+[run]
+5000000007
+3999999999
+4000000007
+3
+3
+1.25
+-21
+98
+-2147483648
+-2147483648
+False
+False
+True
+True
+a	bc12.5True
+21
+705032704
+4452
+A
+3.5
+1
+True
+True
+True
+False
+a
+False
+c
+True
+true 14
+# Inline C#'s result goes into Null<T>, a type parameter and Dynamic as gencs converts a Dynamic there:
+# Null<T>.ofDynamic, Runtime.genericCast (whose cast of an int to string fails, as in gencs), and boxing.
+--- inline-cs-result-into-null-and-type-params @gencs
+class P {
+	var nf:Null<Float>;
+	static var sd:Dynamic;
+	public function new() {}
+	static function plusOne<T>(i:Int):T {
+		var t:T = cs.Syntax.code("{0} + 1", i);
+		return t;
+	}
+	static function main() {
+		var i = 4;
+		var ni:Null<Int> = cs.Syntax.code("{0} + 1", i);
+		Sys.println(ni);
+		var p = new P();
+		p.nf = cs.Syntax.code("{0} + 1", i);
+		Sys.println(p.nf);
+		var gi:Int = plusOne(i);
+		Sys.println(gi);
+		try {
+			var gs:String = plusOne(i);
+			Sys.println(gs);
+		} catch (e:cs.system.Exception) {
+			Sys.println(cs.Lib.getNativeType(e).Name);
+		}
+		sd = cs.Syntax.code("{0} + 1", i);
+		Sys.println(sd);
+		var back:Int = sd;
+		Sys.println(back + 1);
+	}
+}
+===
+[run]
+5
+5
+5
+InvalidCastException
+5
+6
+# A bare `throw` in inline C# is IL `rethrow`, which keeps the stack trace: in the catch, after a try/catch
+# nested in it, after an if, in a loop, and in the cs.system.Exception catch the exceptions filter makes of a
+# haxe.Exception catch. gencs writes `throw;` for each.
+--- inline-cs-rethrow-bare @gencs
+// A bare `throw` in inline C# (untyped __cs__ or cs.Syntax.code) rethrows the caught exception and keeps its
+// stack trace: directly in the catch, after a try/catch nested in it, after an if, in a loop, and in the catch
+// a haxe.Exception catch becomes. The trace still names the method that threw.
+class P {
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function hxThrower():Void {
+		throw new haxe.Exception("hx");
+	}
+	static function report(tag:String, e:cs.system.Exception) {
+		Sys.println(tag + ": " + cs.Lib.getNativeType(e).Name + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+	static function direct() {
+		try thrower() catch (e:cs.system.Exception) untyped __cs__("throw");
+	}
+	static function syntax() {
+		try thrower() catch (e:cs.system.Exception) cs.Syntax.code("throw");
+	}
+	static function afterNestedTry() {
+		try thrower() catch (e:cs.system.Exception) {
+			try throw "inner" catch (e2:Dynamic) {}
+			untyped __cs__("throw");
+		}
+	}
+	static function afterIf(n:Int) {
+		var log = [];
+		try thrower() catch (e:cs.system.Exception) {
+			if (n > 0) log.push("cleanup");
+			untyped __cs__("throw");
+		}
+	}
+	static function inLoop(n:Int) {
+		try thrower() catch (e:cs.system.Exception) {
+			var i = 0;
+			while (i < n) {
+				if (i == 1) untyped __cs__("throw");
+				i++;
+			}
+		}
+	}
+	static function haxeCatch() {
+		try hxThrower() catch (e:haxe.Exception) {
+			Sys.println("caught " + e.message);
+			cs.Syntax.code("throw");
+		}
+	}
+	static function main() {
+		try direct() catch (e:cs.system.Exception) report("direct", e);
+		try syntax() catch (e:cs.system.Exception) report("syntax", e);
+		try afterNestedTry() catch (e:cs.system.Exception) report("after nested try", e);
+		try afterIf(1) catch (e:cs.system.Exception) report("after if", e);
+		try inLoop(3) catch (e:cs.system.Exception) report("in loop", e);
+		try haxeCatch() catch (e:cs.system.Exception) report("haxe.Exception catch", e);
+	}
+}
+===
+[run]
+direct: InvalidOperationException, thrower in trace true
+syntax: InvalidOperationException, thrower in trace true
+after nested try: InvalidOperationException, thrower in trace true
+after if: InvalidOperationException, thrower in trace true
+in loop: InvalidOperationException, thrower in trace true
+caught hx
+haxe.Exception catch: Exception, thrower in trace true
+# A bare `throw` in a `lock` body inside a catch: the lock is hxc's own try/finally, whose try block is inside
+# the catch handler, where IL `rethrow` is valid, as C#'s `throw;` in a lock inside a catch.
+--- inline-cs-rethrow-in-lock @gencs
+class P {
+	static final o = new cs.system.Object();
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function locked() {
+		try thrower() catch (e:cs.system.Exception) {
+			cs.Lib.lock(o, untyped __cs__("throw"));
+		}
+	}
+	static function main() {
+		try locked() catch (e:cs.system.Exception) Sys.println(cs.Lib.getNativeType(e).Name + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+}
+===
+[run]
+InvalidOperationException, thrower in trace true
+# `(decimal){0}` folds a constant as C# does (0 -> Decimal.Zero, 2.5 -> the five-part constructor with scale
+# 1) and calls op_Implicit(int32)/op_Explicit(float64) on a variable; `1.0m` keeps its scale. new Decimal(x)
+# is the double constructor in both compilers.
+--- inline-cs-decimal @gencs
+// `(decimal){0}` in inline C# (the server app's form) and decimal literals, against the Haxe forms that
+// compile under both compilers: `new Decimal(x)` takes the double constructor (Haxe's overload choice), so a
+// Float is rounded to 15 significant digits and 1.0 has scale 0, where the literal 1.0m has scale 1.
+import cs.system.Decimal;
+@:nativeGen
+class Model {
+	@:property
+	public var value:Decimal = untyped __cs__("(decimal){0}", 0);
+	public function new() {}
+}
+class P {
+	static function scale(d:Decimal):Int return (Decimal.GetBits(d)[3] >> 16) & 0xFF;
+	static function show(tag:String, d:Decimal) Sys.println(tag + " " + d + " scale " + scale(d));
+	static function main() {
+		show("model", new Model().value);
+		var i = 7, f = 2.5;
+		show("(decimal)0", untyped __cs__("(decimal){0}", 0));
+		show("(decimal)2.5", untyped __cs__("(decimal){0}", 2.5));
+		show("(decimal)int", untyped __cs__("(decimal){0}", i));
+		show("(decimal)double", untyped __cs__("(decimal){0}", f));
+		show("1.0m", untyped __cs__("1.0m"));
+		show("123456789.123456789m", untyped __cs__("123456789.123456789m"));
+		show("new Decimal(0)", new Decimal(0));
+		show("new Decimal(1.0)", new Decimal(1.0));
+		show("new Decimal(123456789.123456789)", new Decimal(123456789.123456789));
+		show("new Decimal(10, 0, 0, false, 1)", new Decimal(10, 0, 0, false, 1));
+	}
+}
+===
+[run]
+model 0 scale 0
+(decimal)0 0 scale 0
+(decimal)2.5 2.5 scale 1
+(decimal)int 7 scale 0
+(decimal)double 2.5 scale 1
+1.0m 1.0 scale 1
+123456789.123456789m 123456789.123456789 scale 9
+new Decimal(0) 0 scale 0
+new Decimal(1.0) 1 scale 0
+new Decimal(123456789.123456789) 123456789.123457 scale 6
+new Decimal(10, 0, 0, false, 1) 1.0 scale 1
+# gencs: CS0156 at each of the three; a local function inside a catch is its own method (closure class),
+# outside the catch.
+--- inline-cs-bare-throw-outside-catch-is-an-error
+class P {
+	static function thrower():Void throw new cs.system.Exception("x");
+	static function outside() {
+		untyped __cs__("throw");
+	}
+	static function inLocalFunction() {
+		try thrower() catch (e:cs.system.Exception) {
+			function rethrow():Void { cs.Syntax.code("throw"); }
+			rethrow();
+		}
+	}
+	static function libOutside(e:cs.system.Exception) {
+		cs.Lib.rethrow(e);
+	}
+	static function asValue() {
+		try thrower() catch (e:cs.system.Exception) {
+			var x:Int = untyped __cs__("throw");
+		}
+	}
+	static function main() {
+		outside();
+		inLocalFunction();
+		libOutside(null);
+		asValue();
+	}
+}
+===
+[compile]
+P.hx:4: characters 11-26 : dotnet: a rethrow (a bare `throw`, cs.Lib.rethrow) must be directly inside a catch (C# error CS0156)
+P.hx:13: characters 3-20 : dotnet: a rethrow (a bare `throw`, cs.Lib.rethrow) must be directly inside a catch (C# error CS0156)
+P.hx:17: characters 24-39 : dotnet: a bare `throw` in inline C# has no value
+P.hx:8: characters 30-53 : dotnet: a rethrow (a bare `throw`, cs.Lib.rethrow) must be directly inside a catch (C# error CS0156)
+# untyped __cs__ takes the type it is used as with no conversion, so C#'s implicit conversions apply.
+# gencs: CS0266 (long to int), CS0029 (int to string).
+--- inline-cs-untyped-result-conversion-is-an-error
+class P {
+	static function main() {
+		var l:cs.StdTypes.Int64 = 3;
+		var n:Int = untyped __cs__("{0}", l);
+		var s:String = untyped __cs__("1 + 2");
+		Sys.println(n + s);
+	}
+}
+===
+[compile]
+P.hx:4: characters 23-39 : dotnet: the inline C# expression is a long, which does not convert to Int implicitly (C# error CS0266); add a cast in the C# text
+P.hx:5: characters 26-41 : dotnet: the inline C# expression is an int, which does not convert to String implicitly (C# error CS0029)
+# gencs's own errors, which hxc repeats word for word (Haxe raises them when gencs generates the class, so
+# only for code that survives DCE). gencs's positions: the `s` argument, and the {1} inside the string.
+--- inline-cs-code-not-constant-is-an-error
+class P {
+	static function main() {
+		var s = "x";
+		var a:Dynamic = cs.Syntax.code(s, 1);
+		Sys.println(a);
+	}
+}
+===
+[compile]
+P.hx:4: characters 34-35 : The `code` argument for cs.Syntax.code must be a string constant
+--- inline-cs-placeholder-out-of-bounds-is-an-error
+class P {
+	static function main() {
+		var s = "x";
+		var b:Dynamic = cs.Syntax.code("{0} + {1}", 1);
+		Sys.println(b);
+	}
+}
+===
+[compile]
+P.hx:4: characters 40-45 : Out-of-bounds special parameter: 1
