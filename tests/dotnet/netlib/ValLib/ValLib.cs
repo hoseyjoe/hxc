@@ -141,6 +141,12 @@ namespace ValLib
         public static string Only<T>(T t) where T : IComparable { return "Only(" + t + ")"; }
     }
 
+    public interface IHear { string Hear(); }
+    public static class Ears
+    {
+        public static string Take(IHear h) { return "Take(" + h.Hear() + ")"; }
+    }
+
     public class Gen<T>
     {
         public string Foo(T t) { return "Foo(T)"; }

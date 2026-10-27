@@ -526,13 +526,13 @@ and `List` copy, and two threads casting one array at once.
      passed, as gencs's C# fails there (CS1503). A converted `--net-lib` member still binds only its
      exact signature. Three amendments keep hxc from picking an overload by accident:
      - **Unknown applicability.** A candidate or conversion outside hxc's model of C# may apply: a
-       variant generic interface or delegate target, `Span`/`ReadOnlySpan`, `decimal`, `nint`/`nuint`,
-       `Nullable<B>` from another type, a type declaring `op_Implicit`, a Haxe-compiled class as the
-       source, an array to a generic interface or another array, a `params` array's expanded form, a
-       generic candidate with a type argument the declared types do not give or with any constraint,
-       and a protected member called from a class that does not derive from its type. A call that such
-       a candidate may also take is refused ("more than one .NET overload of T.m may accept (…)", or
-       "hxc cannot tell whether the .NET method T.m accepts (…)" when it is the only candidate), as
+       variant generic interface or delegate target, `Span`/`ReadOnlySpan`, `decimal`,
+       `nint`/`nuint`, `Nullable<B>` from another type, a type declaring `op_Implicit`, an array to
+       a generic interface or another array, a `params` array's expanded form, a generic candidate
+       with a type argument the declared types do not give or with any constraint, and a protected
+       member called from a class that does not derive from its type. A call that such a candidate
+       may also take is refused ("more than one .NET overload of T.m may accept (…)", or "hxc cannot
+       tell whether the .NET method T.m accepts (…)" when it is the only candidate), as
        `String.Concat(a:NativeArray<Int>)` is (`netlib-extern-unknown-candidate-refused`; C# binds
        `Concat<int>(IEnumerable<int>)`).
      - **Link by link.** The chain is walked from the most derived type, and an override is a candidate
@@ -547,8 +547,14 @@ and `List` copy, and two threads casting one array at once.
        one (gencs unwraps or wraps it). A Haxe-compiled class is its nearest extern .NET superclass,
        found along its Haxe superclass chain (`haxe.Exception` is `System.Exception`), else `object`;
        but when a class on that chain implements an extern .NET interface, directly or through Haxe
-       interfaces extending one, it stays itself, which may convert to .NET types and so makes the
-       call refused (`netlib-extern-haxe-class-implementing-net-interface-refused`). Both bindings
+       interfaces extending one, it stays itself. A Haxe class that stays itself, in either binding
+       (a declared parameter type can be one too), converts for certain to `object`, to the extern
+       classes on its superclass chain and the interfaces implemented along it, with their .NET
+       supertypes, and to nothing else; it is never unknown. As ruling 1 binds only the one applicable
+       method, a single overload taking the interface binds
+       (`netlib-extern-haxe-class-implementing-net-interface`), and `Baz(object)` next to
+       `Baz(IDisposable)` is refused (`netlib-extern-haxe-class-implementing-net-interface-refused`).
+       Both bindings
        take the call's type arguments for the class's and the method's type parameters, so
        `List<int>.Add(T)` takes an int; where that makes two candidates take exactly the arguments
        (`Gen<int>`'s `Foo(T)` and `Foo(int)`), the call is refused, where C# prefers the parameter that

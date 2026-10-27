@@ -15314,9 +15314,9 @@ class P {
 ===
 [compile]
 P.hx:9: characters 9-31 : dotnet: the .NET overload of ValLib.HxArg.Bar depends on the argument types (System.ArgumentException); declare it with @:overload
-# Ruling H: a Haxe class implementing a .NET interface stays itself, which may convert to IDisposable (ruling E), so
-# the arguments' own types bind nothing for certain and ruling F refuses. C# binds Baz(IDisposable); hxc bound
-# Baz(object) before ruling H.
+# Ruling J: a Haxe class implementing a .NET interface converts to it and to object, so both Baz(object) and
+# Baz(IDisposable) apply to the arguments' own types, which bind nothing, and ruling F refuses. C# binds
+# Baz(IDisposable); hxc bound Baz(object) before ruling H.
 --- netlib-extern-haxe-class-implementing-net-interface-refused @netlib
 @:native("ValLib.HxArg") extern class HxArg {
 	static function Baz(o:Any):String;
@@ -15345,6 +15345,25 @@ class MyArg extends cs.system.ArgumentException {
 class P {
 	static function main() {
 		trace(HxArg.Bar(new MyArg()));
+	}
+}
+===
+# Ruling J: a Haxe class implementing a .NET interface converts to that interface for certain, so the one overload
+# taking it binds.
+--- netlib-extern-haxe-class-implementing-net-interface @gencs @netlib
+@:native("ValLib.IHear") extern interface IHear {
+	function Hear():String;
+}
+@:native("ValLib.Ears") extern class Ears {
+	static function Take(h:IHear):String;
+}
+class MyEar implements IHear {
+	public function new() {}
+	public function Hear():String return "ear";
+}
+class P {
+	static function main() {
+		trace(Ears.Take(new MyEar()));
 	}
 }
 ===

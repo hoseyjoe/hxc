@@ -71,6 +71,9 @@ private enum Resolution {
 class ExternMembers {
 	final ctx:Context;
 	final types:DotnetTypes;
+	// Ruling J: what each Haxe-compiled class among the current call's declared and argument types
+	// converts to, by its signature as `sigS` writes it (`method` fills it).
+	var compiledSupers = new Map<String, Array<IlSigNorm>>();
 
 	public function new(ctx:Context, types:DotnetTypes) {
 		this.ctx = ctx;
@@ -217,6 +220,18 @@ class ExternMembers {
 		}
 		var caller = call == null ? null : call.caller;
 		var inst:Null<Inst> = call == null ? null : {cls: call.classArgs, meth: call.methodArgs};
+		compiledSupers = new Map();
+		for (i in 0...want.length) if (isCompiled(want[i])) {
+			var supers = types.withParams(c.params, cf.params, () -> compiledConversions(declared.args[i].t));
+			if (supers != null)
+				compiledSupers.set(sigS(instantiate(want[i], inst, true)), [for (t in supers) instantiate(t, inst, true)]);
+		}
+		if (call != null) for (i in 0...call.args.length) {
+			var s = i < call.argTypes.length ? call.argTypes[i] : null;
+			if (s == null || !isCompiled(s) || compiledSupers.exists(sigS(s))) continue;
+			var supers = compiledConversions(call.args[i].type);
+			if (supers != null) compiledSupers.set(sigS(s), supers);
+		}
 		if (inst != null) want = [for (s in want) DotnetTypes.substitute(s, inst.cls, inst.meth)];
 		var what = isCtor ? "constructor of " + typeS(c) : "overload of " + typeS(c) + "." + name;
 		inline function list(l:Array<IlSigNorm>) return "(" + [for (s in l) sigS(s)].join(", ") + ")";
@@ -259,7 +274,7 @@ class ExternMembers {
 
 	// Ruling H: a Haxe-compiled class `t` (of the signature `s`) as an argument's own type, as C# sees it:
 	// its nearest extern .NET superclass, else object. A class whose chain implements an extern .NET
-	// interface stays itself, which converts to no .NET type but object for certain (ruling E).
+	// interface stays itself, which converts as ruling J says (`compiledConversions`).
 	function asNet(t:T, s:IlSigNorm):IlSigNorm {
 		var c:TClass, params:Array<T>;
 		switch (TypeFunctions.follow(t)) {
@@ -278,6 +293,52 @@ class ExternMembers {
 			params = [for (p in sup.params) TypeFunctions.applyParams(cparams, args, p)];
 			c = sup.c;
 		}
+	}
+
+	// Ruling J: the types the Haxe-compiled class `t` converts to implicitly, but object: the classes of its
+	// Haxe superclass chain, itself included, and the interfaces they implement, directly or through
+	// Haxe interfaces; each extern one with its .NET supertypes. Null when one has no signature.
+	function compiledConversions(t:T):Null<Array<IlSigNorm>> {
+		var c:TClass, params:Array<T>;
+		switch (TypeFunctions.follow(t)) {
+			case TInst(c1, p1):
+				c = c1;
+				params = p1;
+			case _:
+				return null;
+		}
+		var r = [], seen = new Map<String, Bool>();
+		function add(s:IlSigNorm):Void {
+			var todo = [norm(s)];
+			while (todo.length > 0) {
+				var n = todo.shift();
+				var k = sigS(n);
+				if (seen.exists(k)) continue;
+				seen.set(k, true);
+				r.push(n);
+				if (!isCompiled(n)) for (sup in supertypes(n)) todo.push(norm(sup));
+			}
+		}
+		function addInterface(ic:TClass, iparams:Array<T>):Void {
+			add(types.toSig(TInst(ic, iparams)));
+			if (TypeFunctions.hasClassFlag(ic, CExtern)) return;
+			for (i in ic.interfaces) addInterface(i.c, [for (p in i.params) TypeFunctions.applyParams(ic.params, iparams, p)]);
+		}
+		try {
+			while (true) {
+				add(types.toSig(TInst(c, params)));
+				if (TypeFunctions.hasClassFlag(c, CExtern)) break;
+				for (i in c.interfaces) addInterface(i.c, [for (p in i.params) TypeFunctions.applyParams(c.params, params, p)]);
+				var sup = c.superClass;
+				if (sup == null) break;
+				var cparams = c.params, args = params;
+				params = [for (p in sup.params) TypeFunctions.applyParams(cparams, args, p)];
+				c = sup.c;
+			}
+		} catch (_:Unsupported) {
+			return null;
+		}
+		return r;
 	}
 
 	// Whether `c` implements an extern interface, directly or through the interfaces it implements.
@@ -526,10 +587,10 @@ class ExternMembers {
 	// Whether C# converts a `from` to a `to` implicitly (ruling 1, with ruling E's unknowns): yes for
 	// identity, a reference upcast along the metadata's superclasses and interfaces, anything to object,
 	// boxing to a superclass or interface of the value type, the implicit numeric conversions between
-	// primitives, and A to Nullable<A>. Unknown where hxc does not model C#'s rules: Span and
-	// ReadOnlySpan, decimal, nint and nuint, Nullable<B> from another type, a type declaring
-	// op_Implicit, a Haxe-compiled class as the source, an array to a generic interface or another array,
-	// and a variant generic target. A by-reference type converts by identity only.
+	// primitives, and A to Nullable<A>; a Haxe-compiled class as ruling J says. Unknown where hxc does
+	// not model C#'s rules: Span and ReadOnlySpan, decimal, nint and nuint, Nullable<B> from another type,
+	// a type declaring op_Implicit, an array to a generic interface or another array, and a variant
+	// generic target. A by-reference type converts by identity only.
 	function converts(from:IlSigNorm, to:IlSigNorm):Applies {
 		from = norm(from);
 		to = norm(to);
@@ -537,6 +598,14 @@ class ExternMembers {
 		inline function opaque(s:IlSigNorm) return s.match(LVoid | LPointer(_) | LManagedPointer(_) | LTypedReference | LSentinel | LMethod(_, _, _));
 		if (opaque(from) || opaque(to)) return ANo;
 		inline function span(s:IlSigNorm) return isSystemNamed(s, "Span`1") || isSystemNamed(s, "ReadOnlySpan`1");
+		if (isCompiled(from)) {
+			// Ruling J; unknown only where `method` found no conversions to look in.
+			if (to.match(LObject)) return AYes;
+			var supers = compiledSupers.get(sigS(from));
+			if (supers == null) return AUnknown;
+			for (sup in supers) if (IlPaths.sigEq(sup, to)) return AYes;
+			return ANo;
+		}
 		if (span(from) || span(to)) return AUnknown;
 		if (to.match(LObject)) return AYes;
 		inline function unmodelled(s:IlSigNorm) return s.match(LIntPtr | LUIntPtr) || isSystemNamed(s, "Decimal");
@@ -557,8 +626,6 @@ class ExternMembers {
 						return AUnknown;
 					case _:
 				}
-			case LClass(_, _) | LValueType(_, _) if (isCompiled(from)):
-				return AUnknown;
 			case _:
 		}
 		if (to.match(LClass(_, _)) && reaches(from, to)) return AYes;
