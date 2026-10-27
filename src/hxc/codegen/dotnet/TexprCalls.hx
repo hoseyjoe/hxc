@@ -961,13 +961,14 @@ class TexprCalls {
 			own = [for (t in DotnetTypes.inferParams(cf.params, declared, calleeType, false)) g.types.nativeArg(t)];
 		}
 		var site = externCallSite(args, inst, own);
-		var start = isStatic ? null : receiverClass(obj, c);
+		var recv = isStatic ? null : receiverType(obj, c, cf);
+		var start = recv == null ? null : receiverClass(recv, c);
 		if (start != null) {
 			site.receiver = start.c;
 			site.receiverArgs = start.args;
 		} else if (!isStatic && !isSuper && TypeFunctions.hasClassFlag(c, CInterface)) {
 			// Ruling O: through an extern interface that extends the declaring one.
-			switch (TypeFunctions.follow(obj.type)) {
+			switch (recv) {
 				case TInst(rc, _) if (rc != c && TypeFunctions.hasClassFlag(rc, CInterface) && TypeFunctions.hasClassFlag(rc, CExtern) && hasNetType(rc)):
 					g.externs.checkInterfaceReceiver(rc, c, cf);
 				case _:
@@ -1008,9 +1009,9 @@ class TexprCalls {
 	// extern class of the receiver's static type, or its nearest extern superclass that has a .NET type,
 	// with its type arguments. Null where that is `c` itself or `c` is not among its superclasses (an
 	// interface's method, or a receiver of another kind of type).
-	function receiverClass(obj:TExpr, c:TClass):Null<{c:TClass, args:Array<IlSigNorm>}> {
+	function receiverClass(recv:T, c:TClass):Null<{c:TClass, args:Array<IlSigNorm>}> {
 		var rc:TClass, params:Array<T>;
-		switch (TypeFunctions.follow(obj.type)) {
+		switch (recv) {
 			case TInst(c1, p1) if (!c1.kind.match(KTypeParameter(_))):
 				rc = c1;
 				params = p1;
@@ -1032,6 +1033,43 @@ class TexprCalls {
 		var start = rc, startParams = params;
 		while (rc != c) if (!up()) return null;
 		return {c: start, args: g.types.classArgs(start, startParams)};
+	}
+
+	// The receiver's static type for rulings M and O, followed: a type parameter's is its one constraint
+	// that is an extern class or interface with a .NET type, or a Haxe class below one (ruling P). A call of
+	// a hand-written extern's method through a type parameter with several constraints, or none of those,
+	// is refused.
+	function receiverType(obj:TExpr, c:TClass, cf:TClassField):T {
+		var t = TypeFunctions.follow(obj.type);
+		switch (t) {
+			case TInst(tp, _):
+				switch (tp.kind) {
+					case KTypeParameter(constraints) if (!TypeFunctions.hasMeta(":csNative", c.meta)):
+						if (constraints.length == 1) {
+							var k = TypeFunctions.follow(constraints[0]);
+							if (mapsToNet(k)) return k;
+						}
+						throw Unsupported.error("hxc cannot tell which .NET overload of " + ExternMembers.sigS(LClass(g.types.externPath(c), [])) + "."
+							+ ExternMembers.memberName(cf) + " the type parameter " + tp.path.name + "'s constraints select");
+					case _:
+				}
+			case _:
+		}
+		return t;
+	}
+
+	// Whether `t` is an extern class or interface with a .NET type, or a Haxe class below such a class.
+	function mapsToNet(t:T):Bool {
+		var k = switch (t) {
+			case TInst(k, _) if (!k.kind.match(KTypeParameter(_))): k;
+			case _: return false;
+		}
+		if (!TypeFunctions.hasClassFlag(k, CExtern) && TypeFunctions.hasClassFlag(k, CInterface)) return false;
+		while (k != null) {
+			if (TypeFunctions.hasClassFlag(k, CExtern)) return hasNetType(k);
+			k = k.superClass == null ? null : k.superClass.c;
+		}
+		return false;
 	}
 
 	// Whether the extern class `c` names a .NET type a referenced assembly defines.

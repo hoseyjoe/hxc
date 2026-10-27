@@ -258,9 +258,11 @@ class ExternMembers {
 			var byArgs = [
 				for (i in 0...want.length) {
 					var s = i < call.argTypes.length ? call.argTypes[i] : null;
-					// gencs unwraps or wraps a haxe.lang.Null<T> where the declared type is not one, and casts a
-					// basic-typed argument to another declared basic type (ruling N).
-					if (s == null || types.isNullOf(s) && !types.isNullOf(want[i]) || isBasic(s) && isBasic(want[i])) want[i] else s;
+					// gencs unwraps or wraps a haxe.lang.Null<T> where the declared type is not one (a basic-typed
+					// argument to a declared Null<T> included, ruling Q), and casts a basic-typed argument to
+					// another declared basic type (ruling N).
+					if (s == null || types.isNullOf(s) != types.isNullOf(want[i]) && (types.isNullOf(s) || isBasic(s))
+						|| isBasic(s) && isBasic(want[i])) want[i] else s;
 				}
 			];
 			if (!IlPaths.sigsEq(byArgs, want)) {
@@ -286,7 +288,8 @@ class ExternMembers {
 
 	// Ruling O: a call through the extern interface `receiver` of the method `cf` that the extern interface
 	// `c` declares, which `receiver` extends. Refused when a .NET interface between their .NET types (the
-	// receiver's included, `c`'s not) declares a member of the same name, where C#'s interface member
+	// receiver's included, `c`'s not) declares a member of the same name (a method, property or event, any
+	// of which hides the method in C#), where C#'s interface member
 	// lookup, which hxc does not model, may bind another method. A converted `c`'s member was chosen by the
 	// typer from the metadata.
 	public function checkInterfaceReceiver(receiver:TClass, c:TClass, cf:TClassField):Void {
@@ -312,7 +315,8 @@ class ExternMembers {
 			if (IlPaths.equals(p, target) || seen.exists(IlPaths.key(p))) return;
 			seen.set(IlPaths.key(p), true);
 			var cls = rawClass(p);
-			for (m in cls.cmethods) if (m.mname == name)
+			if (Lambda.exists(cls.cmethods, m -> m.mname == name) || Lambda.exists(cls.cprops, q -> q.pname == name)
+				|| Lambda.exists(cls.cevents, e -> e.ename == name))
 				throw Unsupported.error("the .NET method " + typeS(c) + "." + name + " is also declared on " + sigS(LClass(p, []))
 					+ "; hxc does not model C#'s interface member lookup");
 			for (i in cls.cimplements) switch (i.snorm) {

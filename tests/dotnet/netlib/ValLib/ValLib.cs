@@ -181,6 +181,15 @@ namespace ValLib
     public interface IBaseG { string G(object o); }
     public interface IDerivedG : IBaseG { }
     public class GImpl : IDerivedG { public string G(object o) { return "IBaseG.G(object)"; } }
+    public interface IDiaA { string F(object o); }
+    public interface IDiaB : IDiaA { string F(IFoo f); }
+    public interface IDiaC : IDiaA { }
+    public interface IDiaD : IDiaB, IDiaC { }
+    public class DiaImpl : IDiaD
+    {
+        public string F(object o) { return "IDiaA.F(object)"; }
+        public string F(IFoo f) { return "IDiaB.F(IFoo)"; }
+    }
 
     public class FBase { public string F(object o) { return "FBase.F(object)"; } }
     public class FDerived : FBase { public string F(IFoo f) { return "FDerived.F(IFoo " + f.Name() + ")"; } }

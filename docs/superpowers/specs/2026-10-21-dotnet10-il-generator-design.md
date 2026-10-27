@@ -545,16 +545,23 @@ and `List` copy, and two threads casting one array at once.
        `new FDerivedD().F(x)` finds `FDerived.F(IFoo)` although the field is declared on the extern
        `FBase` (`netlib-extern-receiver-type-starts-the-walk`). Through an extern interface receiver
        that extends the declaring extern interface, the call binds as declared, unless a .NET interface
-       between the receiver's .NET type (included) and the declaring one (excluded) declares a member of
-       the same name: C#'s interface member lookup may then bind it, which hxc does not model, so the
-       call is refused ("the .NET method T.m is also declared on I; hxc does not model C#'s interface
-       member lookup", `netlib-extern-interface-receiver-hidden-refused`).
+       between the receiver's .NET type (included) and the declaring one (excluded) declares a method,
+       property or event of the same name: C#'s interface member lookup may then bind it, which hxc does
+       not model, so the call is refused ("the .NET method T.m is also declared on I; hxc does not model
+       C#'s interface member lookup", `netlib-extern-interface-receiver-hidden-refused`,
+       `netlib-extern-interface-receiver-diamond-refused`). A type-parameter receiver counts as its one
+       constraint, as gencs casts it, when that is an extern class or interface with a .NET type or a
+       Haxe class below one (`netlib-extern-type-parameter-receiver`); with several constraints or none
+       of those, a hand-written extern's call is refused ("hxc cannot tell which .NET overload of T.m the
+       type parameter T's constraints select").
      - **Argument types.** At a call, the arguments' own types (what gencs's C# sees) must bind the same
        method definition as the declared types, or the call is refused ("the .NET overload of T.m
        depends on the argument types (…); declare it with @:overload"). An `@:overload` extern is
        exempt: gencs casts its arguments to the declared types. An argument's own type counts as
        declared when it is Dynamic or has no signature, or when it is a `haxe.lang.Null<T>` and the
-       declared type is not one (gencs unwraps or wraps it), or when it is a basic type (`Bool`, the
+       declared type is not one (gencs unwraps or wraps it, a basic-typed argument to a declared
+       `Null<T>` included: `T1(x:Null<Float>)` with an `Int` is ``T1<haxe.lang.Null`1>``), or when it is
+       a basic type (`Bool`, the
        integers, `Char`, `Single`, `Float`) and the declared type is another one, as gencs casts it
        (`T1(x:Float)` with an `Int` is `T1<double>`, and `N(int)`/`N(double)` binds `N(double)`;
        `netlib-extern-basic-argument-cast`). A generic method's type arguments come from
@@ -617,6 +624,9 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   object passed to a hand-written extern is hxc's representation class (`haxe.lang.Function`,
   `Array`, `object`), where gencs's C# infers the closure's own class, ``Array`1`` or
   `haxe.lang.DynamicObject`. Only reflection on the type argument (`typeof(T)`) can tell.
+- A Haxe type parameter passed as such an argument infers `object`: `H<Int>.f(x:U)` calling `T1(x)` is
+  `T1<object>` in hxc, where gencs's generic C# class gives `T1<int>`. This follows from milestone 3c's
+  type-argument erasure, is carried, and is observable only through `typeof(T)`.
 
 ## Left to the builder
 

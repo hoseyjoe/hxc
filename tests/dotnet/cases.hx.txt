@@ -15608,7 +15608,8 @@ P.hx:22: characters 9-41 : dotnet: the .NET overload of ValLib.FDerived.F depend
 # Ruling N: gencs casts a basic-typed argument to a declared basic type of another kind before C# binds
 # (`T1(((double) (i)))`), so the argument counts as the declared type: T1<Double> for Float, T1<UInt32> for UInt and so
 # on, and N(double) binds for a declared Float where an Int argument would bind N(int). hxc bound T1<Int32> and refused N
-# before ruling N.
+# before ruling N. Ruling Q: gencs wraps a basic-typed argument to a declared Null<T>, so it counts as that Null<T>
+# (T1<Null`1>); hxc bound T1<Int32> before.
 --- netlib-extern-basic-argument-cast @gencs @netlib
 @:native("ValLib.HxInfer") extern class HF {
 	static function T1(x:Float):String;
@@ -15623,6 +15624,12 @@ P.hx:22: characters 9-41 : dotnet: the .NET overload of ValLib.FDerived.F depend
 }
 @:native("ValLib.HxInfer") extern class HL {
 	static function T1(x:haxe.Int64):String;
+}
+@:native("ValLib.HxInfer") extern class HNF {
+	static function T1(x:Null<Float>):String;
+}
+@:native("ValLib.HxInfer") extern class HNI {
+	static function T1(x:Null<Int>):String;
 }
 class P {
 	static function main() {
@@ -15639,6 +15646,9 @@ class P {
 		trace(HF.T1(s));
 		trace(HF.N(i));
 		trace(HF.N(1.5));
+		trace(HNF.T1(i));
+		trace(HNF.T1(1));
+		trace(HNI.T1(i));
 	}
 }
 ===
@@ -15696,3 +15706,123 @@ class P {
 	}
 }
 ===
+# Ruling P: a type-parameter receiver is its one constraint, as gencs casts it: the walk starts at the .NET FDerived of
+# the extern FDerivedD constraint (ruling M), so FDerived.F(IFoo) binds as in C#, and an interface constraint with no
+# hiding member binds IBaseG.G(object). hxc bound FBase.F(object) before ruling P.
+--- netlib-extern-type-parameter-receiver @gencs @netlib
+@:native("ValLib.IFoo") extern interface IFoo {
+	function Name():String;
+}
+@:native("ValLib.FBase") extern class FBase {
+	function new():Void;
+	function F(o:IFoo):String;
+}
+@:native("ValLib.FDerived") extern class FDerivedD extends FBase {
+	function new():Void;
+}
+@:native("ValLib.IBaseG") extern interface IBaseGD {
+	function G(o:IFoo):String;
+}
+@:native("ValLib.IDerivedG") extern interface IDerivedGD extends IBaseGD {}
+@:native("ValLib.GImpl") extern class GImpl implements IDerivedGD {
+	function new():Void;
+	function G(o:IFoo):String;
+}
+class MyFoo implements IFoo {
+	public function new() {}
+	public function Name():String return "MyFoo";
+}
+class P {
+	static function f<T:FDerivedD>(d:T):String return d.F(new MyFoo());
+	static function g<T:IDerivedGD>(d:T):String return d.G(new MyFoo());
+	static function main() {
+		trace(f(new FDerivedD()));
+		trace(g(new GImpl()));
+	}
+}
+===
+# Ruling P with an interface constraint whose .NET interface declares another F: ruling O refuses, as for an interface
+# receiver. C# (gencs) binds IDerivedF.F(IFoo); hxc bound IBaseF.F(object) before ruling P.
+--- netlib-extern-type-parameter-receiver-hidden-refused @netlib
+@:native("ValLib.IFoo") extern interface IFoo {
+	function Name():String;
+}
+@:native("ValLib.IBaseF") extern interface IBaseFD {
+	function F(o:IFoo):String;
+}
+@:native("ValLib.IDerivedF") extern interface IDerivedFD extends IBaseFD {}
+@:native("ValLib.FImpl") extern class FImpl implements IDerivedFD {
+	function new():Void;
+	function F(o:IFoo):String;
+}
+class MyFoo implements IFoo {
+	public function new() {}
+	public function Name():String return "MyFoo";
+}
+class P {
+	static function f<T:IDerivedFD>(d:T):String return d.F(new MyFoo());
+	static function main() {
+		trace(f(new FImpl()));
+	}
+}
+===
+[compile]
+P.hx:17: characters 53-69 : dotnet: the .NET method ValLib.IBaseF.F is also declared on ValLib.IDerivedF; hxc does not model C#'s interface member lookup
+# Ruling P: a type-parameter receiver with two constraints is refused, as hxc cannot tell which one C# looks up from.
+--- netlib-extern-type-parameter-receiver-constraints-refused @netlib
+@:native("ValLib.IFoo") extern interface IFoo {
+	function Name():String;
+}
+@:native("ValLib.FBase") extern class FBase {
+	function new():Void;
+	function F(o:IFoo):String;
+}
+@:native("ValLib.FDerived") extern class FDerivedD extends FBase {
+	function new():Void;
+}
+interface IMark {}
+class Both extends FDerivedD implements IMark {
+	public function new() super();
+}
+class MyFoo implements IFoo {
+	public function new() {}
+	public function Name():String return "MyFoo";
+}
+class P {
+	static function f<T:FDerivedD & IMark>(d:T):String return d.F(new MyFoo());
+	static function main() {
+		trace(f(new Both()));
+	}
+}
+===
+[compile]
+P.hx:20: characters 60-76 : dotnet: hxc cannot tell which .NET overload of ValLib.FBase.F the type parameter T's constraints select
+# Ruling O in a diamond: IDiaD extends IDiaB and IDiaC, and IDiaB declares another F on the way to IDiaA, so the call is
+# refused. C# (gencs) binds IDiaB.F(IFoo).
+--- netlib-extern-interface-receiver-diamond-refused @netlib
+@:native("ValLib.IFoo") extern interface IFoo {
+	function Name():String;
+}
+@:native("ValLib.IDiaA") extern interface IDiaAD {
+	function F(o:IFoo):String;
+}
+@:native("ValLib.IDiaB") extern interface IDiaBD extends IDiaAD {}
+@:native("ValLib.IDiaC") extern interface IDiaCD extends IDiaAD {}
+@:native("ValLib.IDiaD") extern interface IDiaDD extends IDiaBD extends IDiaCD {}
+@:native("ValLib.DiaImpl") extern class DiaImpl implements IDiaDD {
+	function new():Void;
+	function F(o:IFoo):String;
+}
+class MyFoo implements IFoo {
+	public function new() {}
+	public function Name():String return "MyFoo";
+}
+class P {
+	static function main() {
+		var d:IDiaDD = new DiaImpl();
+		trace(d.F(new MyFoo()));
+	}
+}
+===
+[compile]
+P.hx:21: characters 9-25 : dotnet: the .NET method ValLib.IDiaA.F is also declared on ValLib.IDiaB; hxc does not model C#'s interface member lookup
