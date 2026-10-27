@@ -17662,6 +17662,10 @@ class P {
 	public function new() {}
 	static function take(i:Int):Int return i * 2;
 	static function side():Int { Sys.println("side"); return 3; }
+	static inline function doubled(x:Int):Int {
+		var y = x * 2;
+		return y;
+	}
 	function inst():Void {
 		var a:Int = untyped __cs__("{0} + 1", fld);
 		var b:Int = cs.Syntax.code("{0} + 1", this.fld);
@@ -17683,6 +17687,12 @@ class P {
 		var r11:Int = cs.Syntax.code("{1} - {0}", 1, 10);
 		Sys.println(r1 + "," + r2 + "," + r3 + "," + r4 + "," + r7 + "," + r8 + "," + r9 + "," + r10 + "," + r11);
 		if (cs.Syntax.code("{0} > 3", i)) Sys.println("gt");
+		var r12:Int = cs.Syntax.code("{0} + {0}", {
+			var t = side();
+			t * 2;
+		});
+		var r13:Int = cs.Syntax.code("{0} + {0}", doubled(side()));
+		Sys.println(r12 + "," + r13);
 		new P().inst();
 	}
 }
@@ -17692,6 +17702,9 @@ side
 side
 10,5,hi!,5,6,42,18,lit,9
 gt
+side
+side
+12,12
 8 8
 # Literals, operators, keyword-type casts and `is` in inline C#, with C#'s numeric promotion: an int with a
 # long computes in long, a uint with an int in long, a char in int; `/` of two ints is integer division;
@@ -17740,6 +17753,15 @@ class P {
 		var b:Bool = cs.Syntax.code("{0} > 6", i);
 		var x:cs.StdTypes.Int64 = cs.Syntax.code("(long){0} * 2", i);
 		Sys.println(b + " " + x);
+		var one:UInt = 1;
+		var ul:cs.StdTypes.UInt64 = untyped __cs__("7UL");
+		Sys.println(cs.Syntax.code("{0} - {1}", one, 5));
+		Sys.println(cs.Syntax.code("{0} < {1}", one, 5));
+		Sys.println(cs.Syntax.code("{0} + {1}", ul, 5));
+		Sys.println(cs.Syntax.code("{0} - (2 + 3)", one));
+		var five:UInt = untyped __cs__("5");
+		var small:cs.StdTypes.UInt8 = untyped __cs__("200 + 55");
+		Sys.println(five + " " + small);
 	}
 }
 ===
@@ -17774,6 +17796,11 @@ False
 c
 True
 true 14
+4294967292
+True
+12
+4294967292
+5 255
 # Inline C#'s result goes into Null<T>, a type parameter and Dynamic as gencs converts a Dynamic there:
 # Null<T>.ofDynamic, Runtime.genericCast (whose cast of an int to string fails, as in gencs), and boxing.
 --- inline-cs-result-into-null-and-type-params @gencs
@@ -18022,3 +18049,37 @@ class P {
 ===
 [compile]
 P.hx:4: characters 40-45 : Out-of-bounds special parameter: 1
+# What C#'s compiler refuses in inline C#, refused here too: a cast with no conversion (CS0030), a constant
+# expression that overflows (CS0220), divides by zero (CS0020) or casts out of range (CS0221), with a constant
+# argument counting as the literal gencs prints, and null as a type parameter's value (CS0403).
+--- inline-cs-refused-conversions-and-constants-is-an-error
+class P {
+	static function nul<T>():T {
+		var t:T = untyped __cs__("null");
+		return t;
+	}
+	static function main() {
+		var s = "x";
+		Sys.println(untyped __cs__("(int){0}", s));
+		Sys.println(untyped __cs__("(long[]){0}", s));
+		Sys.println(untyped __cs__("2147483647 + 1"));
+		Sys.println(untyped __cs__("{0} * 3", 1000000000));
+		Sys.println(untyped __cs__("1 / 0"));
+		Sys.println(untyped __cs__("(byte)300"));
+		Sys.println(untyped __cs__("-(-2147483648)"));
+		Sys.println(untyped __cs__("(int)1e10"));
+		var i:Int = nul();
+		Sys.println(i);
+	}
+}
+===
+[compile]
+P.hx:3: characters 21-35 : dotnet: the inline C# expression is null, which does not convert to the type parameter T (C# error CS0403); use default(T)
+P.hx:8: characters 23-44 : dotnet: the inline C# expression is a string, which does not convert to int (C# error CS0030)
+P.hx:9: characters 23-47 : dotnet: the inline C# expression is a string, which does not convert to long[] (C# error CS0030)
+P.hx:10: characters 23-47 : dotnet: the inline C# constant expression overflows (C# error CS0220)
+P.hx:11: characters 23-52 : dotnet: the inline C# constant expression overflows (C# error CS0220)
+P.hx:12: characters 23-38 : dotnet: the inline C# constant expression divides by zero (C# error CS0020)
+P.hx:13: characters 23-42 : dotnet: the inline C# constant 300 does not convert to byte (C# error CS0221)
+P.hx:14: characters 23-47 : dotnet: the inline C# constant expression overflows (C# error CS0220)
+P.hx:15: characters 23-42 : dotnet: the inline C# constant 10000000000 does not convert to int (C# error CS0221)

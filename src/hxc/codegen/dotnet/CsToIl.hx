@@ -20,6 +20,10 @@ enum CsValue {
 	VPushed(t:IlSigNorm);
 }
 
+// A constant of an integer or real type, as C# checks them at compile time: an integer's value in `i` (a
+// ulong's as its bits), a real's in `f`.
+private typedef CsConst = {t:IlSigNorm, i:haxe.Int64, f:Float};
+
 // A decimal constant: `mantissa` (non-negative) / 10^scale, negated when `negative`.
 private typedef DecimalConst = {mantissa:haxe.Int64, negative:Bool, scale:Int};
 
@@ -109,7 +113,7 @@ class CsToIl {
 					case RValue(want):
 						if (t != null && t.match(LVoid)) error("the inline C# expression has no value (C# error CS0029)");
 						var target = want != null ? want : tl.sig(e.type);
-						convertResult(t, target, !isUntyped, e.type);
+						if (isUntyped && constantConverts(x, target)) tl.convert(t, target) else convertResult(t, target, !isUntyped, e.type);
 				}
 		}
 	}
@@ -135,6 +139,11 @@ class CsToIl {
 			return;
 		}
 		if (cs == null) {
+			if (isTypeParam(target)) {
+				var name = hxc.core.TPrinting.sTypeStr(haxeType);
+				error("the inline C# expression is null, which does not convert to the type parameter " + name.substr(name.lastIndexOf(".") + 1)
+					+ " (C# error CS0403); use default(T)");
+			}
 			if (DotnetTypes.isValueType(target)) error("the inline C# expression is null, which does not convert to "
 				+ hxc.core.TPrinting.sTypeStr(haxeType) + " (C# error CS0037)");
 			return;
@@ -154,12 +163,50 @@ class CsToIl {
 			|| isTypeParam(s) || tl.isHaxeNull(s);
 	}
 
-	// Whether C# has an explicit conversion from `from` to `to` where it has no implicit one (CS0266 rather
-	// than CS0029): between numbers, between references, and between object and a value type.
+	// Whether C# has an explicit conversion from `from` to `to` (CS0266 rather than CS0029 where it has no
+	// implicit one, CS0030 in a cast): between numbers, boxing, unboxing and between references.
 	function explicitlyConverts(from:IlSigNorm, to:IlSigNorm):Bool {
-		if (isNumber(from) && isNumber(to)) return true;
-		if (isReference(from) && isReference(to)) return true;
-		return from.match(LObject) && DotnetTypes.isValueType(to) || to.match(LObject) && DotnetTypes.isValueType(from);
+		if (IlPaths.sigEq(from, to) || isNumber(from) && isNumber(to)) return true;
+		return boxes(from, to) || unboxes(from, to) || referenceConverts(from, to);
+	}
+
+	static function isValue(s:IlSigNorm):Bool return DotnetTypes.isValueType(s) || isTypeParam(s);
+
+	static function isSystemNamed(s:IlSigNorm, name:String):Bool {
+		return switch (s) {
+			case LClass(p, []): p.nested.length == 0 && p.name == name && p.ns.length == 1 && p.ns[0] == "System";
+			case _: false;
+		}
+	}
+
+	// Boxing: a value type (or type parameter) to object or to a reference type it converts to implicitly
+	// (System.ValueType, an interface it implements); a type parameter to any interface.
+	function boxes(from:IlSigNorm, to:IlSigNorm):Bool {
+		if (!isValue(from) || isValue(to)) return false;
+		return to.match(LObject) || isReference(to) && (g.externs.implicitlyConverts(from, to) || isTypeParam(from) && g.externs.isInterface(to));
+	}
+
+	// Unboxing to the value type (or type parameter) `to`: only from object, System.ValueType, System.Enum or
+	// an interface; from any other reference type it is C# error CS0030.
+	function unboxes(from:IlSigNorm, to:IlSigNorm):Bool {
+		return isValue(to) && (from.match(LObject) || isSystemNamed(from, "ValueType") || isSystemNamed(from, "Enum")
+			|| isReference(from) && g.externs.isInterface(from));
+	}
+
+	// C#'s reference conversions, implicit or explicit: an upcast, a downcast, from or to object, to or from an
+	// interface (but not for string, which is sealed, or an array beyond the upcasts), and between arrays of
+	// references that convert so.
+	function referenceConverts(from:IlSigNorm, to:IlSigNorm):Bool {
+		if (!isReference(from) || !isReference(to)) return false;
+		if (from.match(LObject) || to.match(LObject)) return true;
+		inline function upcast(a:IlSigNorm, b:IlSigNorm) return g.isUpcast(a, b) || g.externs.implicitlyConverts(a, b);
+		if (upcast(from, to) || upcast(to, from)) return true;
+		switch [from, to] {
+			case [LVector(a), LVector(b)]: return isReference(a) && isReference(b) && referenceConverts(a, b);
+			case _:
+		}
+		if (from.match(LString | LVector(_) | LArray(_, _)) || to.match(LString | LVector(_) | LArray(_, _))) return false;
+		return g.externs.isInterface(from) || g.externs.isInterface(to);
 	}
 
 	// ---- names
@@ -261,14 +308,18 @@ class CsToIl {
 				not();
 				LBool;
 			case CUnop(_, e1):
+				constant(x);
 				negate(e1);
 			case CBinop(op = "&&" | "||", a, b):
 				shortCircuit(op == "&&", a, b);
 			case CBinop(op, a, b):
+				constant(x);
 				var ta = value(a);
 				binary(op, a, b, ta, value(b));
 			case CCast(t, e1):
-				castExpr(resolveType(t), e1);
+				var to = resolveType(t);
+				constant(x);
+				castExpr(to, e1);
 			case CIs(e1, t):
 				var to = resolveType(t);
 				box(value(e1));
@@ -500,34 +551,29 @@ class CsToIl {
 
 	static function isFloat(s:IlSigNorm):Bool return s.match(LFloat32 | LFloat64);
 
-	// The type C#'s binary numeric promotion computes `a` and `b` in, or null where C# has no operator. A
-	// non-negative int literal goes with a uint or ulong operand as that type, as C# converts a constant.
-	static function promote(a:IlSigNorm, b:IlSigNorm, aConst:Bool, bConst:Bool):Null<IlSigNorm> {
+	// The type C#'s binary numeric promotion computes `a` and `b` in, or null where C# has no operator. `ca`
+	// and `cb` are their constants, if they are: a non-negative int constant goes with a uint or ulong operand
+	// as that type, and a non-negative long constant with a ulong, as C# converts a constant implicitly.
+	static function promote(a:IlSigNorm, b:IlSigNorm, ca:Null<CsConst>, cb:Null<CsConst>):Null<IlSigNorm> {
 		if (isDecimal(a) || isDecimal(b)) return isFloat(a) || isFloat(b) ? null : decimal;
 		if (a.match(LFloat64) || b.match(LFloat64)) return LFloat64;
 		if (a.match(LFloat32) || b.match(LFloat32)) return LFloat32;
 		inline function signed(s:IlSigNorm) return s.match(LInt8 | LInt16 | LInt32 | LInt64);
 		if (a.match(LUInt64) || b.match(LUInt64)) {
-			var other = a.match(LUInt64) ? b : a, otherConst = a.match(LUInt64) ? bConst : aConst;
-			return signed(other) && !otherConst ? null : LUInt64;
+			var other = a.match(LUInt64) ? b : a, c = a.match(LUInt64) ? cb : ca;
+			return signed(other) && !nonNegative(c, true) ? null : LUInt64;
 		}
 		if (a.match(LInt64) || b.match(LInt64)) return LInt64;
 		if (a.match(LUInt32) || b.match(LUInt32)) {
-			var other = a.match(LUInt32) ? b : a, otherConst = a.match(LUInt32) ? bConst : aConst;
-			return signed(other) && !otherConst ? LInt64 : LUInt32;
+			var other = a.match(LUInt32) ? b : a, c = a.match(LUInt32) ? cb : ca;
+			return signed(other) && !nonNegative(c, false) ? LInt64 : LUInt32;
 		}
 		return LInt32;
 	}
 
-	// A non-negative int literal, which converts to any integer type that holds it.
-	static function isIntConstant(x:CsExpr):Bool {
-		return switch (x.def) {
-			case CParen(e1): isIntConstant(e1);
-			case CLiteral(LInt(s)):
-				var lit = intLiteral(s);
-				lit != null && lit.t.match(LInt32);
-			case _: false;
-		}
+	// A non-negative int constant (with `long`, also a long one), which converts to an unsigned type.
+	static function nonNegative(c:Null<CsConst>, long:Bool):Bool {
+		return c != null && (c.t.match(LInt32) || long && c.t.match(LInt64)) && c.i >= 0;
 	}
 
 	// Converts the value under the one of type `top` on the stack with `convert`, `top` going through a
@@ -542,7 +588,7 @@ class CsToIl {
 	// The operands of types `ta` and `tb` on the stack, written `a` and `b`, converted to the type C#
 	// computes `op` in, which this returns; refused where C# has no numeric operator for them.
 	function numericOperands(op:String, a:CsExpr, b:CsExpr, ta:Null<IlSigNorm>, tb:Null<IlSigNorm>):IlSigNorm {
-		var t = isNumber(ta) && isNumber(tb) ? promote(ta, tb, isIntConstant(a), isIntConstant(b)) : null;
+		var t = isNumber(ta) && isNumber(tb) ? promote(ta, tb, constant(a), constant(b)) : null;
 		if (t == null) operatorError(op, ta, tb);
 		// A small integer and a uint are an int32 on the stack already.
 		var same = IlPaths.sigEq(ta, t) || t.match(LInt32 | LUInt32) && ta.match(LInt8 | LUInt8 | LInt16 | LUInt16 | LChar | LInt32 | LUInt32);
@@ -720,6 +766,239 @@ class CsToIl {
 		return error("the inline C# operator " + op + " does not apply to " + article(csName(t)) + " (C# error CS0023)");
 	}
 
+	// ---- constants
+
+	// The value of `x` when it is a C# constant expression of a number type, which C# computes at compile
+	// time: a literal, an Int or Float constant argument (gencs prints it as a literal), and `-`, the
+	// arithmetic operators and numeric casts of constants. As in C#, an overflow (CS0220), a division by zero
+	// (CS0020) and a constant cast out of range (CS0221) are errors. Null for any other expression.
+	function constant(x:CsExpr):Null<CsConst> {
+		switch (x.def) {
+			case CParen(e1):
+				return constant(e1);
+			case CLiteral(LInt(s)):
+				var lit = intLiteral(s);
+				return lit == null ? null : {t: lit.t, i: lit.v, f: 0.0};
+			case CLiteral(LChar(c)):
+				return {t: LChar, i: c, f: 0.0};
+			case CLiteral(LReal(s)):
+				var suffix = s.charAt(s.length - 1).toLowerCase();
+				if (suffix == "m") return null;
+				var digits = suffix == "f" || suffix == "d" ? s.substr(0, s.length - 1) : s;
+				return {t: suffix == "f" ? LFloat32 : LFloat64, i: 0, f: Std.parseFloat(digits)};
+			case CPlaceholder(n) if (n < args.length):
+				var t = tl.sig(args[n].type);
+				return switch (strip(args[n]).expr) {
+					case TConst(TInt(v)) if (t.match(LInt32)): {t: LInt32, i: v, f: 0.0};
+					case TConst(TFloat(f)) if (t.match(LFloat64)): {t: LFloat64, i: 0, f: Std.parseFloat(f)};
+					case _: null;
+				}
+			case CUnop("-", e1):
+				return negateConstant(e1);
+			case CBinop(op = "+" | "-" | "*" | "/" | "%", a, b):
+				var ca = constant(a), cb = constant(b);
+				if (ca == null || cb == null) return null;
+				var t = promote(ca.t, cb.t, ca, cb);
+				if (t == null || isDecimal(t)) return null;
+				if (!isFloat(t)) return {t: t, i: integerOp(op, ca.i, cb.i, t), f: 0.0};
+				var fa = asFloat(ca), fb = asFloat(cb);
+				return {t: t, i: 0, f: switch (op) {
+					case "+": fa + fb;
+					case "-": fa - fb;
+					case "*": fa * fb;
+					case "/": fa / fb;
+					case _: fa % fb;
+				}};
+			case CCast(ct, e1):
+				var c = constant(e1);
+				var to = resolveType(ct);
+				if (c == null || !isNumber(to) || isDecimal(to)) return null;
+				if (isFloat(to)) return {t: to, i: 0, f: asFloat(c)};
+				if (!isFloat(c.t)) {
+					if (!fits(c, to)) constantRange(constString(c), to);
+					return {t: to, i: c.i, f: 0.0};
+				}
+				var whole = c.f < 0 ? Math.fceil(c.f) : Math.ffloor(c.f);
+				if (!Math.isFinite(c.f) || !floatFits(whole, to)) constantRange(Std.string(c.f), to);
+				// A ulong of 2^63 or more as its bits.
+				return {t: to, i: haxe.Int64.fromFloat(whole >= 9.223372036854775808e18 ? whole - 1.8446744073709551616e19 : whole), f: 0.0};
+			case _:
+				return null;
+		}
+	}
+
+	// `-c` of the constant `x`, with C#'s promotion: `-2147483648` and `-9223372036854775808` are int.MinValue
+	// and long.MinValue; a ulong has no `-` (value reports it).
+	function negateConstant(x:CsExpr):Null<CsConst> {
+		switch (x.def) {
+			case CLiteral(LInt(s)):
+				var lit = intLiteral(s);
+				if (lit != null && lit.t.match(LUInt32) && lit.v == haxe.Int64.make(0, 0x80000000)) return {t: LInt32, i: haxe.Int64.make(-1, 0x80000000), f: 0.0};
+				if (lit != null && lit.t.match(LUInt64) && lit.v == haxe.Int64.make(0x80000000, 0)) return {t: LInt64, i: lit.v, f: 0.0};
+			case _:
+		}
+		var c = constant(x);
+		if (c == null) return null;
+		return switch (c.t) {
+			case LFloat32 | LFloat64: {t: c.t, i: 0, f: -c.f};
+			case LUInt64: null;
+			case LUInt32: {t: LInt64, i: -c.i, f: 0.0};
+			case LInt64:
+				if (c.i == haxe.Int64.make(0x80000000, 0)) overflow();
+				{t: LInt64, i: -c.i, f: 0.0};
+			case _:
+				if (c.i == haxe.Int64.make(-1, 0x80000000)) overflow();
+				{t: LInt32, i: -c.i, f: 0.0};
+		}
+	}
+
+	function overflow():Dynamic return error("the inline C# constant expression overflows (C# error CS0220)");
+
+	function constantRange(text:String, to:IlSigNorm):Dynamic {
+		return error("the inline C# constant " + text + " does not convert to " + csName(to) + " (C# error CS0221)");
+	}
+
+	// Whether the constant `x` converts to `target` implicitly, as C# converts a constant: an int one that a
+	// smaller or unsigned integer type holds, or a non-negative long one to ulong.
+	function constantConverts(x:CsExpr, target:IlSigNorm):Bool {
+		if (!target.match(LInt8 | LUInt8 | LInt16 | LUInt16 | LUInt32 | LUInt64)) return false;
+		var c = constant(x);
+		return c != null && (c.t.match(LInt32) && fits(c, target) || c.t.match(LInt64) && target.match(LUInt64) && c.i >= 0);
+	}
+
+	// Whether the integer constant `c` is in the range of the integer type `to`.
+	static function fits(c:CsConst, to:IlSigNorm):Bool {
+		// A ulong of 2^63 or more.
+		if (c.t.match(LUInt64) && c.i < 0) return to.match(LUInt64);
+		var v = c.i;
+		inline function within(lo:haxe.Int64, hi:haxe.Int64) return v >= lo && v <= hi;
+		return switch (to) {
+			case LInt8: within(-128, 127);
+			case LUInt8: within(0, 255);
+			case LInt16: within(-32768, 32767);
+			case LUInt16 | LChar: within(0, 65535);
+			case LInt32: within(haxe.Int64.make(-1, 0x80000000), 0x7FFFFFFF);
+			case LUInt32: within(0, haxe.Int64.make(0, 0xFFFFFFFF));
+			case LInt64: true;
+			case LUInt64: v >= 0;
+			case _: false;
+		}
+	}
+
+	// Whether the whole number `f` is in the range of the integer type `to`.
+	static function floatFits(f:Float, to:IlSigNorm):Bool {
+		return switch (to) {
+			case LInt8: f >= -128 && f <= 127;
+			case LUInt8: f >= 0 && f <= 255;
+			case LInt16: f >= -32768 && f <= 32767;
+			case LUInt16 | LChar: f >= 0 && f <= 65535;
+			case LInt32: f >= -2147483648.0 && f <= 2147483647.0;
+			case LUInt32: f >= 0 && f <= 4294967295.0;
+			case LInt64: f >= -9.223372036854775808e18 && f < 9.223372036854775808e18;
+			case LUInt64: f >= 0 && f < 1.8446744073709551616e19;
+			case _: false;
+		}
+	}
+
+	static function asFloat(c:CsConst):Float {
+		if (isFloat(c.t)) return c.f;
+		var low:Float = c.i.low < 0 ? c.i.low + 4294967296.0 : c.i.low;
+		var high:Float = c.t.match(LUInt64) && c.i.high < 0 ? c.i.high + 4294967296.0 : c.i.high;
+		return high * 4294967296.0 + low;
+	}
+
+	static function constString(c:CsConst):String {
+		if (!(c.t.match(LUInt64) && c.i < 0)) return Std.string(c.i);
+		// Unsigned: v / 10 is (v >>> 1) / 5.
+		var q = (c.i >>> 1) / 5;
+		return Std.string(q) + Std.string(c.i - q * 10);
+	}
+
+	// `a op b` of two integer constants of the type `t` (a ulong's as its bits), checked as C# checks them.
+	function integerOp(op:String, a:haxe.Int64, b:haxe.Int64, t:IlSigNorm):haxe.Int64 {
+		if ((op == "/" || op == "%") && b == 0) error("the inline C# constant expression divides by zero (C# error CS0020)");
+		switch (t) {
+			case LUInt64:
+				switch (op) {
+					case "+":
+						var r = a + b;
+						if (haxe.Int64.ucompare(r, a) < 0) overflow();
+						return r;
+					case "-":
+						if (haxe.Int64.ucompare(a, b) < 0) overflow();
+						return a - b;
+					case "*":
+						return mulU64(a, b);
+					case _:
+						var qr = udivMod(a, b);
+						return op == "/" ? qr.q : qr.r;
+				}
+			case LInt64:
+				var min = haxe.Int64.make(0x80000000, 0);
+				switch (op) {
+					case "+":
+						var r = a + b;
+						if ((a >= 0) == (b >= 0) && (r >= 0) != (a >= 0)) overflow();
+						return r;
+					case "-":
+						var r = a - b;
+						if ((a >= 0) != (b >= 0) && (r >= 0) != (a >= 0)) overflow();
+						return r;
+					case "*":
+						var r = a * b;
+						if (a != 0 && (r / a != b || a == -1 && b == min)) overflow();
+						return r;
+					case "/":
+						if (a == min && b == -1) overflow();
+						return a / b;
+					case _:
+						return b == -1 ? haxe.Int64.ofInt(0) : a % b;
+				}
+			case _:
+				// An int or uint: the exact value fits in a long, then must fit in `t`.
+				var r = switch (op) {
+					case "+": a + b;
+					case "-": a - b;
+					case "*":
+						if (Math.abs(asFloat({t: LInt64, i: a, f: 0.0}) * asFloat({t: LInt64, i: b, f: 0.0})) >= 1099511627776.0) overflow();
+						a * b;
+					case "/": a / b;
+					case _: a % b;
+				}
+				if (!fits({t: LInt64, i: r, f: 0.0}, t)) overflow();
+				return r;
+		}
+	}
+
+	// The ulong product of `a` and `b` (bits), or the overflow error.
+	function mulU64(a:haxe.Int64, b:haxe.Int64):haxe.Int64 {
+		var ah = haxe.Int64.make(0, a.high), al = haxe.Int64.make(0, a.low);
+		var bh = haxe.Int64.make(0, b.high), bl = haxe.Int64.make(0, b.low);
+		if (ah != 0 && bh != 0) overflow();
+		var x = ah != 0 ? ah : bh, y = ah != 0 ? bl : al;
+		if (asFloat({t: LInt64, i: x, f: 0.0}) * asFloat({t: LInt64, i: y, f: 0.0}) >= 4294967296.0) overflow();
+		var low = al * bl;
+		var r = ((x * y) << 32) + low;
+		if (haxe.Int64.ucompare(r, low) < 0) overflow();
+		return r;
+	}
+
+	// Unsigned division of the bits `a` by `b` (not 0).
+	static function udivMod(a:haxe.Int64, b:haxe.Int64):{q:haxe.Int64, r:haxe.Int64} {
+		if (b < 0) {
+			var q = haxe.Int64.ucompare(a, b) >= 0 ? haxe.Int64.ofInt(1) : haxe.Int64.ofInt(0);
+			return {q: q, r: a - q * b};
+		}
+		if (a >= 0) return {q: a / b, r: a % b};
+		var q = ((a >>> 1) / b) << 1;
+		var r = a - q * b;
+		if (haxe.Int64.ucompare(r, b) >= 0) {
+			q = q + 1;
+			r = r - b;
+		}
+		return {q: q, r: r};
+	}
+
 	// ---- casts
 
 	// `(to)x`. A decimal from a constant folds as Roslyn does (plan ruling 5).
@@ -756,12 +1035,13 @@ class CsToIl {
 			decimalCall(isFloat(from) ? "op_Explicit" : "op_Implicit", decimal, [from]);
 		} else if (isNumber(from) && isNumber(to)) {
 			numericCast(from, to);
-		} else if ((DotnetTypes.isValueType(from) || isTypeParam(from)) && (to.match(LObject) || isReference(to) && g.externs.implicitlyConverts(from, to))) {
+		} else if (boxes(from, to)) {
 			box(from);
-		} else if ((DotnetTypes.isValueType(to) || isTypeParam(to)) && isReference(from)) {
+			if (!to.match(LObject) && !g.externs.implicitlyConverts(from, to)) tl.castTo(to);
+		} else if (unboxes(from, to)) {
 			il.opToken(IlOps.UNBOX_ANY, g.typeTokenOf(to), 1, 1);
-		} else if (isReference(from) && isReference(to)) {
-			if (!g.isUpcast(from, to) && !to.match(LObject)) tl.castTo(to);
+		} else if (referenceConverts(from, to)) {
+			if (!to.match(LObject) && !g.isUpcast(from, to) && !g.externs.implicitlyConverts(from, to)) tl.castTo(to);
 		} else {
 			error("the inline C# expression is " + article(csName(from)) + ", which does not convert to " + csName(to) + " (C# error CS0030)");
 		}

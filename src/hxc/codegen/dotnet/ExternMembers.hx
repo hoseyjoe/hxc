@@ -942,6 +942,19 @@ class ExternMembers {
 		return false;
 	}
 
+	// Whether `s` is an interface: a Haxe-compiled one, or a .NET one by its metadata.
+	public function isInterface(s:IlSigNorm):Bool {
+		switch (s) {
+			case LClass(p, _):
+				var c = compiledClass(p);
+				if (c != null) return TypeFunctions.hasClassFlag(c, CInterface);
+			case _:
+				return false;
+		}
+		var cls = classOf(s);
+		return cls != null && cls.cflags.semantics.indexOf(SInterface) >= 0;
+	}
+
 	// The .NET class of `s`, or null for one no referenced assembly defines.
 	function classOf(s:IlSigNorm):Null<IlClass> {
 		var path = switch (s) {
