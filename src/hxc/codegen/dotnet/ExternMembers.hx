@@ -29,13 +29,15 @@ class ExternMembers {
 		this.types = types;
 	}
 
-	// The class as the first library defining it declares it.
+	// The class as the assembly NetRefs finds for it declares it.
 	function rawClass(path:IlPath):IlClass {
-		for (lib in ctx.netLibs) if (lib.definesType(path)) {
-			var cls = lib.rawClass(path);
-			if (cls != null) return cls;
-		}
-		throw new Unsupported("the .NET type " + NetConverter.ilpathS(path) + " outside the referenced assemblies", false);
+		var refs = NetRefs.of(ctx);
+		var lib = refs.definer(path);
+		if (lib == null) throw Unsupported.error(refs.missing(path));
+		var cls = lib.rawClass(path);
+		if (cls == null)
+			throw Unsupported.bug("the .NET type " + NetConverter.ilpathS(path) + ", which " + lib.filePath + " defines but hxc cannot read");
+		return cls;
 	}
 
 	static function isSystem(s:Null<IlSigT>, name:String):Bool {
@@ -158,7 +160,7 @@ class ExternMembers {
 	// refused where they are used.
 	public function operators(c:TClass, name:String):Array<{parent:IlSigNorm, sig:IlSigNorm, args:Array<IlSigNorm>}> {
 		var path = try types.externPath(c) catch (_:Unsupported) null;
-		if (path == null || !Lambda.exists(ctx.netLibs, lib -> lib.definesType(path))) return [];
+		if (path == null || NetRefs.of(ctx).definer(path) == null) return [];
 		for (link in chain(c)) {
 			var found = [];
 			for (m in link.cls.cmethods) {
@@ -178,7 +180,7 @@ class ExternMembers {
 	// The type a .NET enum stores its values as (its value__ field's), or null when `path` is not an
 	// enum of the referenced assemblies.
 	public function enumUnderlying(path:IlPath):Null<IlSigNorm> {
-		if (!Lambda.exists(ctx.netLibs, lib -> lib.definesType(path))) return null;
+		if (NetRefs.of(ctx).definer(path) == null) return null;
 		var cls = rawClass(path);
 		if (!isSystem(cls.csuper, "Enum")) return null;
 		for (f in cls.cfields) if (f.fname == "value__") return f.fsig.snorm;
@@ -188,6 +190,8 @@ class ExternMembers {
 	// The literal a constructor of an extern .NET enum stands for, and the type the enum stores it as.
 	public function enumLiteral(en:TEnum, ef:TEnumField):{c:IlConstant, underlying:IlSigNorm} {
 		var path = types.externPathOf(TEnumDecl(en));
+		var refs = NetRefs.of(ctx);
+		if (refs.definer(path) == null) throw Unsupported.error(refs.missing(path));
 		var underlying = enumUnderlying(path);
 		if (underlying == null) throw new Unsupported("the .NET enum " + NetConverter.ilpathS(path) + " outside the referenced assemblies", false);
 		var name = DotnetNames.nativeName(ef.meta);

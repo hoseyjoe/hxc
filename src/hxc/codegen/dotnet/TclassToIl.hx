@@ -536,7 +536,7 @@ class TclassToIl {
 		}
 		function add(i:TClass, params:Array<T>) {
 			// An extern interface with no .NET counterpart is only a Haxe type.
-			if (TypeFunctions.hasClassFlag(i, CExtern) && !g.ctx.netPathMap.exists(Globals.sTypePath(i.path))
+			if (TypeFunctions.hasClassFlag(i, CExtern) && !g.ctx.netDottedMap.exists(Globals.sTypePath(i.path))
 				&& DotnetNames.nativeName(i.meta) == null)
 				return;
 			var sig = g.types.classSig(i, params);
@@ -1596,7 +1596,8 @@ class TclassToIl {
 		}
 		var body = if (stub != null) {
 			g.records.push("stubbed " + what + ": " + stub.what);
-			stubBody(g, "hxc dotnet: " + what + " uses " + stub.what + ", which " + stub.verb() + " not supported yet");
+			stubBody(g, stub.isError ? "hxc dotnet: " + what + ": " + stub.what
+				: "hxc dotnet: " + what + " uses " + stub.what + ", which " + stub.verb() + " not supported yet");
 		} else {
 			code.body(code.locals.length == 0 ? 0 : g.mb.standAloneSig(g.sigs.locals(code.locals)));
 		}

@@ -20,6 +20,9 @@ class NetLibrary {
 	public var isStd(default, null):Bool;
 	// an extern lib is only read, never copied next to the output
 	public var isExtern:Bool = false;
+	// Read by NetRefs only to lower references to it: never in ctx.netLibs or netPathMap, and without an
+	// extern-type loader, so Haxe code cannot see its types.
+	public var refOnly:Bool = false;
 
 	var com:Context;
 	var ilctx:Null<NetLibCtx> = null;
@@ -49,7 +52,11 @@ class NetLibrary {
 			var path = IlMetaTools.getPath(TypeDef(td));
 			var hx = netpathToHx(path);
 			if (debug) Sys.println("found " + Globals.sTypePath(hx));
-			com.netPathMap.set(Globals.sTypePath(hx), path);
+			if (!refOnly) {
+				com.netPathMap.set(Globals.sTypePath(hx), path);
+				var dotted = NetConverter.ilpathS(path);
+				if (!com.netDottedMap.exists(dotted)) com.netDottedMap.set(dotted, path);
+			}
 			meta.typedefs.set(IlPaths.key(path), td);
 		}
 		ilctx = {nstd: isStd, ncom: com, nil: meta};
@@ -81,6 +88,41 @@ class NetLibrary {
 	// Whether the assembly itself holds the type's definition (not a forwarder to it).
 	public function definesType(path:IlPath):Bool {
 		return getCtx().nil.typedefs.exists(IlPaths.key(path));
+	}
+
+	// The top-level types the assembly defines, in table order.
+	public function topLevelTypes():Array<IlPath> {
+		return [
+			for (td in getCtx().nil.typedefOrder) {
+				var path = IlMetaTools.getPath(TypeDef(td));
+				if (path.nested.length == 0) path;
+			}
+		];
+	}
+
+	// The names of the assemblies this one references, in table order.
+	public function assemblyRefs():Array<String> {
+		var r = [];
+		for (m in getCtx().nil.tables[TableIdx.IAssemblyRef]) switch (m) {
+			case AssemblyRef(a): r.push(a.name);
+			case _:
+		}
+		return r;
+	}
+
+	// The assembly a type forwarder of this one sends `path` to, or null. A nested type goes wherever its
+	// outermost type does.
+	public function forwarderTarget(path:IlPath):Null<String> {
+		var top = path.nested.length > 0 ? path.nested[0] : path.name;
+		for (m in getCtx().nil.tables[TableIdx.IExportedType]) switch (m) {
+			case ExportedType(e) if (e.typeName == top && IlPaths.strsEq(e.typeNamespace, path.ns)):
+				switch (e.implementation) {
+					case AssemblyRef(r): return r.name;
+					case _:
+				}
+			case _:
+		}
+		return null;
 	}
 
 	// The type's members as the assembly declares them, before the converter normalizes them.

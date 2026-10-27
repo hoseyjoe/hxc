@@ -86,7 +86,7 @@ class DotnetCtx {
 	}
 
 	public function report(u:Unsupported):Void {
-		var msg = u.isBug ? u.what : u.what + " " + u.verb() + " not supported yet";
+		var msg = u.isBug || u.isError ? u.what : u.what + " " + u.verb() + " not supported yet";
 		error(msg, u.pos == null ? Position.nullPos : u.pos);
 	}
 
@@ -375,7 +375,7 @@ class DotnetCtx {
 
 class GenerateDotnet {
 	// The .NET a program is built for unless -D dotnet-version says otherwise, and the oldest it can be.
-	static inline final defaultVersion = 10;
+	public static inline final defaultVersion = 10;
 
 	// The runtimeconfig.json of a program for .NET `version`. Joined with "\n" so the file is the same
 	// whatever line endings this source was checked out with.
@@ -417,16 +417,16 @@ class GenerateDotnet {
 		if (ctx.resources.keys().hasNext())
 			g.error("embedded resources (-resource or Context.addResource) are not supported with -D dotnet until milestone 4", Position.nullPos);
 		var identities = new Map<String, ModuleBuilder.AssemblyIdentity>();
+		// The identity of the file that defines the type, a reference-only one too.
 		mb.externScope = function(path:IlPath) {
-			for (lib in ctx.netLibs) if (lib.definesType(path)) {
-				var id = identities.get(lib.filePath);
-				if (id == null) {
-					id = lib.identity();
-					identities.set(lib.filePath, id);
-				}
-				return id;
+			var lib = NetRefs.of(ctx).definer(path);
+			if (lib == null) throw "internal error: no referenced assembly defines " + NetConverter.ilpathS(path);
+			var id = identities.get(lib.filePath);
+			if (id == null) {
+				id = lib.identity();
+				identities.set(lib.filePath, id);
 			}
-			throw "internal error: no referenced assembly defines " + NetConverter.ilpathS(path);
+			return id;
 		}
 		DotnetNames.noRoot = ctx.defines.rawDefined("no_root");
 		FieldHashes.reset();

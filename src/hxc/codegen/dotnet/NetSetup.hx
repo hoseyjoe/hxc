@@ -80,6 +80,63 @@ class NetSetup {
 		return lib;
 	}
 
+	// The .NET version the output targets: -D dotnet-version, else 10 (GenerateDotnet reports a bad value).
+	public static function dotnetVersion(ctx:Context):Int {
+		if (!ctx.defines.rawDefined("dotnet_version")) return GenerateDotnet.defaultVersion;
+		var v = parseInt(ctx.defines.rawDefinedValueSafe("dotnet_version"));
+		return v == null || v < GenerateDotnet.defaultVersion ? GenerateDotnet.defaultVersion : v;
+	}
+
+	// The .NET SDK's reference pack for that version, `<dotnet root>/packs/Microsoft.NETCore.App.Ref/
+	// <v>.0.<highest patch>/ref/net<v>.0`, or null. Its assemblies keep the version <v>.0.0.0 across
+	// patches, so which patch is installed does not change the output.
+	public static function referencePack(ctx:Context):Null<String> {
+		var root = dotnetRoot();
+		if (root == null) return null;
+		var v = Std.string(dotnetVersion(ctx));
+		var packs = root + "/packs/Microsoft.NETCore.App.Ref";
+		if (!FileSystem.exists(packs) || !FileSystem.isDirectory(packs)) return null;
+		var best:Null<String> = null, bestPatch = -1;
+		for (d in FileSystem.readDirectory(packs)) {
+			// release versions only: <v>.0.<patch>
+			var parts = d.split(".");
+			if (parts.length != 3 || parts[0] != v || parts[1] != "0") continue;
+			var c = parts[2].charCodeAt(0);
+			var patch = c != null && c >= "0".code && c <= "9".code ? parseInt(parts[2]) : null;
+			if (patch == null || patch <= bestPatch) continue;
+			var dir = packs + "/" + d + "/ref/net" + v + ".0";
+			if (!FileSystem.exists(dir) || !FileSystem.isDirectory(dir)) continue;
+			bestPatch = patch;
+			best = dir;
+		}
+		return best;
+	}
+
+	// DOTNET_ROOT, else the directory of the `dotnet` found on PATH (a link followed), with `/` separators.
+	static function dotnetRoot():Null<String> {
+		inline function slashes(s:String) return s.split("\\").join("/");
+		var env = Sys.getEnv("DOTNET_ROOT");
+		if (env != null && env != "") {
+			var r = slashes(env);
+			while (r.length > 1 && StringTools.endsWith(r, "/")) r = r.substr(0, r.length - 1);
+			return r;
+		}
+		var path = Sys.getEnv("PATH");
+		if (path == null) return null;
+		var windows = Sys.systemName() == "Windows";
+		for (dir in path.split(windows ? ";" : ":")) {
+			if (windows && StringTools.startsWith(dir, "\"") && StringTools.endsWith(dir, "\"") && dir.length >= 2)
+				dir = dir.substr(1, dir.length - 2);
+			if (dir == "") continue;
+			var exe = dir + "/" + (windows ? "dotnet.exe" : "dotnet");
+			if (!FileSystem.exists(exe) || FileSystem.isDirectory(exe)) continue;
+			var full = slashes(FileSystem.fullPath(exe));
+			var i = full.lastIndexOf("/");
+			return i <= 0 ? "/" : full.substr(0, i);
+		}
+		return null;
+	}
+
 	// OCaml's int_of_string for a decimal value: an optional sign and digits only.
 	public static function parseInt(s:String):Null<Int> {
 		var start = s.length > 0 && (s.charAt(0) == "-" || s.charAt(0) == "+") ? 1 : 0;

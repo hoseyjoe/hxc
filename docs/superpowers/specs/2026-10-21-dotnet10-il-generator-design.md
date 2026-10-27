@@ -508,11 +508,12 @@ and `List` copy, and two threads casting one array at once.
    indexer (hxcs's `@:classCode`), manifest resources (embedded resources, `-resource` or
    `Context.addResource`, are a compile error until then).
    - The first measurement step re-measures the server app classes that milestone 3 leaves out,
-     once the IChatHandler (properties of .NET interfaces) and `ToolPlugin.ToolFunction` (a type from
-     a `--net-lib` assembly's own references) causes are fixed. A class whose declaration fails gets
-     no plan, so its method bodies were never lowered in 3b or 3c, and 3c-type refusals there
-     (casts, companions, the `Array` forward, generic reflection) are unmeasured: `CSServer` and the
-     `ai.*` chain, 24 classes and about 13.9k lines (task 12's report has the list).
+     once the IChatHandler (properties of .NET interfaces) and `ToolPlugin.ToolFunction` (a nested type
+     of the `--net-lib` `Shared.dll`, whose dotted name hxc split into a namespace) causes are fixed.
+     A class whose declaration fails gets no plan, so its method bodies were never lowered in 3b or
+     3c, and 3c-type refusals there (casts, companions, the `Array` forward, generic reflection) are
+     unmeasured: `CSServer` and the `ai.*` chain, 24 classes and about 13.9k lines (task 12's report
+     has the list).
    - An extern method whose declared signature does not match its IL signature by
      `ExternMembers.method`'s match is refused: haxeui-cs's `UIImage.DeviceScale(Visual)`, whose
      converted `Avalonia.Visual` parameter does not match the metadata's (the desktop app's probe), and
@@ -539,6 +540,13 @@ each is listed here.
   (`netlib-nullable-better`). gencs throws at that first read: `Method "get_HasValue" not found on type
   System.Int32`. The same case also reads through a `Null<Nullable<Int>>` in hxc; gencs never gets
   that far, so the case does not show what it does there.
+- A hand-written extern whose .NET supertype lives in an assembly that sits beside a `--net-lib` but
+  is not passed compiles and runs in hxc (`netlib-dependency-beside`: `LibA.Panel` extends
+  `LibB.BaseCtl`, and only `LibA.dll` is passed). hxc reads `LibB.dll` from beside `LibA.dll` for
+  lowering only and references it by that file's identity. gencs's C# does not build, because hxcs
+  references only the `--net-lib` files: `CS0012: The type 'BaseCtl' is defined in an assembly that
+  is not referenced`. haxeui-cs relies on this when only `HaxeUICs.dll` is passed. With no gencs
+  run to compare, the case is not `@gencs`.
 
 ## Left to the builder
 

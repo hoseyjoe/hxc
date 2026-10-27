@@ -16,6 +16,8 @@ class Unsupported {
 	public var plural:Bool;
 	// A bug in hxc rather than a missing feature: reported as "dotnet: <what>", in std code as well.
 	public var isBug = false;
+	// A compile error rather than a missing feature: reported as "dotnet: <what>", and stubbed in std code.
+	public var isError = false;
 
 	public function new(what:String, plural:Bool, ?pos:Position) {
 		this.what = what;
@@ -26,6 +28,12 @@ class Unsupported {
 	public static function bug(what:String):Unsupported {
 		var u = new Unsupported(what, false);
 		u.isBug = true;
+		return u;
+	}
+
+	public static function error(what:String):Unsupported {
+		var u = new Unsupported(what, false);
+		u.isError = true;
 		return u;
 	}
 
@@ -187,6 +195,10 @@ class DotnetTypes {
 		if (p != null) return p;
 		var native = DotnetNames.nativeName(infos.meta);
 		if (native != null) {
+			// A loaded library's type, nested ones included: their @:native joins the enclosing types with
+			// dots, which the split below would make a namespace.
+			var q = ctx.netDottedMap.get(native);
+			if (q != null) return q;
 			var parts = native.split(".");
 			var name = parts.pop();
 			return {ns: parts, nested: [], name: name};
@@ -198,10 +210,11 @@ class DotnetTypes {
 		return externPathOf(TClassDecl(c));
 	}
 
-	// A referenced type must come from one of the referenced assemblies.
+	// A referenced type must come from an assembly NetRefs finds.
 	function defined(p:IlPath):IlPath {
-		for (lib in ctx.netLibs) if (lib.definesType(p)) return p;
-		throw new Unsupported("the .NET type " + NetConverter.ilpathS(p) + " outside the referenced assemblies", false);
+		var refs = NetRefs.of(ctx);
+		if (refs.definer(p) != null) return p;
+		throw Unsupported.error(refs.missing(p));
 	}
 
 	// A type the assembly defines, unless it was left out.

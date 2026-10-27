@@ -115,6 +115,11 @@ class Context {
 	// define: the IL path of each Haxe path (keyed by sTypePath), the last library read winning.
 	public var netLibs:Array<hxc.codegen.dotnet.NetLibrary> = [];
 	public var netPathMap:Map<String, hxc.codegen.dotnet.IlData.IlPath> = new Map();
+	// The same types by their dotted .NET name (NetConverter.ilpathS, which joins nested types with `.`
+	// as @:native does), the first library read winning.
+	public var netDottedMap:Map<String, hxc.codegen.dotnet.IlData.IlPath> = new Map();
+	// The assemblies read to lower references outside netLibs, and what was found there (NetRefs.of).
+	public var netRefs:Null<hxc.codegen.dotnet.NetRefs> = null;
 
 	public var displaySpec:Null<String>;
 
