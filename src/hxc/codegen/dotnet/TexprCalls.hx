@@ -109,7 +109,7 @@ class TexprCalls {
 				code.opToken(IlOps.LDSFLDA, tl.staticField(c, cf).token, 0, 1);
 				return true;
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c) && cf.kind.match(Var(_))):
-				switch (g.externs.field(c, cf)) {
+				switch (g.externs.field(c, cf, true, true)) {
 					case XField(open, false):
 						var isStatic = fa.match(FStatic(_, _));
 						var parent = parentOf(c, instantiation(c, fa));
@@ -951,11 +951,13 @@ class TexprCalls {
 		var isStatic = fa.match(FStatic(_, _));
 		var isSuper = !isStatic && strip(obj).expr.match(TConst(TSuper));
 		var m = g.externs.method(c, cf);
-		// A generic method's type arguments, inferred from the call as for a Haxe method.
-		var margs:Array<IlSigNorm> = [];
+		// A generic method's type arguments: those the declared types give when the extern method has no
+		// type parameters (ExternMembers.method), else inferred from the call as for a Haxe method.
+		var margs:Array<IlSigNorm> = m.typeArgs != null ? m.typeArgs : [];
 		// Matching skips methods of another generic arity, so this fires only after a matching bug.
-		if (cf.params.length != m.genericCount) throw Unsupported.bug("a .NET method with another generic arity (internal: overload matching)");
-		if (m.genericCount > 0) {
+		if (m.typeArgs == null && cf.params.length != m.genericCount || m.typeArgs != null && m.typeArgs.length != m.genericCount)
+			throw Unsupported.bug("a .NET method with another generic arity (internal: overload matching)");
+		if (m.typeArgs == null && m.genericCount > 0) {
 			var declared = switch (fa) {
 				case FInstance(_, params, _): TypeFunctions.applyParams(c.params, params, cf.type);
 				case _: cf.type;
@@ -977,18 +979,18 @@ class TexprCalls {
 				throw "internal error: not a method signature";
 		}
 		if (isSuper) code.ldarg(0) else if (!isStatic) receiver(obj, parent);
-		pushArgs(args, [for (a in ilArgs) DotnetTypes.substitute(a, parentArgs, margs)]);
+		pushExternArgs(args, [for (a in ilArgs) DotnetTypes.substitute(a, parentArgs, margs)], m.omitted);
 		var token = g.mb.memberRef(g.typeTokenOf(parent), m.name, g.sigs.methodSig(m.sig, m.genericCount));
 		if (margs.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec(margs));
 		var retSlot = DotnetTypes.substitute(ilRet, parentArgs, margs);
 		var op = isStatic || isSuper || DotnetTypes.isValueType(parent) ? IlOps.CALL : IlOps.CALLVIRT;
-		code.opToken(op, token, args.length + (isStatic ? 0 : 1), retSlot.match(LVoid) ? 0 : 1);
+		code.opToken(op, token, ilArgs.length + (isStatic ? 0 : 1), retSlot.match(LVoid) ? 0 : 1);
 		if (retSlot.match(LVoid) && needVal(ret)) throw new Unsupported("the value of a .NET setter call", false);
 		tl.coerce(retSlot, ret);
 	}
 
-	// A .NET constructor: its MemberRef, with the arguments pushed.
-	function externCtor(c:TClass, params:TParams, args:Array<TExpr>):{token:Int, parent:IlSigNorm} {
+	// A .NET constructor: its MemberRef, with the arguments pushed (`argc` of them).
+	function externCtor(c:TClass, params:TParams, args:Array<TExpr>):{token:Int, parent:IlSigNorm, argc:Int} {
 		var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
 		if (r == null) throw "internal error: no constructor of " + Globals.sTypePath(c.path) + " fits";
 		if (r.c != c) throw new Unsupported("inherited .NET constructors", true);
@@ -1002,9 +1004,81 @@ class TexprCalls {
 			case LMethod(_, _, l): l;
 			case _: throw "internal error: not a method signature";
 		}
-		pushArgs(args, [for (a in ilArgs) ExternMembers.subst(a, parentArgs)]);
-		return {token: g.mb.memberRef(g.typeTokenOf(parent), ".ctor", g.sigs.methodSig(m.sig, 0)), parent: parent};
+		pushExternArgs(args, [for (a in ilArgs) ExternMembers.subst(a, parentArgs)], m.omitted);
+		return {token: g.mb.memberRef(g.typeTokenOf(parent), ".ctor", g.sigs.methodSig(m.sig, 0)), parent: parent, argc: ilArgs.length};
 	}
+
+	// Pushes the arguments of a call of a .NET method whose parameters are of the types `slots`: those
+	// given, then a default for each one the call leaves out, `omitted`.
+	function pushExternArgs(args:Array<TExpr>, slots:Array<IlSigNorm>, omitted:Array<IlMethodArg>):Void {
+		if (args.length + omitted.length != slots.length) throw new Unsupported("calls that leave out arguments", true);
+		pushArgs(args, slots.slice(0, args.length));
+		for (i in 0...omitted.length) pushDefault(omitted[i], slots[args.length + i]);
+	}
+
+	// Pushes what C# passes for the parameter `arg`, of the type `slot`, that a call leaves out, as Roslyn
+	// fills it from the metadata (values notes §2): its Constant row's value (a Nullable<A>'s wrapped, a
+	// value going to a reference type boxed, null to a value type default(T)), its DecimalConstant or
+	// DateTimeConstant attribute's, an empty params array, or for an [Optional] parameter without a value
+	// System.Reflection.Missing.Value going to object and default(T) otherwise.
+	function pushDefault(arg:IlMethodArg, slot:IlSigNorm):Void {
+		var inner = switch (slot) {
+			case LValueType(_, [a]) if (DotnetTypes.isSystemNullable(slot)): a;
+			case _: null;
+		}
+		// Wraps the value on the stack when the slot is its Nullable.
+		function wrap():Void {
+			if (inner == null) return;
+			code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(slot), ".ctor", g.sigs.method(true, LVoid, [LTypeParam(0)], 0)), 1, 1);
+		}
+		switch (arg.pdefault) {
+			case PDecimal(scale, negative, hi, mid, lo):
+				var decimal = LValueType(systemPath("Decimal"), []);
+				code.ldcI4(lo);
+				code.ldcI4(mid);
+				code.ldcI4(hi);
+				code.ldcI4(negative ? 1 : 0);
+				code.ldcI4(scale);
+				code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(decimal), ".ctor", g.sigs.method(true, LVoid, [LInt32, LInt32, LInt32, LBool, LUInt8], 0)), 5, 1);
+				wrap();
+				return;
+			case PDateTime(ticks):
+				var dateTime = LValueType(systemPath("DateTime"), []);
+				code.opI64(IlOps.LDC_I8, ticks, 0, 1);
+				code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(dateTime), ".ctor", g.sigs.method(true, LVoid, [LInt64], 0)), 1, 1);
+				wrap();
+				return;
+			case PParamArray:
+				var elem = switch (slot) {
+					case LVector(t): t;
+					case _: throw "internal error: a params parameter that is no array";
+				}
+				var empty = g.mb.memberRef(g.typeTokenOf(LClass(systemPath("Array"), [])), "Empty", g.sigs.method(false, LVector(LMethodTypeParam(0)), [], 1));
+				code.opToken(IlOps.CALL, g.mb.methodSpec(empty, g.sigs.methodSpec([elem])), 0, 1);
+				return;
+			case null:
+		}
+		switch (arg.constant) {
+			case null if (slot.match(LObject)):
+				var missing = LClass({ns: ["System", "Reflection"], nested: [], name: "Missing"}, []);
+				code.opToken(IlOps.LDSFLD, g.mb.memberRef(g.typeTokenOf(missing), "Value", g.sigs.field(missing)), 0, 1);
+			case null | INull:
+				tl.pushDefault(slot);
+			case k:
+				var t = inner != null ? inner : slot;
+				var stored = switch (t) {
+					case LValueType(p, []):
+						var u = g.externs.enumUnderlying(p);
+						u != null ? u : t;
+					case _: t;
+				}
+				var pushed = constant(k, stored);
+				if (inner != null) wrap() else if (pushed != null && DotnetTypes.isValueType(pushed) && !DotnetTypes.isValueType(slot))
+					code.opToken(IlOps.BOX, g.typeTokenOf(pushed), 1, 1);
+		}
+	}
+
+	static function systemPath(name:String):IlPath return {ns: ["System"], nested: [], name: name};
 
 	// A Haxe class's constructor: the one the arguments reach, or the implicit one; 0 for a struct's
 	// parameterless one, which is not declared.
@@ -1057,7 +1131,7 @@ class TexprCalls {
 		if (isExtern(s.c)) {
 			code.ldarg(0);
 			var ctor = externCtor(s.c, s.params, args);
-			code.opToken(IlOps.CALL, ctor.token, args.length + 1, 0);
+			code.opToken(IlOps.CALL, ctor.token, ctor.argc + 1, 0);
 			return;
 		}
 		var ctor = haxeCtor(s.c, s.params, args);
@@ -1094,7 +1168,7 @@ class TexprCalls {
 		}
 		if (isExtern(c)) {
 			var ctor = externCtor(c, params, args);
-			code.opToken(IlOps.NEWOBJ, ctor.token, args.length, 1);
+			code.opToken(IlOps.NEWOBJ, ctor.token, ctor.argc, 1);
 			tl.coerce(ctor.parent, ret);
 			return;
 		}

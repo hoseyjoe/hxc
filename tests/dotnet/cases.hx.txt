@@ -14939,3 +14939,221 @@ P.hx:5: Equals, 0, 7
 P.hx:5: Equals, 0, 7
 P.hx:17: true, false
 P.hx:20: false, true, true, true
+# Hand-written externs bind the member C# would bind (ruling 1): an exact match first, else the one applicable
+# overload through C#'s implicit conversions (upcasts, boxing, numeric widening, A to Nullable<A>), with an
+# optional-parameter or params tail that the call leaves out filled from the metadata as Roslyn fills it.
+# A Haxe-optional ?s:String on the extern is padded with null by the typer, which gencs passes (not the C#
+# default).
+--- netlib-optional-defaults @gencs @netlib
+@:native("ValLib.Element") extern class HElement {
+	function new():Void;
+	function Focus():Bool;
+}
+@:native("ValLib.Input") extern class HInput extends HElement {
+	function new():Void;
+}
+@:native("ValLib.Opt") extern class HOpt {
+	static function All(a:Int, ?b:Int, ?s:String, ?d:Float):String;
+	@:native("All") static function AllFew(a:Int, b:Int):String;
+	static function Structs(a:Int):String;
+	static function Dec(a:Int):String;
+	static function Attr(a:Int):String;
+}
+@:native("ValLib.Opt") extern class HOpt2 {
+	static function Params(a:Int):String;
+}
+class P {
+	static function main() {
+		trace(new HElement().Focus());
+		trace(new HInput().Focus());
+		trace(HOpt.AllFew(1, 2));
+		trace(HOpt.Structs(1));
+		trace(HOpt.Dec(1));
+		trace(HOpt.Attr(1));
+	}
+}
+===
+[run]
+Focus(A,None)
+P.hx:20: true
+Focus(A,None)
+P.hx:21: true
+P.hx:22: All(1,2,dflt,1.5,B,null,True,-3,0.25,z,Ctrl,null)
+P.hx:23: Structs(1,0,Pt(0),null,4,C)
+P.hx:24: Dec(1,1.25)
+P.hx:25: Attr(1,0,42,Missing:System.Reflection.Missing,null)
+--- netlib-optional-declared @gencs @netlib
+@:native("ValLib.Opt") extern class HOpt {
+	static function All(a:Int, b:Int, ?s:String):String;
+}
+class P {
+	static function main() {
+		// Haxe pads ?s with null, which gencs passes; C# fills the rest from the metadata.
+		trace(HOpt.All(1, 2));
+		trace(HOpt.All(1, 2, "s"));
+	}
+}
+===
+[run]
+P.hx:7: All(1,2,null,1.5,B,null,True,-3,0.25,z,Ctrl,null)
+P.hx:8: All(1,2,s,1.5,B,null,True,-3,0.25,z,Ctrl,null)
+# A Haxe-optional value-type argument (?b:Int) that the call leaves out stays refused (ruling 4): gencs passes
+# default(haxe.lang.Null<int>), which its C# fails to compile (CS1503).
+--- netlib-optional-declared-value-type @netlib
+@:native("ValLib.Opt") extern class HOpt {
+	static function All(a:Int, ?b:Int):String;
+}
+class P {
+	static function main() {
+		trace(HOpt.All(1));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-20 : dotnet: leaving out the optional value-type argument b of an extern method is not supported yet
+# haxeui-cs's DeviceScale(visual:Control) over C#'s DeviceScale(Visual), and Num(i:Int) over Num(double),
+# Obj(s:String) over Obj(object): each is the one applicable overload.
+--- netlib-extern-signature-match @gencs @netlib
+@:native("ValLib.Visual") extern class HVisual { function new():Void; }
+@:native("ValLib.Control") extern class HControl extends HVisual { function new():Void; }
+@:native("ValLib.Panel") extern class HPanel extends HControl { function new():Void; }
+@:native("ValLib.Sig") extern class HSig {
+	static function Scale(c:HControl):String;
+	@:overload(function(v:HVisual):String {})
+	static function Over(c:HControl):String;
+	static function Num(i:Int):String;
+	static function Obj(s:String):String;
+}
+class P {
+	static function main() {
+		trace(HSig.Scale(new HPanel()));
+		trace(HSig.Over(new HPanel()));
+		trace(HSig.Over(new HVisual()));
+		trace(HSig.Num(3));
+		trace(HSig.Obj("x"));
+	}
+}
+===
+[run]
+P.hx:13: Scale(Panel)
+P.hx:14: Over(Control)
+P.hx:15: Over(Visual)
+P.hx:16: Num(3)
+P.hx:17: Obj(x)
+# Two overloads that both accept the declared argument through upcasts (Review Focus 3): C# would pick the
+# more specific Pick(Control); ruling 1 refuses rather than rank them, and never picks one by metadata order.
+--- netlib-extern-ambiguous-is-an-error @netlib
+@:native("ValLib.Visual") extern class HVisual { function new():Void; }
+@:native("ValLib.Control") extern class HControl extends HVisual { function new():Void; }
+@:native("ValLib.Panel") extern class HPanel extends HControl { function new():Void; }
+@:native("ValLib.Sig") extern class HSig {
+	static function Pick(p:HPanel):String;
+}
+class P {
+	static function main() {
+		trace(HSig.Pick(new HPanel()));
+	}
+}
+===
+[compile]
+P.hx:9: characters 9-32 : dotnet: more than one .NET overload of ValLib.Sig.Pick accepts (ValLib.Panel)
+# The server app's CSTools.hx extern shape over System.Text.Json (from the reference pack): non-generic Haxe
+# overloads of the IL's generic Serialize<TValue>(TValue, JsonSerializerOptions = null). gencs writes
+# Serialize((object) x) and C# infers TValue = object from the declared Any and fills the optional options.
+--- netlib-extern-generic-inference @gencs
+import cs.system.collections.generic.List_1;
+
+@:native("System.Text.Json.JsonSerializer") extern class JsonSerializer {
+	@:overload
+	public static function Serialize(obj:Any):String;
+	@:overload
+	public static function Serialize(obj:Any, opts:JsonSerializerOptions):String;
+}
+
+@:native("System.Text.Json.JsonSerializerOptions") extern class JsonSerializerOptions {
+	public function new();
+	public var IncludeFields:Bool;
+}
+
+@:nativeGen class Rec {
+	public var name:String;
+	public var count:Int;
+	public function new(name:String, count:Int) {
+		this.name = name;
+		this.count = count;
+	}
+}
+
+class P {
+	static function main() {
+		var opts = new JsonSerializerOptions();
+		opts.IncludeFields = true;
+		var anon = {a: 1, b: "two"};
+		var rec = new Rec("r", 3);
+		var list = new List_1<Int>();
+		list.Add(1);
+		list.Add(2);
+		trace(JsonSerializer.Serialize(anon));
+		trace(JsonSerializer.Serialize(anon, opts));
+		trace(JsonSerializer.Serialize(rec));
+		trace(JsonSerializer.Serialize(rec, opts));
+		trace(JsonSerializer.Serialize(list));
+		trace(JsonSerializer.Serialize(list, opts));
+	}
+}
+===
+# The other implicit conversions ruling 1 counts, on arguments and on a property write: A to Nullable<A> (Show(int?)
+# declared Show(x:Int), NProp declared Int), boxing to an interface the value type implements (Cmp(IComparable)), and the
+# numeric widenings int to long and to float (Wide(long, float)).
+--- netlib-extern-conversions @gencs @netlib
+@:native("ValLib.Nul") extern class HNul {
+	static function Show(x:Int):String;
+}
+@:native("ValLib.Sig") extern class HSig {
+	static function Cmp(i:Int):String;
+	static function Wide(i:Int, j:Int):String;
+}
+@:native("ValLib.Model") extern class HModel {
+	function new():Void;
+	var NProp:Int;
+	function ToString():String;
+}
+class P {
+	static function main() {
+		trace(HNul.Show(3));
+		trace(HSig.Cmp(5));
+		trace(HSig.Wide(1, 2));
+		var m = new HModel();
+		m.NProp = 6;
+		trace(m.ToString());
+	}
+}
+===
+# A hand-written extern member that no overload takes, a return type that does not convert to the declared one, and a
+# property whose type does not convert to the declared one for a read, nor the declared one to it for a write.
+--- netlib-extern-mismatch-refused @netlib
+@:native("ValLib.Sig") extern class HSig {
+	static function Num(s:String):String;
+	@:native("Ret") static function RetInt():Int;
+}
+@:native("ValLib.Model") extern class HModel {
+	function new():Void;
+	var NProp:Int;
+	var NField:Dynamic;
+}
+class P {
+	static function main() {
+		trace(HSig.Num("x"));
+		trace(HSig.RetInt());
+		var m = new HModel();
+		trace(m.NProp);
+		var d:Dynamic = 1;
+		m.NField = d;
+	}
+}
+===
+[compile]
+P.hx:12: characters 9-22 : dotnet: no .NET overload of ValLib.Sig.Num takes (string)
+P.hx:13: characters 9-22 : dotnet: ValLib.Sig.Ret returns string, which does not convert to the declared int
+P.hx:15: characters 9-16 : dotnet: ValLib.Model.NProp is of the type System.Nullable<int>, which does not convert to the declared int
+P.hx:17: characters 3-15 : dotnet: the declared object does not convert to System.Nullable<int>, the type of ValLib.Model.NField

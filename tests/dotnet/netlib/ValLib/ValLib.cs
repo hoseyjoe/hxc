@@ -107,5 +107,9 @@ namespace ValLib
         public static string Num(double d) { return "Num(" + d + ")"; }
         public static string Obj(object o) { return "Obj(" + o + ")"; }
         public static string Ret() { return "Ret"; }
+        public static string Pick(Visual v) { return "Pick(Visual)"; }
+        public static string Pick(Control c) { return "Pick(Control)"; }
+        public static string Cmp(IComparable c) { return "Cmp(" + c.GetType().Name + " " + c + ")"; }
+        public static string Wide(long l, float f) { return "Wide(" + l + "," + f + ")"; }
     }
 }

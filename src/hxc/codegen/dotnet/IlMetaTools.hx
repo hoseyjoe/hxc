@@ -199,9 +199,25 @@ class IlMetaTools {
 				ret = ilsigT(r);
 				if (paramList.length != args.length) {
 					var i = 0;
-					margs = [for (s in args) {name: "arg" + (++i), flags: ParamFlags.nullFlags, sig: ilsigT(s)}];
+					margs = [
+						for (s in args) {name: "arg" + (++i), flags: ParamFlags.nullFlags, sig: ilsigT(s), constant: null, pdefault: null}
+					];
 				} else
-					margs = [for (i in 0...args.length) {name: paramList[i].name, flags: paramList[i].flags, sig: ilsigT(args[i])}];
+					margs = [
+						for (i in 0...args.length) {
+							var p = paramList[i];
+							var constant:Null<IlConstant> = null, pdefault:Null<IlParamDefault> = null;
+							for (r in ctx.findAll(T.IParam, p.id)) switch (r) {
+								case Constant(c):
+									constant = c.value;
+								case CustomAttribute(a):
+									var d = paramDefault(a);
+									if (d != null) pdefault = d;
+								case _:
+							}
+							{name: p.name, flags: p.flags, sig: ilsigT(args[i]), constant: constant, pdefault: pdefault};
+						}
+					];
 			case _:
 				throw "Assertion failed: convert_method";
 		}
@@ -231,6 +247,48 @@ class IlMetaTools {
 			mtypes: types,
 			msemantics: semantics,
 		};
+	}
+
+	// The namespace and name of a custom attribute's type, from its constructor.
+	static function attrType(a:MetaCustomAttribute):Null<{ns:Array<String>, name:String}> {
+		return switch (a.type) {
+			case Method(m) if (m.declaring != null): {ns: m.declaring.namespace, name: m.declaring.name};
+			case MemberRef(r): switch (r.cls) {
+					case TypeRef(t): {ns: t.namespace, name: t.name};
+					case TypeDef(d): {ns: d.namespace, name: d.name};
+					case _: null;
+				}
+			case _: null;
+		}
+	}
+
+	// The default value a parameter's DecimalConstant or DateTimeConstant attribute gives, or its params
+	// array; null for any other attribute.
+	static function paramDefault(a:MetaCustomAttribute):Null<IlParamDefault> {
+		var t = attrType(a);
+		if (t == null) return null;
+		if (t.name == "ParamArrayAttribute" && IlPaths.strsEq(t.ns, ["System"])) return PParamArray;
+		if (!IlPaths.strsEq(t.ns, ["System", "Runtime", "CompilerServices"]) || a.value == null) return null;
+		var fixed = a.value.fixed;
+		// Both of DecimalConstantAttribute's constructors: (byte, byte, uint, uint, uint) and (byte, byte, int, int, int).
+		function int(i:Int):Null<Int> {
+			return switch (fixed[i]) {
+				case InstConstant(IByte(v) | IInt(v)): v;
+				case _: null;
+			}
+		}
+		switch (t.name) {
+			case "DecimalConstantAttribute" if (fixed.length == 5):
+				var scale = int(0), sign = int(1), hi = int(2), mid = int(3), lo = int(4);
+				if (scale != null && sign != null && hi != null && mid != null && lo != null) return PDecimal(scale, sign != 0, hi, mid, lo);
+			case "DateTimeConstantAttribute" if (fixed.length == 1):
+				switch (fixed[0]) {
+					case InstConstant(IInt64(_, ticks)): return PDateTime(ticks);
+					case _:
+				}
+			case _:
+		}
+		return null;
 	}
 
 	static function accessor(ms:MetaMethodSemantics):IlAccessor return {name: ms.method.name, flags: ms.method.flags};

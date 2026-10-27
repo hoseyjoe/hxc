@@ -607,7 +607,7 @@ class TclassToIl {
 					// Whether erasure makes the interface's CLR signature differ from its Haxe types applied.
 					var erased = false;
 					if (isExternInterface) {
-						var m = g.externs.method(i.c, f);
+						var m = g.externs.method(i.c, f, true);
 						if (m.genericCount > 0) throw new Unsupported("generic .NET interface methods", true);
 						var iargs = switch (i.sig) {
 							case LClass(_, l): l;
@@ -848,7 +848,7 @@ class TclassToIl {
 			if (base != null) {
 				if (TypeFunctions.hasClassFlag(s.c, CExtern)) {
 					if (s.c.params.length > 0 || owner.params.length > 0) throw new Unsupported("overriding methods of generic .NET classes", true);
-					var m = try g.externs.method(s.c, cf) catch (_:Unsupported) throw changed;
+					var m = try g.externs.method(s.c, cf, true) catch (_:Unsupported) throw changed;
 					if (!m.isVirtual) throw new Unsupported("overriding a non-virtual .NET method", false);
 					var ret = switch (m.sig) {
 						case LMethod(_, r, _): r;
@@ -1281,7 +1281,7 @@ class TclassToIl {
 		var inst = g.types.classArgs(s.c, s.params);
 		code.ldarg(0);
 		if (TypeFunctions.hasClassFlag(s.c, CExtern)) {
-			var m = g.externs.method(s.c, origin);
+			var m = g.externs.method(s.c, origin, true);
 			var parent = ExternMembers.subst(m.parent, inst);
 			var parentArgs = switch (parent) {
 				case LClass(_, l) | LValueType(_, l): l;

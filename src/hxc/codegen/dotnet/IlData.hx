@@ -139,7 +139,19 @@ class IlField {
 	public function copy():IlField return {fname: fname, fflags: fflags, fsig: fsig, fconstant: fconstant};
 }
 
-typedef IlMethodArg = {name:String, flags:ParamFlags, sig:IlSigT};
+// A parameter's default value as a custom attribute gives it, not a Constant row, or its `params` array:
+// what C# fills the argument with when a call leaves it out.
+enum IlParamDefault {
+	// DecimalConstantAttribute: the decimal(lo, mid, hi, negative, scale) constructor's arguments.
+	PDecimal(scale:Int, negative:Bool, hi:Int, mid:Int, lo:Int);
+	// DateTimeConstantAttribute.
+	PDateTime(ticks:haxe.Int64);
+	// ParamArrayAttribute: an empty array.
+	PParamArray;
+}
+
+// `constant` is the parameter's Constant row (its C# default value), if any.
+typedef IlMethodArg = {name:String, flags:ParamFlags, sig:IlSigT, constant:Null<IlConstant>, pdefault:Null<IlParamDefault>};
 
 @:structInit
 class IlMethod {

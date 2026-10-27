@@ -302,6 +302,17 @@ class TexprToIl {
 		if (sameAsEnum(from, to) || sameAsEnum(to, from)) return;
 		// So is a smaller integer, widened as C# does implicitly.
 		if (from.match(LChar | LInt8 | LUInt8 | LInt16 | LUInt16) && to.match(LInt32)) return;
+		// And so are C#'s other implicit widenings between the small integers, Char and UInt.
+		if (from.match(LInt8) && to.match(LInt16) || from.match(LUInt8) && to.match(LInt16 | LUInt16 | LUInt32)
+			|| from.match(LUInt16 | LChar) && to.match(LUInt32) || from.match(LChar) && to.match(LUInt16))
+			return;
+		// A value into a System.Nullable of its type, which C# wraps implicitly.
+		switch (to) {
+			case LValueType(_, [a]) if (DotnetTypes.isSystemNullable(to) && IlPaths.sigEq(from, a)):
+				code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(to), ".ctor", g.sigs.method(true, LVoid, [LTypeParam(0)], 0)), 1, 1);
+				return;
+			case _:
+		}
 		var fromValue = DotnetTypes.isValueType(from) || isTypeParam(from);
 		var toValue = DotnetTypes.isValueType(to) || isTypeParam(to);
 		if (to.match(LString) && !inRuntimeClass()) {
@@ -331,7 +342,7 @@ class TexprToIl {
 				code.op(IlOps.CONV_R8, 1, 1);
 			} else if (from.match(LFloat64 | LInt64 | LUInt64) && to.match(LInt32)) code.op(IlOps.CONV_I4, 1, 1);
 			// To Single and Int64 as C#'s casts, and Int's implicit widening, convert.
-			else if (from.match(LFloat64 | LInt32 | LInt64) && to.match(LFloat32)) code.op(IlOps.CONV_R4, 1, 1);
+			else if (from.match(LFloat64 | LInt32 | LInt64 | LInt8 | LInt16 | LUInt8 | LUInt16 | LChar) && to.match(LFloat32)) code.op(IlOps.CONV_R4, 1, 1);
 			else if (from.match(LUInt32 | LUInt64) && to.match(LFloat32)) {
 				code.op(IlOps.CONV_R_UN, 1, 1);
 				code.op(IlOps.CONV_R4, 1, 1);
@@ -1168,7 +1179,7 @@ class TexprToIl {
 				var isStatic = fa.match(FStatic(_, _));
 				var inst = calls.instantiation(c, fa);
 				var parent = calls.parentOf(c, inst);
-				switch (g.externs.field(c, cf)) {
+				switch (g.externs.field(c, cf, false, true)) {
 					case XField(open, initOnly):
 						var s = ExternMembers.subst(open, inst);
 						if (initOnly) throw new Unsupported("assignments to read-only .NET fields", true);

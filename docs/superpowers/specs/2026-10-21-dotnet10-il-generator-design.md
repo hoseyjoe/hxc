@@ -514,10 +514,16 @@ and `List` copy, and two threads casting one array at once.
      3c, and 3c-type refusals there (casts, companions, the `Array` forward, generic reflection) are
      unmeasured: `CSServer` and the `ai.*` chain, 24 classes and about 13.9k lines (task 12's report
      has the list).
-   - An extern method whose declared signature does not match its IL signature by
-     `ExternMembers.method`'s match is refused: haxeui-cs's `UIImage.DeviceScale(Visual)`, whose
-     converted `Avalonia.Visual` parameter does not match the metadata's (the desktop app's probe), and
-     `InputElement.Focus()` called without its optional arguments.
+   - A hand-written extern method binds the .NET method C# would bind for a call with its declared
+     types, under a restricted rule: the exact signature first, else the one applicable overload
+     (implicit conversions: identity, upcasts, boxing, numeric widening but to `decimal`, `A` to
+     `Nullable<A>`; then an omitted tail of optional or `params` parameters, filled as Roslyn fills
+     them; a generic method's type arguments taken from the declared types, as for the server app's
+     `JsonSerializer.Serialize(obj:Any)`). Two applicable overloads are a compile error where C# would
+     pick the more specific one (`netlib-extern-ambiguous-is-an-error`), and so is a return, field or
+     property type that does not convert implicitly. A left-out Haxe-optional value-type argument
+     (`?b:Int`) stays refused, as gencs's C# fails there (CS1503). A converted `--net-lib` member still
+     binds only its exact signature.
    - gencs renames a method type parameter that shadows another (`sh<T,T1>`) where hxc emits
      `sh<T,T>`. Only reflection on generic-parameter names can see it.
    - An `@:overload` override that changes only the return type is refused. gencs compiles it as a C#

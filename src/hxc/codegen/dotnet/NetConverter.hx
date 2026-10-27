@@ -759,7 +759,7 @@ class NetConverter {
 			for (m in cls.cmethods) {
 				var n = m.copy();
 				n.msig = ap(m.msig);
-				n.margs = [for (a in m.margs) {name: a.name, flags: a.flags, sig: ap(a.sig)}];
+				n.margs = [for (a in m.margs) {name: a.name, flags: a.flags, sig: ap(a.sig), constant: a.constant, pdefault: a.pdefault}];
 				n.mret = ap(m.mret);
 				n;
 			}

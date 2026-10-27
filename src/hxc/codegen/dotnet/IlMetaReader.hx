@@ -952,8 +952,9 @@ class IlMetaReader {
 				var parent = sreadFromTable(false, T.IHasConstant, c);
 				var blobpos = sreadWidth(blobOffset, c);
 				var b = new Cur(blobStream, blobpos);
-				readCompressedI32(b);
-				var value = readConstant(ctype, b);
+				var len = readCompressedI32(b);
+				// A string constant's blob is its UTF-16 code units, not a custom attribute's SerString.
+				var value = ctype.match(CString) ? IString(subBytes(blobStream, b.pos, len)) : readConstant(ctype, b);
 				k.type = ctype;
 				k.parent = parent;
 				k.value = value;
