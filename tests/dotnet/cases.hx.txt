@@ -15859,7 +15859,6 @@ class P {
 		var d = new Dictionary_2<Int, String>();
 		d.set_Item(3, "three");
 		trace("dict", d[3], d.get_Item(3));
-		var s = "abc";
 		var cells = new vallib.Cells();
 		trace("cells", cells.get_Item(2, 3));
 		cells.set_Item(1, 2, 9);
@@ -15877,7 +15876,7 @@ P.hx:21: ilist, X
 P.hx:24: mail, a@b, a@b
 P.hx:28: int list, 4, 5, 5
 P.hx:31: dict, three, three
-P.hx:34: cells, 203
+P.hx:33: cells, 203
 set 1,2=9
 # Compound assignment, ++ and the value of an assignment through an indexer; a Dynamic element goes through get_Item and set_Item (ruling 6).
 --- netlib-indexer-compound @gencs @netlib
@@ -16031,9 +16030,8 @@ class P {
 P.hx:10: value, 5, 5
 P.hx:12: null, false, false
 P.hx:13: argument, has 6, 6
-# A converted extern's property is stored through its set_ method, whose call gencs leaves in the C# when the value is used (CS0571);
-# hxc stores and takes the argument as the value.
---- netlib-property-store-value-converted @netlib
+# A converted extern's property is stored through the typer's set_ call, whose value is the argument.
+--- netlib-property-store-value-converted @gencs @netlib
 import cs.system.Nullable_1;
 class P {
 	static function main() {
@@ -16050,3 +16048,91 @@ class P {
 P.hx:6: value, 7, 7
 P.hx:8: null, false, false
 P.hx:9: argument, has 3, 3
+# Indexers a derived class overrides are looked up where the base declared them (C# picks this[int] of the base for d[0], although
+# the derived class has its own DefaultMemberAttribute), and a getter-only override leaves the base's setter.
+--- netlib-indexer-override @gencs @netlib
+class P {
+	static function main() {
+		var d = new vallib.IdxDerived();
+		trace("derived", d[0]);
+		var b:vallib.IdxBase = d;
+		trace("base", b[0]);
+		var r = new vallib.IdxRo();
+		trace("get", r[0]);
+		r[0] = "x";
+		trace("set", r[0]);
+	}
+}
+===
+[run]
+P.hx:4: derived, base-int0
+P.hx:6: base, base-int0
+P.hx:8: get, ro-unset
+P.hx:10: set, ro-x
+# A protected indexer is accessible to a subclass: C# picks it for an int argument there.
+--- netlib-indexer-protected @gencs @netlib
+class MyProt extends vallib.IdxProt {
+	public function new() super();
+	public function inside() return this[0];
+}
+class P {
+	static function main() {
+		trace(new MyProt().inside());
+	}
+}
+===
+[run]
+P.hx:7: protected-int0
+# Outside a subclass the protected int indexer is not accessible and C# picks the public long one; hxc cannot tell, so refuses.
+--- netlib-indexer-protected-is-an-error @netlib
+class P {
+	static function main() {
+		var p = new vallib.IdxProt();
+		trace(p[0]);
+	}
+}
+===
+[compile]
+P.hx:4: characters 9-13 : dotnet: hxc cannot tell which .NET indexer of ValLib.IdxProt an int argument selects
+# The typer types the element from the first one-parameter property, which need not be the indexer C# picks: refused when the
+# picked indexer's type does not convert (gencs's C# fails: CS0029), and fine in the other order.
+--- netlib-indexer-element-mismatch-is-an-error @netlib
+class P {
+	static function main() {
+		var o = new vallib.OddIdx();
+		var x = o[0];
+		trace(x);
+		var d = new vallib.OddIdxD();
+		var y = d[1];
+		trace(y);
+	}
+}
+===
+[compile]
+P.hx:4: characters 11-15 : dotnet: the .NET indexer of ValLib.OddIdx is of the type string, which does not convert to the declared int
+P.hx:7: characters 11-15 : dotnet: the .NET indexer of ValLib.OddIdxD is of the type double, which does not convert to the declared int
+--- netlib-indexer-element-ordered @gencs @netlib
+class P {
+	static function main() {
+		var o = new vallib.OrderedIdx();
+		var x = o[3];
+		trace(x);
+	}
+}
+===
+[run]
+P.hx:5: ordered3
+# A compound assignment through a .NET struct's indexer with a Dynamic operand is refused: the receiver would be evaluated twice.
+--- netlib-indexer-struct-compound-is-an-error @netlib
+class P {
+	static function main() {
+		var dy:Dynamic = 2;
+		vallib.SlotHolder.Get().S[0] |= dy;
+		var s:vallib.Slots = null;
+		s[0]++;
+	}
+}
+===
+[compile]
+P.hx:4: characters 3-37 : dotnet: read-modify-write through an indexer of a .NET struct is not supported yet
+P.hx:6: characters 3-9 : dotnet: read-modify-write through an indexer of a .NET struct is not supported yet

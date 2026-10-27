@@ -489,8 +489,10 @@ class ExternMembers {
 	}
 
 	// An override, which C# looks for where the method was first declared.
-	static function isOverride(m:IlMethod):Bool
-		return m.mflags.contract.indexOf(CMVirtual) >= 0 && m.mflags.vtable.indexOf(VNewSlot) < 0;
+	static function isOverride(m:IlMethod):Bool return overrides(m.mflags);
+
+	static function overrides(flags:MethodFlags):Bool
+		return flags.contract.indexOf(CMVirtual) >= 0 && flags.vtable.indexOf(VNewSlot) < 0;
 
 	// Whether `caller` derives from the .NET type `path`, which a protected member needs.
 	function callerReaches(caller:Null<TClass>, path:IlPath):Bool {
@@ -942,17 +944,15 @@ class ExternMembers {
 		return null;
 	}
 
-	static function publicAccessor(a:Null<IlAccessor>):Null<String> {
-		return a != null && a.flags.access == FAPublic && a.flags.contract.indexOf(CMStatic) < 0 ? a.name : null;
-	}
-
 	// The indexer of `c`'s .NET class that C# picks for `x[i]` with an int32 `i` (values notes §3): walking
-	// the chain from `c`, the first class that declares a public one-parameter indexer (a property of its
+	// the chain from `c`, the first class that declares an accessible one-parameter indexer (a property of its
 	// DefaultMemberAttribute's name, which leaves out the explicit interface implementations, named by the
-	// interface) that int32 converts to; there the one with an int32 parameter, else the one such. Null when
-	// no class has one. Refused when hxc cannot tell which applies, or when more than one does, rather than
-	// picking by chance (as `resolve` does for methods). `params`: `c`'s type arguments.
-	public function indexer(c:TClass, params:Array<T>):Null<ExternIndexer> {
+	// interface, and the overrides, which C# looks for where the base declared them) that int32 converts to;
+	// there the one with an int32 parameter, else the one such. Null when no class has one. Refused when hxc
+	// cannot tell which applies, or when more than one does, rather than picking by chance (as `resolve` does
+	// for methods). A protected one is accessible to a `caller` below its class (`callerReaches`), and may apply
+	// otherwise. `params`: `c`'s type arguments.
+	public function indexer(c:TClass, params:Array<T>, ?caller:TClass):Null<ExternIndexer> {
 		var args = types.classArgs(c, params);
 		for (link in chain(c)) {
 			var name = defaultMember(link.cls);
@@ -965,8 +965,28 @@ class ExternMembers {
 					case LMethod(_, ret, [idx]): {ret: ret, idx: idx};
 					case _: continue;
 				}
-				var getter = publicAccessor(p.pget), setter = publicAccessor(p.pset);
-				if (getter == null && setter == null) continue;
+				var first = p.pget != null ? p.pget : p.pset;
+				if (first == null || first.flags.contract.indexOf(CMStatic) >= 0 || overrides(first.flags)) continue;
+				var hidden = false;
+				function accessible(a:Null<IlAccessor>):Null<String> {
+					if (a == null) return null;
+					return switch (a.flags.access) {
+						case FAPublic:
+							a.name;
+						case FAFamily | FAFamOrAssem if (callerReaches(caller, link.cls.cpath)):
+							a.name;
+						case FAFamily | FAFamOrAssem:
+							hidden = true;
+							null;
+						case _:
+							null;
+					}
+				}
+				var getter = accessible(p.pget), setter = accessible(p.pset);
+				if (getter == null && setter == null) {
+					if (hidden) unknown++;
+					continue;
+				}
 				var param = subst(sigs.idx, parentArgs);
 				var found:ExternIndexer = {
 					parent: switch (link.parent) {
@@ -997,11 +1017,11 @@ class ExternMembers {
 		return null;
 	}
 
-	// Refuses an access to an element of the type `value` (substituted) through the hand-written extern `c`'s
-	// indexer, as an element of the Haxe type `declared` that the extern's ArrayAccess says, when it does not
+	// Refuses an access to an element of the type `value` (substituted) through `c`'s indexer, as an element
+	// of the Haxe type `declared` (a hand-written extern's ArrayAccess, or the typer's from the first
+	// one-parameter property of a converted one, which may not be the indexer C# picks), when it does not
 	// convert as the access needs (ruling 1, as `checkVar` does for a variable).
 	public function checkIndexerElement(c:TClass, value:IlSigNorm, declared:IlSigNorm, reads:Bool, writes:Bool):Void {
-		if (!isHandWritten(c)) return;
 		if (reads && !implicitlyConverts(value, declared))
 			throw Unsupported.error("the .NET indexer of " + typeS(c) + " is of the type " + sigS(value) + ", which does not convert to the declared "
 				+ sigS(declared));

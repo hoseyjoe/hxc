@@ -657,7 +657,9 @@ class TexprDynamic {
 		}
 		var target = switch (strip(lhs).expr) {
 			case TField(obj, fa): new TExpr(TField(stable(obj), fa), lhs.type, lhs.pos);
-			case TArray(a, i): new TExpr(TArray(stable(a), stable(i)), lhs.type, lhs.pos);
+			case TArray(a, i):
+				tl.calls.refuseStructIndexer(a);
+				new TExpr(TArray(stable(a), stable(i)), lhs.type, lhs.pos);
 			case _: lhs;
 		}
 		tl.assign(ret, target, new TExpr(TBinop(op, target, rhs), e.type, e.pos));

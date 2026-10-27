@@ -1120,12 +1120,7 @@ class TexprToIl {
 				var target = refTarget(s);
 				load(s);
 				texpr(RValue(target), rhs);
-				var tmp = needVal(ret) ? ops.keepTop(target) : -1;
-				storeIndirect(target);
-				if (tmp >= 0) {
-					code.ldloc(tmp);
-					coerce(target, ret);
-				}
+				storeKeeping(ret, target, () -> storeIndirect(target));
 			case TLocal(v):
 				var s = slot(v);
 				texprStore(s.sig, lhs.type, rhs);
@@ -1138,13 +1133,10 @@ class TexprToIl {
 				var idx = code.addLocal(LInt32);
 				code.stloc(idx);
 				texpr(RValue(LObject), rhs);
-				var tmp = needVal(ret) ? ops.keepTop(LObject) : -1;
-				code.ldloc(idx);
-				calls.callArrayValue(true);
-				if (tmp >= 0) {
-					code.ldloc(tmp);
-					coerce(LObject, ret);
-				}
+				storeKeeping(ret, LObject, () -> {
+					code.ldloc(idx);
+					calls.callArrayValue(true);
+				});
 			case TArray(e1, e2) if (calls.isDynamicArrayAccess(e1)):
 				// Runtime.callField(a, "__set", hash, new object[]{i, v}).
 				dyn.fieldCall(ret, lhs, e1, "__set", [e2, rhs]);

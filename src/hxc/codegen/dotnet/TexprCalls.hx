@@ -1439,21 +1439,31 @@ class TexprCalls {
 	// Whether `e1[i]` is a .NET class's indexer (values notes §3): get_Item and set_Item.
 	function isNetIndexer(e1:TExpr):Bool {
 		var r = indexerClass(e1);
-		return r != null && g.externs.indexer(r.c, r.params) != null;
+		return r != null && g.externs.indexer(r.c, r.params, tl.cls) != null;
+	}
+
+	// Refuses a read-modify-write through the indexer of a .NET struct, whose receiver would have to be kept
+	// as an address across the load and the store.
+	function refuseStructIndexer(e1:TExpr):Void {
+		var r = indexerClass(e1);
+		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls);
+		if (ix != null && DotnetTypes.isValueType(ix.parent))
+			throw new Unsupported("read-modify-write through an indexer of a .NET struct", false);
 	}
 
 	// The indexer of `e1`'s class, for an access to an element of the Haxe type `element` that `reads` or
 	// `writes`.
 	function netIndexer(e1:TExpr, element:T, reads:Bool, writes:Bool):NetIndexer {
 		var r = indexerClass(e1);
-		var ix = r == null ? null : g.externs.indexer(r.c, r.params);
+		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls);
 		if (ix == null) throw "internal error: not a .NET indexer";
 		var args = switch (ix.parent) {
 			case LClass(_, l) | LValueType(_, l): l;
 			case _: [];
 		}
 		var index = ExternMembers.subst(ix.indexSig, args), value = ExternMembers.subst(ix.valueSig, args);
-		// A converted extern's element is Dynamic or the property's type; a hand-written one's is as it declares it.
+		// A converted extern's element is Dynamic, or the type of its first one-parameter property, which need not
+		// be the bound indexer's; a hand-written one's is as it declares it.
 		if (!TexprDynamic.isDynamic(element)) g.externs.checkIndexerElement(r.c, value, tl.sig(element), reads, writes);
 		var what = ExternMembers.sigS(ix.parent);
 		return {

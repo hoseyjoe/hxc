@@ -100,6 +100,51 @@ namespace ValLib
         int a, b;
         public int this[int i] { get { return i == 0 ? a : b; } set { if (i == 0) a = value; else b = value; } }
     }
+    public class SlotHolder
+    {
+        public Slots S;
+        public static int Calls;
+        public static SlotHolder The = new SlotHolder();
+        public static SlotHolder Get() { Calls++; return The; }
+    }
+    public class IdxBase
+    {
+        public virtual string this[int i] { get { return "base-int" + i; } }
+        public virtual string this[long i] { get { return "base-long" + i; } }
+    }
+    public class IdxDerived : IdxBase
+    {
+        public override string this[long i] { get { return "derived-long" + i; } }
+    }
+    public class IdxRw
+    {
+        string v = "unset";
+        public virtual string this[int i] { get { return v; } set { v = value; } }
+    }
+    public class IdxRo : IdxRw
+    {
+        public override string this[int i] { get { return "ro-" + base[i]; } }
+    }
+    public class IdxProt
+    {
+        public string this[long i] { get { return "public-long" + i; } }
+        protected string this[int i] { get { return "protected-int" + i; } }
+    }
+    public class OddIdx
+    {
+        public int this[string s] { get { return 1; } }
+        public string this[int i] { get { return "odd" + i; } }
+    }
+    public class OddIdxD
+    {
+        public int this[string s] { get { return 1; } }
+        public double this[int i] { get { return i + 0.5; } }
+    }
+    public class OrderedIdx
+    {
+        public string this[int i] { get { return "ordered" + i; } }
+        public int this[string s] { get { return 1; } }
+    }
 
     public static class Refs
     {
