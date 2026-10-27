@@ -129,6 +129,37 @@ class TexprOps {
 		}
 	}
 
+	// A .NET struct other than a Nullable<T> and an enum, which `x == null` compares with default(T).
+	function netStruct(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LValueType(p, _): !tl.isHaxeNull(s) && !DotnetTypes.isSystemNullable(s) && g.externs.enumUnderlying(p) == null;
+			case _: false;
+		}
+	}
+
+	// `e` is a struct of type `s`; pushes whether it equals default(s), as gencs's `e.Equals(default(S))` is
+	// bound: to the struct's own public Equals(S) when it declares one, else to Object.Equals.
+	function structIsDefault(s:IlSigNorm, e:TExpr):Void {
+		tl.texpr(RValue(s), e);
+		var tmp = code.addLocal(s);
+		code.stloc(tmp);
+		var own = switch (s) {
+			case LValueType(p, []): g.externs.declaresSelfEquals(p);
+			case _: false;
+		}
+		if (own) {
+			code.ldloca(tmp);
+			tl.defaultValue(s);
+			code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(s), "Equals", g.sigs.method(true, LBool, [s], 0)), 2, 1);
+			return;
+		}
+		code.ldloc(tmp);
+		code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+		tl.defaultValue(s);
+		code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+		code.opToken(IlOps.CALLVIRT, g.mb.memberRef(g.typeTokenOf(LObject), "Equals", g.sigs.method(true, LBool, [LObject], 0)), 2, 1);
+	}
+
 	// C# promotes a UInt and an Int operand to long: their comparisons and remainder are a long's.
 	static function mixesUIntAndInt(s1:IlSigNorm, s2:IlSigNorm):Bool {
 		return isIntLike(s1) && isIntLike(s2) && !IlPaths.sigEq(s1, s2);
@@ -282,6 +313,23 @@ class TexprOps {
 				tl.texpr(RValue(s), other);
 				tl.loadNullField(s, "hasValue");
 				if (op.match(OpEq)) not();
+				tl.coerce(LBool, ret);
+				return;
+			}
+			if (DotnetTypes.isSystemNullable(s)) {
+				// `x == null` on a System.Nullable<T> is `!x.HasValue`, which is what gencs's Equals(default(T)) means.
+				tl.texpr(RValue(s), other);
+				var tmp = code.addLocal(s);
+				code.stloc(tmp);
+				code.ldloca(tmp);
+				code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(s), "get_HasValue", g.sigs.method(true, LBool, [], 0)), 1, 1);
+				if (op.match(OpEq)) not();
+				tl.coerce(LBool, ret);
+				return;
+			}
+			if (netStruct(s)) {
+				structIsDefault(s, other);
+				if (op.match(OpNotEq)) not();
 				tl.coerce(LBool, ret);
 				return;
 			}
@@ -765,6 +813,11 @@ class TexprOps {
 				code.mark(isTrue);
 				code.opToken(IlOps.LDSTR, g.mb.userString("true"), 0, 1);
 				code.mark(end);
+			case _ if (DotnetTypes.isSystemNullable(s)):
+				// Through its box, which is null or the T, as Std.string sees a Nullable<T> in gencs: an empty one
+				// prints null.
+				code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
+				tl.dyn.stdString();
 			case _ if (DotnetTypes.isValueType(s)):
 				code.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
 				objectToString();

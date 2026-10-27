@@ -120,6 +120,14 @@ class DotnetTypes {
 		return p.name == "Enum" && p.nested.length == 0 && IlPaths.strsEq(p.ns, ["System"]);
 	}
 
+	// System.Nullable<T>, the .NET `T?` (not haxe.lang.Null<T>, which Null<T> of a value type is).
+	public static function isSystemNullable(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LValueType(p, [_]): p.name == "Nullable`1" && p.nested.length == 0 && IlPaths.strsEq(p.ns, ["System"]);
+			case _: false;
+		}
+	}
+
 	// Whether gencs wraps `s` in haxe.lang.Null<T> (is_cs_basic_type): a value type, or System.Enum, a class
 	// that gencs's @:struct extern counts as one.
 	public static function takesNullOf(s:IlSigNorm):Bool {

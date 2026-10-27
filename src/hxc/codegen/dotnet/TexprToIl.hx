@@ -281,6 +281,12 @@ class TexprToIl {
 				defaultValue(to);
 				return;
 			}
+			// null as a .NET value type (Nullable<T>, a struct, an enum) is C#'s default(T), as gencs writes it.
+			if (to.match(LValueType(_, _))) {
+				code.op(IlOps.POP, 1, 0);
+				defaultValue(to);
+				return;
+			}
 			if (DotnetTypes.isValueType(to)) throw new Unsupported("null as a value type", false);
 			return;
 		}
@@ -822,6 +828,15 @@ class TexprToIl {
 			coerce(to, ret);
 			return;
 		}
+		// A cast between value types of which one is a Nullable<T>, or both .NET structs, which gencs writes as
+		// C#'s `(To)(object)e`: boxed, then converted as a Dynamic is.
+		if (from != null && to != null && needVal(ret) && boxedCast(from, to)) {
+			texpr(RValue(from), e1);
+			code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
+			dyn.toSig(to);
+			coerce(to, ret);
+			return;
+		}
 		var viaOwn = from != null && to != null && !IlPaths.sigEq(from, to) && !to.match(LObject) && (checked
 			|| want != null && !IlPaths.sigEq(want, to) && (to.match(LString) && !inRuntimeClass()
 				|| DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)
@@ -839,6 +854,20 @@ class TexprToIl {
 			case r: r;
 		}, e1);
 		calls.rawCall = null;
+	}
+
+	// Whether a cast from the value type `from` to `to` goes through object, as in gencs: between a
+	// Nullable<T> and any other value type, or between two .NET structs. Other pairs of value types stay
+	// the numeric conversions, or refused.
+	function boxedCast(from:IlSigNorm, to:IlSigNorm):Bool {
+		if (!DotnetTypes.isValueType(from) || !DotnetTypes.isValueType(to) || IlPaths.sigEq(from, to)) return false;
+		if (isHaxeNull(from) || isHaxeNull(to)) return false;
+		if (DotnetTypes.isSystemNullable(from) || DotnetTypes.isSystemNullable(to)) return true;
+		inline function isStruct(s:IlSigNorm) return switch (s) {
+			case LValueType(p, _): g.externs.enumUnderlying(p) == null;
+			case _: false;
+		}
+		return isStruct(from) && isStruct(to) && !(g.isGenericHaxeClass(from) && g.isGenericHaxeClass(to));
 	}
 
 	// Statements, then the last expression where `ret` wants it. In user code a failing statement is

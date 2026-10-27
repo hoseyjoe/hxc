@@ -14686,3 +14686,184 @@ class P {
 ===
 [compile]
 P.hx:9: characters 14-41 : dotnet: the .NET 99 reference pack (Microsoft.NETCore.App.Ref) was not found; it is needed for System.Text.Json.JsonSerializerOptions
+# null into .NET value types is default(T), a Nullable against null is !HasValue, any other struct against null is
+# Equals(default(T)), an unsafe cast between Nullable and struct pairs boxes then converts, and a Nullable in a string is
+# Std.string of its box (a missing value prints null). Ruling 2, 3 and 5.
+--- netlib-nullable-null @gencs @netlib
+import cs.system.Nullable_1;
+import cs.system.DateTime;
+import vallib.Nul;
+import vallib.Model;
+
+@:nativeGen class NModel {
+	public var a:Nullable_1<Int> = null;
+	public var d:Nullable_1<DateTime> = null;
+	public var b:Nullable_1<Bool> = new Nullable_1<Bool>(true);
+	public function new() {}
+}
+
+class HModel {
+	public var a:Nullable_1<Int> = null;
+	public var b:Nullable_1<Bool>;
+	public function new() {}
+}
+
+class P {
+	static function ret(b:Bool):Nullable_1<DateTime> {
+		if (b) return null;
+		return new Nullable_1<DateTime>(new DateTime(2021, 3, 4));
+	}
+	static function retT(b:Bool, x:Null<Int>):Nullable_1<Int> {
+		return b ? null : x != null ? new Nullable_1<Int>(x) : null;
+	}
+	static function idOf(v:Nullable_1<Int>):Null<Int> {
+		return v.HasValue ? v.Value : null;
+	}
+	static function main() {
+		// null into locals, fields, returns, arguments, properties
+		var n:Nullable_1<Int> = null;
+		trace("local", n.HasValue);
+		var nm = new NModel();
+		trace("nativeGen fields", nm.a.HasValue, nm.d.HasValue, nm.b.HasValue, nm.b.Value);
+		var hm = new HModel();
+		trace("haxe fields", hm.a.HasValue, hm.b.HasValue);
+		trace("ret", ret(true).HasValue, ret(false).HasValue, ret(false).Value.Year);
+		trace("retT", retT(true, 1).HasValue, retT(false, 2).Value, retT(false, null).HasValue);
+		trace("arg", Nul.Show(null), Nul.Show(new Nullable_1<Int>(3)), Nul.Show(Nul.Maybe(true)));
+		var m = new Model();
+		m.NProp = new Nullable_1<Int>(7);
+		m.NField = new Nullable_1<Int>(8);
+		m.NBool = true ? new Nullable_1<Bool>(false) : null;
+		trace("props", m.ToString());
+		m.NProp = null;
+		m.NField = null;
+		m.NBool = false ? new Nullable_1<Bool>(false) : null;
+		trace("props null", m.ToString());
+		// == null and != null
+		var some = Nul.Maybe(true), none = Nul.Maybe(false);
+		trace("eq", some == null, some != null, none == null, none != null, null == none, null != some);
+		trace("prop eq", m.NProp == null, null != m.NProp);
+		m.NProp = new Nullable_1<Int>(1);
+		trace("prop eq2", m.NProp == null, null != m.NProp);
+		// HasValue, Value, GetValueOrDefault
+		trace("value", some.HasValue, some.Value, none.HasValue, none.GetValueOrDefault(), none.GetValueOrDefault(11));
+		try { trace(none.Value); } catch (e:Dynamic) { trace("none.Value throws", Type.getClassName(Type.getClass(e))); }
+		trace("idOf", idOf(some), idOf(none));
+		// arithmetic and comparisons on .Value
+		trace("math", some.Value + 1, some.Value < 10, some.Value == 5);
+	}
+}
+===
+[run]
+P.hx:33: local, false
+P.hx:35: nativeGen fields, false, false, true, true
+P.hx:37: haxe fields, false, false
+P.hx:38: ret, false, true, 2021
+P.hx:39: retT, false, 2, false
+P.hx:40: arg, none, has 3, has 5
+P.hx:45: props, Model(8,7,False,null,null)
+P.hx:49: props null, Model(null,null,null,null,null)
+P.hx:52: eq, false, true, true, false, true, true
+P.hx:53: prop eq, true, false
+P.hx:55: prop eq2, false, true
+P.hx:57: value, true, 5, false, 0, 11
+P.hx:58: none.Value throws, System.InvalidOperationException
+P.hx:59: idOf, 5, null
+P.hx:61: math, 6, true, true
+--- netlib-nullable-string @gencs @netlib
+class P {
+	static function main() {
+		var some = vallib.Nul.Maybe(true), none = vallib.Nul.Maybe(false);
+		trace(Std.string(some));
+		trace("c" + some);
+		trace('i $some');
+		try trace("c" + none) catch (e:Dynamic) trace("concat none throws", Type.getClassName(Type.getClass(e)));
+		try trace('i $none') catch (e:Dynamic) trace("interp none throws", Type.getClassName(Type.getClass(e)));
+		try trace(Std.string(none)) catch (e:Dynamic) trace("Std.string none throws", Type.getClassName(Type.getClass(e)));
+	}
+}
+===
+[run]
+P.hx:4: 5
+P.hx:5: c5
+P.hx:6: i 5
+P.hx:7: cnull
+P.hx:8: i null
+P.hx:9: null
+--- netlib-struct-null @gencs @netlib
+import cs.system.Nullable_1;
+import cs.system.DateTime;
+import cs.system.Guid;
+import vallib.Pt;
+class P {
+	static function completed(b:Bool):Nullable_1<DateTime> {
+		// The server app's WebApiHelpers.hx:630 shape: null into the DateTime argument is default(DateTime), so the
+		// Nullable has a value.
+		return new Nullable_1<DateTime>(b ? new DateTime(2000, 1, 1) : null);
+	}
+	static function main() {
+		var dt:DateTime = null;
+		trace("DateTime", dt.Ticks, dt == null, dt != null);
+		var dt2 = new DateTime(2020, 1, 1);
+		trace("DateTime set", dt2 == null, dt2 != null);
+		var pt:Pt = null;
+		trace("Pt", pt.X, pt == null);
+		pt.X = 1;
+		trace("Pt set", pt == null);
+		var g:Guid = null;
+		trace("Guid", g.ToString(), g == null);
+		var c = completed(false);
+		trace("completed", c.HasValue, c.Value.Year);
+	}
+}
+===
+[run]
+P.hx:13: DateTime, 0, true, false
+P.hx:15: DateTime set, false, true
+P.hx:17: Pt, 0, true
+P.hx:19: Pt set, false
+P.hx:21: Guid, 00000000-0000-0000-0000-000000000000, true
+P.hx:23: completed, true, 1
+--- netlib-nullable-casts @gencs @netlib
+import cs.system.Nullable_1;
+import cs.system.DateTime;
+class P {
+	static function name(e:Dynamic) return Type.getClassName(Type.getClass(e));
+	static function main() {
+		var some = vallib.Nul.Maybe(true), none = vallib.Nul.Maybe(false);
+		var c1:Nullable_1<Int> = cast 5;
+		trace("Int to Nullable", c1.HasValue, c1.Value);
+		var c2:Nullable_1<Bool> = cast true;
+		trace("Bool to Nullable", c2.Value);
+		var i:Int = cast some;
+		var j:Int = cast none;
+		trace("Nullable to Int", i, j);
+		var f:Float = cast some;
+		var b:Bool = cast new Nullable_1<Bool>(true);
+		trace("Nullable to Float and Bool", f, b);
+		var nd = vallib.Nul.MaybeDate(true), nn = vallib.Nul.MaybeDate(false);
+		var d:DateTime = cast nd;
+		trace("Nullable to DateTime", d.Year);
+		try { var e:DateTime = cast nn; trace(e.Year); } catch (x:Dynamic) trace("no value to DateTime throws", name(x));
+		var back:Nullable_1<DateTime> = cast d;
+		trace("DateTime to Nullable", back.Value.Month);
+		try { var ni:Nullable_1<Int> = cast 2.5; trace(ni.Value); } catch (x:Dynamic) trace("Float to Nullable<Int> throws", name(x));
+		var dd:Dynamic = 4;
+		var fromDyn:Nullable_1<Int> = dd;
+		trace("Dynamic to Nullable", fromDyn.Value);
+		var df:Dynamic = 4.0;
+		try { var x:Nullable_1<Int> = df; trace(x.Value); } catch (x:Dynamic) trace("Dynamic Float to Nullable<Int> throws", name(x));
+	}
+}
+===
+[run]
+P.hx:8: Int to Nullable, true, 5
+P.hx:10: Bool to Nullable, true
+P.hx:13: Nullable to Int, 5, 0
+P.hx:16: Nullable to Float and Bool, 5, true
+P.hx:19: Nullable to DateTime, 2020
+P.hx:20: no value to DateTime throws, System.NullReferenceException
+P.hx:22: DateTime to Nullable, 1
+P.hx:23: Float to Nullable<Int> throws, System.InvalidCastException
+P.hx:26: Dynamic to Nullable, 4
+P.hx:28: Dynamic Float to Nullable<Int> throws, System.InvalidCastException

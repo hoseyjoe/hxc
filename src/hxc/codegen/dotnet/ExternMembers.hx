@@ -187,6 +187,18 @@ class ExternMembers {
 		return null;
 	}
 
+	// Whether the .NET struct `path`, a type of the referenced assemblies, declares a public instance
+	// Equals(itself), which C# binds `x.Equals(y)` to before Object.Equals(object). False for a generic
+	// struct, whose Equals(T) is not looked for.
+	public function declaresSelfEquals(path:IlPath):Bool {
+		if (NetRefs.of(ctx).definer(path) == null) return false;
+		for (m in rawClass(path).cmethods) {
+			if (m.mname != "Equals" || m.margs.length != 1 || m.mtypes.length != 0 || m.mflags.contract.indexOf(CMStatic) >= 0) continue;
+			if (m.mflags.access == FAPublic && IlPaths.sigEq(m.margs[0].sig.snorm, LValueType(path, []))) return true;
+		}
+		return false;
+	}
+
 	// The literal a constructor of an extern .NET enum stands for, and the type the enum stores it as.
 	public function enumLiteral(en:TEnum, ef:TEnumField):{c:IlConstant, underlying:IlSigNorm} {
 		var path = types.externPathOf(TEnumDecl(en));
