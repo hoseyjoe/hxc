@@ -506,14 +506,40 @@ and `List` copy, and two threads casting one array at once.
 4. **Interop.** `@:nativeGen`, attributes, properties, nullability, delegates/events, overloads,
    generics that cross into referenced assemblies, the inline-C# subset, `Array`'s companion
    indexer (hxcs's `@:classCode`), manifest resources (embedded resources, `-resource` or
-   `Context.addResource`, are a compile error until then).
-   - The first measurement step re-measures the server app classes that milestone 3 leaves out,
-     once the IChatHandler (properties of .NET interfaces) and `ToolPlugin.ToolFunction` (a nested type
-     of the `--net-lib` `Shared.dll`, whose dotted name hxc split into a namespace) causes are fixed.
-     A class whose declaration fails gets no plan, so its method bodies were never lowered in 3b or
-     3c, and 3c-type refusals there (casts, companions, the `Array` forward, generic reflection) are
-     unmeasured: `CSServer` and the `ai.*` chain, 24 classes and about 13.9k lines (task 12's report
-     has the list).
+   `Context.addResource`, are a compile error until then). It is split into three plans:
+   - **4a (done):** what the server app and the desktop app need from referenced assemblies to
+     lower: `System.Nullable<T>`, `null` into a .NET value type (`default(T)`, as gencs gives it) and
+     `==` against `null` on one; generic .NET method overloads; nested .NET types, and types that no
+     supplied assembly defines, read for lowering only from beside the `--net-lib`s or from the .NET
+     reference pack; hand-written `@:native` externs and their optional arguments; .NET indexers; .NET
+     interface properties and `@:property` vars; delegates. The bullets below give the rules.
+     - Its last step measured the server app classes that milestone 3 left out: `CSServer` and the
+       `ai.*` chain, 24 classes and about 13.9k lines, held back by IChatHandler (properties of .NET
+       interfaces) and `ToolPlugin.ToolFunction` (a nested type of the `--net-lib` `Shared.dll`,
+       whose dotted name hxc split into a namespace). A class whose declaration fails gets no plan,
+       so their bodies had never been lowered. They now lower with no error: no 3c-type refusal
+       (casts, companions, the `Array` forward, generic reflection) was hidden there, and the 146
+       delegate conversions they exposed compile.
+     - What is left is 4b's and 4c's. The server app has 22 errors (milestone 3c: 222), all inline
+       C#: 17 `__cs__`, 2 `@:functionCode`, 1 `@:classCode` and 2 uses of the class that it leaves
+       out. Its nativepdf build has 4 (3c: 4), of the same kinds. The desktop app has 10 (3c: 12):
+       9 `cs.Syntax.code` and its embedded resources, with or without the Avalonia `--net-lib`s. No
+       standard-library method either app calls is stubbed.
+   - **4b:** the inline-C# subset (`__cs__`, `cs.Syntax.code`, `@:functionCode`, `@:classCode`),
+     `Array`'s companion indexer, the remaining standard-library stub (`Socket.select`, which calls a
+     method on an `IntPtr` property's value; `new IntPtr(n)` is refused too), and Roslyn's
+     `CompilerGeneratedAttribute` on a `@:property` var's backing field and accessors.
+   - **4c:** `@:nativeGen` details, attributes (`@:strict`, `@:meta`), nullability metadata for the AI
+     tool schemas, events defined in Haxe, manifest resources (`-resource`, `Context.addResource`,
+     `-D dotnet-embed`), milestone 4's exit below, and the carried items:
+     - covariant-return `@:overload` overrides, and gencs's `T1` renaming of a shadowing method type
+       parameter;
+     - the forwarding stub C# adds where a .NET base class's non-virtual method or property
+       implements an interface member for a Haxe subclass (ruling S; refused until then);
+     - static `@:property` vars with get or set accessors, which gencs makes static properties;
+     - .NET extern, overloaded and struct methods as delegate method groups;
+     - an argument typed as a Haxe class type parameter, which infers `object` where gencs gives the
+       instantiation's type (listed in *Interop divergences from gencs*).
    - A hand-written extern method binds the .NET method C# would bind for a call with its declared
      types, under a restricted rule: the exact signature first, else the one applicable overload
      (implicit conversions: identity, upcasts, boxing, numeric widening but to `decimal`, `A` to
@@ -658,7 +684,7 @@ and `List` copy, and two threads casting one array at once.
      generic class and a struct). A member of a struct-typed one is reached through a copy of the
      getter's value, as in C#. System.Text.Json and .NET reflection see the properties, and no field.
      Roslyn's `CompilerGeneratedAttribute` on the backing field and the accessors is not written
-     (attributes are milestone 4b's).
+     (it is milestone 4b's).
      - Error, as gencs's C# does not compile: a `get_X` or `set_X` the class declares beside the var
        (CS0082, `property-var-accessor-clash-is-an-error`).
      - A non-physical `@:property` var with a get or set accessor is a property as gencs's gen_prop
@@ -680,11 +706,20 @@ and `List` copy, and two threads casting one array at once.
      - Any other function value (a local, a bound call, a closure the inliner put in a local) gets a
        conversion wrapper: a closure class capturing the value, whose `Delegate` calls it.
      - The delegate abstract's `+` and `-` are `Delegate.Combine` and `Delegate.Remove`, cast back.
-     - Error, as gencs's C# does not compile: a method whose parameter and return types do not convert
-       to those of the delegate's `Invoke` as C#'s method group conversion allows (the same type, or a
-       reference conversion from the `Invoke`'s parameter and to its return). That includes a delegate
-       going on as another instantiation of its type, as Haxe unifies `Func_2<Int, Bool>` with
-       `Func_2<Dynamic, Bool>` (CS0030, `delegate-type-mismatch`).
+     - Error, as gencs's C# does not compile (CS0030) or its cast throws at run time: a method whose
+       parameter and return types do not convert to those of the delegate's `Invoke` as C#'s method
+       group conversion allows (the same type, or a reference conversion from the `Invoke`'s parameter
+       and to its return). That includes a delegate going on as another instantiation of its type, as
+       Haxe unifies `Func_2<Int, Bool>` with `Func_2<Dynamic, Bool>`. gencs casts the delegate to the
+       other instantiation. Its C# does not compile there (CS0030, `delegate-type-mismatch`), except
+       where the two type arguments are reference types of a variant delegate's parameter, such as
+       `Func_2<String, Bool>` to `Func_2<Dynamic, Bool>`: that compiles, and the cast throws
+       `InvalidCastException` at run time.
+     - A method group over a virtual method dispatches as C#'s does: through a subclass, base-class or
+       Haxe interface receiver it runs the override, two delegates over the same object and method are
+       equal, and `Method.DeclaringType` is the class declaring the method run
+       (`delegate-method-group-virtual-dispatch`). `-` and `-=` remove a delegate, and removing the last
+       gives `null` (`delegate-remove`).
      - Not supported yet as a method group: a .NET method, an overloaded method, a struct's method, and a
        method reached through a `Dynamic` or companion-interface receiver.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool

@@ -33,7 +33,7 @@ output.
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
 | `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set |
-| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, generic instantiations and the casts between them, the Serializer and exceptions work; see [.NET output](#net-output) |
+| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, generic instantiations and the casts between them, the Serializer, exceptions and calls into `--net-lib` assemblies (overloads, generic methods, `Nullable<T>`, indexers, properties, delegates) work; see [.NET output](#net-output) |
 | `--lua`, `--python`, `--php`, `--hl`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
@@ -115,6 +115,33 @@ The assembly's references resolve against hxcs's `netlib` directory for `-D net-
 the directories given with `--net-std`. By default that means a reference to `mscorlib` 2.0.0.0,
 which .NET 10 and later forward to their own libraries.
 
+Code can use the assemblies given with `--net-lib`, as gencs's output does. A .NET type that a
+`--net-lib` assembly uses but no supplied assembly defines, such as its base class or a framework type
+in its signatures, is read from beside that assembly, then from the .NET reference pack:
+`<dotnet root>/packs/Microsoft.NETCore.App.Ref/<newest N.0.x>/ref/netN.0` for the `-D dotnet-version` N
+(default 10), where the dotnet root is `DOTNET_ROOT`, else the directory of `dotnet` on the `PATH`. So
+the .NET SDK must be installed, not only the runtime; a pack that is needed and missing is a compile
+error that names it. Those assemblies are used to write the output only: as in Haxe, Haxe code sees
+only the assemblies passed, and a type defined only in one of them is "Type not found".
+
+- **Calls** bind the .NET overload gencs's C# would bind, generic .NET methods included. A
+  hand-written extern (`@:native`) binds the overload C#'s compiler picks for its declared types, with
+  omitted optional and `params` arguments filled as C# fills them. Where two overloads apply, or hxc
+  cannot tell whether one does, the call is a compile error rather than a guess, even where C# would
+  pick the more specific one.
+- **Value types:** `System.Nullable<T>` works, through `HasValue`, `Value`, `== null` and string
+  concatenation. `null` passed or assigned where a .NET struct is expected is that struct's
+  `default(T)`, as under gencs, so a `Nullable<DateTime>` built from a `null` `DateTime` has a value,
+  `0001-01-01`. `x == null` is `!x.HasValue` on a `Nullable` and `x.Equals(default(T))` on another
+  struct.
+- **Indexers:** `a[i]` on a .NET type with an indexer calls it, compound assignment included.
+- **Properties:** a Haxe class implementing a .NET interface's properties (`var x(get, set)`) gives
+  them CLR properties, so C# code reading them through the interface gets the Haxe getters' values.
+  A `@:property` var is a CLR property too, so System.Text.Json and .NET reflection see it.
+- **Delegates:** a Haxe function, lambda or method converts to a .NET delegate as gencs converts it,
+  and a delegate's `+` and `-` combine and remove. A handler made again from the same method removes
+  the first. `Thread.create` works.
+
 Classes, interfaces, structs, generics, statics, operators, strings, arrays and native .NET
 exceptions work, including `try`/`catch`/`throw` of `cs.system.Exception` subclasses. Classes have
 the shape Haxe's own `--cs` generator gives them: they extend `haxe.lang.HxObject`, and fields and
@@ -172,17 +199,18 @@ list is not complete; among others it has compound assignments to `Dynamic` arra
 (`d[i] += v`, `d[i]++`; a plain `d[i] = v` works), `return`, `break` and `continue` inside
 expressions, casts between instantiations of a generic class that has no companion interface (a
 generic `@:struct`) and `Std.isOfType` or enum constructor arguments with one,
-inline C# (`untyped __cs__`, `cs.Syntax.code`, `@:classCode`, `@:functionCode`), and .NET interop
-beyond calling referenced assemblies (properties of .NET interfaces, generic .NET methods,
-`Nullable<T>`, delegates, indexers, types that a `--net-lib` assembly's own references define).
+inline C# (`untyped __cs__`, `cs.Syntax.code`, `@:classCode`, `@:functionCode`), `new IntPtr(n)` and
+methods called on an `IntPtr` property's value, and parts of .NET interop: attributes (`@:meta`,
+`@:strict`), nullability metadata, events defined in Haxe, a static `@:property` var with get or set
+accessors, a .NET method, an overloaded method or a struct's method as a delegate, and a .NET base
+class's non-virtual method or property implementing an interface for a Haxe subclass. The next steps
+for the .NET generator bring these.
 `Array` has no `object this[int]` indexer yet (hxcs adds it with `@:classCode`), so C# code cannot index
 an `Array` and `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`.
 Embedded resources (`-resource` or `Context.addResource`) are not supported yet: with `-D dotnet` they
-are a compile error, since `haxe.Resource` would find nothing. The next step for the .NET generator
-is .NET interop, which also brings these.
-Until then, standard-library code that needs them compiles to stubs: `Thread.create`,
-`EReg.matched`, `Socket.select` and `Socket.setTimeout`, `Sys.command` and `sys.io.Process` among
-them.
+are a compile error, since `haxe.Resource` would find nothing.
+Standard-library code that needs a construct not supported yet compiles to a stub: `Socket.select`,
+which calls a method on an `IntPtr`, is the one left.
 
 hxc ships its own copy of the hxcs runtime classes that generated code depends on
 (`haxe.lang.HxObject`, `haxe.lang.DynamicObject`, `haxe.lang.FieldLookup`, `haxe.lang.Runtime`,
