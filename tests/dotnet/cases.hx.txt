@@ -15010,7 +15010,7 @@ class P {
 }
 ===
 [compile]
-P.hx:6: characters 9-20 : dotnet: leaving out the optional value-type argument b of an extern method is not supported yet
+P.hx:6: characters 9-20 : dotnet: leaving out the optional value-type argument b of an extern method
 # haxeui-cs's DeviceScale(visual:Control) over C#'s DeviceScale(Visual), and Num(i:Int) over Num(double),
 # Obj(s:String) over Obj(object): each is the one applicable overload.
 --- netlib-extern-signature-match @gencs @netlib
@@ -15157,3 +15157,127 @@ P.hx:12: characters 9-22 : dotnet: no .NET overload of ValLib.Sig.Num takes (str
 P.hx:13: characters 9-22 : dotnet: ValLib.Sig.Ret returns string, which does not convert to the declared int
 P.hx:15: characters 9-16 : dotnet: ValLib.Model.NProp is of the type System.Nullable<int>, which does not convert to the declared int
 P.hx:17: characters 3-15 : dotnet: the declared object does not convert to System.Nullable<int>, the type of ValLib.Model.NField
+# Ruling E: a candidate outside hxc's model of C#'s conversions is "unknown", and the call is refused rather than bound
+# to the one candidate hxc can model. C# binds String.Concat<int>(IEnumerable<int>) here, and gencs's build prints "12";
+# hxc bound Concat(object) and printed "System.Int32[]". Concat(params object[])'s expanded form, the generic
+# Concat<T>(IEnumerable<T>) and the array to IEnumerable<string> are each unknown. Not @gencs: a refusal has no run.
+--- netlib-extern-unknown-candidate-refused
+@:native("System.String") extern class Str {
+	static function Concat(a:cs.NativeArray<Int>):String;
+}
+class P {
+	static function main() {
+		var a = new cs.NativeArray<Int>(2);
+		a[0] = 1;
+		a[1] = 2;
+		trace(Str.Concat(a));
+	}
+}
+===
+[compile]
+P.hx:9: characters 9-22 : dotnet: more than one .NET overload of System.String.Concat may accept (int[])
+# An object overload next to an interface overload that the value type implements: both apply through boxing, and
+# ruling 1 refuses rather than rank them (C# picks Ifc(IComparable)).
+--- netlib-extern-object-and-interface-refused @netlib
+@:native("ValLib.Sig") extern class HSig {
+	static function Ifc(i:Int):String;
+}
+class P {
+	static function main() {
+		trace(HSig.Ifc(1));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-20 : dotnet: more than one .NET overload of ValLib.Sig.Ifc accepts (int)
+# Ruling G: the most derived class with an applicable method decides, so LinkDerived.Foo(object) binds although the
+# base declares the exact Foo(string), as in C#.
+--- netlib-extern-derived-link-wins @gencs @netlib
+@:native("ValLib.LinkBase") extern class HLinkBase {
+	function new():Void;
+}
+@:native("ValLib.LinkDerived") extern class HLinkDerived extends HLinkBase {
+	function new():Void;
+	function Foo(s:String):String;
+}
+class P {
+	static function main() {
+		trace(new HLinkDerived().Foo("x"));
+	}
+}
+===
+# Ruling G: an override is looked for where its method was first declared, so OvD's override of Bar(object) is no
+# candidate in OvD, and OvB.Bar(Control) binds for a Panel, as in C#.
+--- netlib-extern-override-not-a-candidate @gencs @netlib
+@:native("ValLib.Visual") extern class HVisual { function new():Void; }
+@:native("ValLib.Control") extern class HControl extends HVisual { function new():Void; }
+@:native("ValLib.Panel") extern class HPanel extends HControl { function new():Void; }
+@:native("ValLib.OvD") extern class HOvD {
+	function new():Void;
+	function Bar(p:HPanel):String;
+}
+class P {
+	static function main() {
+		trace(new HOvD().Bar(new HPanel()));
+	}
+}
+===
+# Ruling F: the declared types bind Pick2(Visual), but gencs's C# binds the argument's own type, Panel, to
+# Pick2(Panel). The call is refused; an @:overload extern, whose arguments gencs casts to the declared types, is not.
+--- netlib-extern-argument-types-differ-refused @netlib
+@:native("ValLib.Visual") extern class HVisual { function new():Void; }
+@:native("ValLib.Control") extern class HControl extends HVisual { function new():Void; }
+@:native("ValLib.Panel") extern class HPanel extends HControl { function new():Void; }
+@:native("ValLib.Sig") extern class HSig {
+	static function Pick2(c:HControl):String;
+}
+class P {
+	static function main() {
+		trace(HSig.Pick2(new HPanel()));
+	}
+}
+===
+[compile]
+P.hx:9: characters 9-33 : dotnet: the .NET overload of ValLib.Sig.Pick2 depends on the argument types (ValLib.Panel); declare it with @:overload
+# Ruling E: a protected candidate seen from a class that does not derive from its type is unknown. C# skips it and
+# binds Go(object); hxc refuses.
+--- netlib-extern-protected-candidate-refused @netlib
+@:native("ValLib.Prot") extern class HProt {
+	function new():Void;
+	function Go(s:String):String;
+}
+class P {
+	static function main() {
+		trace(new HProt().Go("x"));
+	}
+}
+===
+[compile]
+P.hx:7: characters 9-28 : dotnet: more than one .NET overload of ValLib.Prot.Go may accept (string)
+# A hand-written extern variable declared static over an instance member is refused.
+--- netlib-extern-static-mismatch-refused @netlib
+@:native("ValLib.Model") extern class HModel {
+	static var NField:Dynamic;
+}
+class P {
+	static function main() {
+		trace(HModel.NField);
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-22 : dotnet: ValLib.Model.NField is an instance member, which the extern declares as a static variable
+# Ruling 4 when the Haxe-optional value-type argument is passed: it is still a haxe.lang.Null<int>, which gencs passes
+# as it is and C# rejects (CS1503).
+--- netlib-optional-declared-value-type-passed @netlib
+@:native("ValLib.Opt") extern class HOpt {
+	static function All(a:Int, ?b:Int):String;
+}
+class P {
+	static function main() {
+		trace(HOpt.All(1, 2));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-23 : dotnet: the optional value-type argument b of an extern method is passed as haxe.lang.Null<int>, which the .NET method does not accept

@@ -31,6 +31,29 @@ typedef ExternMethod = {
 	typeArgs:Null<Array<IlSigNorm>>
 }
 
+// A call site of an extern method, for ExternMembers.method: its arguments, their own types (null where
+// a type is Dynamic or has no signature) and the class whose code makes the call.
+typedef ExternCall = {args:Array<TExpr>, argTypes:Array<Null<IlSigNorm>>, caller:Null<TClass>};
+
+// Whether a call applies to a .NET method, where hxc's model of C#'s conversions can tell (ruling E).
+private enum Applies {
+	AYes;
+	ANo;
+	AUnknown;
+}
+
+// A method `resolve` binds: the index of its link in the chain and in that class's methods.
+private typedef Bound = {link:Int, index:Int, typeArgs:Null<Array<IlSigNorm>>};
+
+private enum Resolution {
+	RBound(b:Bound);
+	// More than one method applies.
+	RAmbiguous;
+	// Some method may apply, where hxc cannot tell.
+	RUnknown;
+	RNone;
+}
+
 // The members of referenced assemblies that extern Haxe fields stand for, as those assemblies declare
 // them. The typer already chose the overload; this only finds its definition.
 
@@ -148,15 +171,16 @@ class ExternMembers {
 	// A converted (`:csNative`) extern stands for the metadata as it is; any other is written by hand.
 	static function isHandWritten(c:TClass):Bool return !TypeFunctions.hasMeta(":csNative", c.meta);
 
-	// The method of `c`'s .NET class that the extern method `cf` stands for. A method with exactly the
-	// declared signature comes first, which is all a converted extern's member binds to (the typer chose
-	// it already). A hand-written extern's method otherwise binds as C# binds a call with the declared
-	// types, under ruling 1's restricted rule: the one applicable overload of the most derived class that
-	// has any, through C#'s implicit conversions, followed by parameters the call leaves out that are
-	// optional or a params array; a generic one with type arguments the declared types give. A
-	// hand-written extern's return type must convert from the method's too. `exactOnly` binds the exact
-	// match or nothing, for a member whose own signature an implementation or override takes.
-	public function method(c:TClass, cf:TClassField, exactOnly = false):ExternMethod {
+	// The method of `c`'s .NET class that the extern method `cf` stands for.
+	// - A converted extern's member, or with `exactOnly` (an implementation or override, which takes the
+	//   member's own signature), binds the method with exactly the declared signature, the first along
+	//   the class chain.
+	// - A hand-written extern's method binds as C# binds a call with the declared types, under the
+	//   restricted rule of ruling 1 as rulings E and G amend it (`resolve`). A call site passes `call`,
+	//   whose arguments' own types must bind the same method (ruling F) unless the extern method is an
+	//   @:overload one, whose arguments gencs casts to the declared types. Its return type must convert
+	//   from the method's too.
+	public function method(c:TClass, cf:TClassField, exactOnly = false, ?call:ExternCall):ExternMethod {
 		var isCtor = cf.name == "new";
 		var isStatic = !isCtor && TypeFunctions.hasClassFieldFlag(cf, CfStatic);
 		var name = isCtor ? ".ctor" : memberName(cf);
@@ -167,37 +191,403 @@ class ExternMembers {
 		var want = types.withParams(c.params, cf.params, () -> [for (a in declared.args) types.toSig(a.t)]);
 		var links = chain(c);
 		if (isCtor) links = [links[0]];
-		var handWritten = isHandWritten(c);
-		for (link in links) {
-			var args = linkArgs(link);
-			for (m in link.cls.cmethods) {
-				if (m.mname != name || m.margs.length != want.length || m.mtypes.length != cf.params.length) continue;
-				if ((m.mflags.contract.indexOf(CMStatic) >= 0) != isStatic) continue;
-				var got = [for (a in m.margs) open(a.sig.snorm, args, isStatic)];
-				if (IlPaths.sigsEq(got, want)) return bound(c, cf, link, m, isStatic, want.length, null, handWritten && !isCtor);
+		if (exactOnly || !isHandWritten(c)) {
+			for (link in links) {
+				var args = linkArgs(link);
+				for (m in link.cls.cmethods) {
+					if (m.mname != name || m.margs.length != want.length || m.mtypes.length != cf.params.length) continue;
+					if ((m.mflags.contract.indexOf(CMStatic) >= 0) != isStatic) continue;
+					var got = [for (a in m.margs) open(a.sig.snorm, args, isStatic)];
+					if (IlPaths.sigsEq(got, want)) return bound(c, cf, link, m, isStatic, want.length, null, false);
+				}
+			}
+			throw new Unsupported("the .NET method " + Globals.sTypePath(c.path) + "." + cf.name + " with these argument types", false);
+		}
+		var caller = call == null ? null : call.caller;
+		var what = isCtor ? "constructor of " + typeS(c) : "overload of " + typeS(c) + "." + name;
+		inline function list(l:Array<IlSigNorm>) return "(" + [for (s in l) sigS(s)].join(", ") + ")";
+		var found = switch (resolve(links, name, isStatic, want, cf.params.length, caller)) {
+			case RBound(b):
+				b;
+			case RAmbiguous:
+				throw Unsupported.error("more than one .NET " + what + " accepts " + list(want));
+			case RUnknown:
+				throw Unsupported.error("more than one .NET " + what + " may accept " + list(want));
+			case RNone:
+				ruling4(links, name, isStatic, want, declared, cf.params.length, caller, call);
+				throw Unsupported.error("no .NET " + what + " takes " + list(want));
+		}
+		if (call != null && !isOverloaded(c, cf, isStatic, isCtor)) {
+			var byArgs = [
+				for (i in 0...want.length) {
+					var s = i < call.argTypes.length ? call.argTypes[i] : null;
+					// gencs unwraps or wraps a haxe.lang.Null<T> where the declared type is not one. A
+					// Haxe-compiled class, whose .NET supertypes are not modelled, counts as declared.
+					s == null || types.isNullOf(s) && !types.isNullOf(want[i]) || isCompiled(s) ? want[i] : s;
+				}
+			];
+			if (!IlPaths.sigsEq(byArgs, want)) {
+				var same = switch (resolve(links, name, isStatic, byArgs, cf.params.length, caller)) {
+					case RBound(b): b.link == found.link && b.index == found.index && sameArgs(b.typeArgs, found.typeArgs);
+					case _: false;
+				}
+				if (!same)
+					throw Unsupported.error("the .NET " + (isCtor ? "constructor of " + typeS(c) : "overload of " + typeS(c) + "." + name)
+						+ " depends on the argument types " + list(byArgs) + "; declare it with @:overload");
 			}
 		}
-		if (exactOnly || !handWritten)
-			throw new Unsupported("the .NET method " + Globals.sTypePath(c.path) + "." + cf.name + " with these argument types", false);
-		var what = isCtor ? "constructor of " + typeS(c) : "overload of " + typeS(c) + "." + name;
-		var given = "(" + [for (s in want) sigS(s)].join(", ") + ")";
-		for (link in links) {
-			var found = applicable(link, name, isStatic, want, cf.params.length);
-			if (found.length == 1) return bound(c, cf, link, found[0].m, isStatic, want.length, found[0].typeArgs, !isCtor);
-			if (found.length > 1) throw Unsupported.error("more than one .NET " + what + " accepts " + given);
-		}
-		// A Haxe-optional value-type argument is a haxe.lang.Null<T>, which the typer pads a left-out one
-		// with and which converts to no .NET value type: gencs's C# fails there (CS1503). Ruling 4.
-		var plain = want.copy(), first:Null<String> = null;
+		var link = links[found.link];
+		return bound(c, cf, link, link.cls.cmethods[found.index], isStatic, want.length, found.typeArgs, !isCtor);
+	}
+
+	static function sameArgs(a:Null<Array<IlSigNorm>>, b:Null<Array<IlSigNorm>>):Bool {
+		return a == null ? b == null : b != null && IlPaths.sigsEq(a, b);
+	}
+
+	// Whether the extern method is one of @:overload ones, which gencs calls with its arguments cast to
+	// the declared types.
+	static function isOverloaded(c:TClass, cf:TClassField, isStatic:Bool, isCtor:Bool):Bool {
+		inline function overloaded(f:Null<TClassField>)
+			return f != null && (f.overloads.length > 0 || TypeFunctions.hasClassFieldFlag(f, CfOverload) || TypeFunctions.hasMeta(":overload", f.meta));
+		return overloaded(cf) || overloaded(isCtor ? c.constructor : isStatic ? c.statics.get(cf.name) : c.fields.get(cf.name));
+	}
+
+	// Ruling 4: a Haxe-optional value-type argument is a haxe.lang.Null<T>, which converts to no .NET
+	// value type; gencs's C# fails there (CS1503). Refuses when the call would bind with such arguments
+	// as their T; a null argument (what the typer pads a left-out one with) is left out.
+	function ruling4(links:Array<{cls:IlClass, parent:IlSigNorm}>, name:String, isStatic:Bool, want:Array<IlSigNorm>,
+			declared:TSignature, typeParams:Int, caller:Null<TClass>, call:Null<ExternCall>):Void {
+		var plain = want.copy(), first = -1;
 		for (i in 0...want.length) switch (want[i]) {
 			case LValueType(_, [t]) if (declared.args[i].opt && types.isNullOf(want[i])):
 				plain[i] = t;
-				if (first == null) first = declared.args[i].name;
+				if (first < 0) first = i;
 			case _:
 		}
-		if (first != null) for (link in links) if (applicable(link, name, isStatic, plain, cf.params.length).length > 0)
-			throw new Unsupported("leaving out the optional value-type argument " + first + " of an extern method", false);
-		throw Unsupported.error("no .NET " + what + " takes " + given);
+		if (first < 0 || resolve(links, name, isStatic, plain, typeParams, caller).match(RNone)) return;
+		var argName = declared.args[first].name;
+		var given = call != null && first < call.args.length && !isNull(call.args[first]);
+		if (given)
+			throw Unsupported.error("the optional value-type argument " + argName + " of an extern method is passed as " + sigS(want[first])
+				+ ", which the .NET method does not accept");
+		throw Unsupported.error("leaving out the optional value-type argument " + argName + " of an extern method");
+	}
+
+	static function isNull(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TConst(TNull): true;
+			case TParenthesis(e1) | TMeta(_, e1): isNull(e1);
+			case _: false;
+		}
+	}
+
+	// Ruling G: the methods named `name` declared by each link of the chain, overrides left out, from the
+	// most derived. In a link, the one exact match binds, else the one applicable method when no other
+	// may apply (ruling E). A link where none applies or may apply passes to the next.
+	function resolve(links:Array<{cls:IlClass, parent:IlSigNorm}>, name:String, isStatic:Bool, want:Array<IlSigNorm>,
+			typeParams:Int, caller:Null<TClass>):Resolution {
+		for (li in 0...links.length) {
+			var link = links[li];
+			var exact = [], yes = [], unknown = 0;
+			for (idx in 0...link.cls.cmethods.length) {
+				var m = link.cls.cmethods[idx];
+				if (m.mname != name || (m.mflags.contract.indexOf(CMStatic) >= 0) != isStatic || isOverride(m)) continue;
+				var isProtected = switch (m.mflags.access) {
+					case FAPublic: false;
+					case FAFamily | FAFamOrAssem: true;
+					case _: continue;
+				}
+				var a = applies(m, link, want, typeParams, isStatic);
+				if (a.applies == ANo) continue;
+				var b:Bound = {link: li, index: idx, typeArgs: a.typeArgs};
+				if (isProtected && !callerReaches(caller, link.cls.cpath)) unknown++;
+				else if (a.applies == AUnknown) unknown++;
+				else {
+					yes.push(b);
+					if (a.exact) exact.push(b);
+				}
+			}
+			if (exact.length == 1) return RBound(exact[0]);
+			if (yes.length == 1 && unknown == 0) return RBound(yes[0]);
+			if (unknown > 0) return RUnknown;
+			if (yes.length > 1) return RAmbiguous;
+		}
+		return RNone;
+	}
+
+	// An override, which C# looks for where the method was first declared.
+	static function isOverride(m:IlMethod):Bool
+		return m.mflags.contract.indexOf(CMVirtual) >= 0 && m.mflags.vtable.indexOf(VNewSlot) < 0;
+
+	// Whether `caller` derives from the .NET type `path`, which a protected member needs.
+	function callerReaches(caller:Null<TClass>, path:IlPath):Bool {
+		var s = caller == null ? null : caller.superClass;
+		while (s != null) {
+			if (TypeFunctions.hasClassFlag(s.c, CExtern)) {
+				try {
+					for (link in chain(s.c)) if (IlPaths.equals(link.cls.cpath, path)) return true;
+				} catch (_:Unsupported) {}
+				return false;
+			}
+			s = s.c.superClass;
+		}
+		return false;
+	}
+
+	// Whether a call with arguments of the types `want` applies to `m`, a method of `link`'s class, in its
+	// normal form: each argument converts implicitly to its parameter, and each parameter left out has a
+	// default or is the params array. A generic method of another arity than the extern's `typeParams`
+	// (which then has none) takes the type arguments the declared types give; one with a type argument
+	// they do not give, or with a constraint, may apply when nothing else rules it out. So may one whose
+	// params array's expanded form could take the arguments. `exact`: the parameters are `want`.
+	function applies(m:IlMethod, link:{cls:IlClass, parent:IlSigNorm}, want:Array<IlSigNorm>, typeParams:Int,
+			isStatic:Bool):{applies:Applies, typeArgs:Null<Array<IlSigNorm>>, exact:Bool} {
+		var no = {applies: ANo, typeArgs: null, exact: false};
+		var args = linkArgs(link);
+		var n = m.margs.length;
+		var params = n > 0 && m.margs[n - 1].pdefault != null && m.margs[n - 1].pdefault.match(PParamArray);
+		if (want.length > n && !params) return no;
+		for (i in want.length...n) if (!canOmit(m.margs, i)) return no;
+		var got = [for (a in m.margs) open(a.sig.snorm, args, isStatic)];
+		var typeArgs:Null<Array<IlSigNorm>> = null;
+		var result = AYes;
+		if (m.mtypes.length != typeParams) {
+			if (typeParams != 0) return no;
+			typeArgs = inferTypeArgs(m, got, want);
+			if (typeArgs == null) {
+				// Positions without the method's type parameters may still rule it out.
+				for (i in 0...want.length)
+					if (i < n && !hasMethodParam(got[i]) && converts(want[i], got[i]) == ANo) return no;
+				return {applies: AUnknown, typeArgs: null, exact: false};
+			}
+			got = [for (s in got) DotnetTypes.substitute(s, [], typeArgs)];
+		}
+		for (i in 0...want.length) {
+			var a = i < n ? converts(want[i], got[i]) : ANo;
+			if (a == ANo) {
+				result = ANo;
+				break;
+			}
+			if (a == AUnknown) result = AUnknown;
+		}
+		if (result != AYes && params && want.length >= n - 1) {
+			// The expanded form: the arguments past the fixed parameters go into the params array.
+			var elem = switch (got[n - 1]) {
+				case LVector(t): t;
+				case _: null;
+			}
+			var possible = elem != null;
+			for (i in 0...want.length) if (possible && converts(want[i], i < n - 1 ? got[i] : elem) == ANo) possible = false;
+			if (possible) result = AUnknown;
+		}
+		if (result == ANo) return no;
+		var exact = result == AYes && typeArgs == null && want.length == n && IlPaths.sigsEq(got, want);
+		return {applies: result, typeArgs: typeArgs, exact: exact};
+	}
+
+	static function hasMethodParam(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LMethodTypeParam(_): true;
+			case LPointer(t) | LManagedPointer(t) | LVector(t) | LArray(t, _): hasMethodParam(t);
+			case LValueType(_, l) | LClass(_, l): Lambda.exists(l, hasMethodParam);
+			case LMethod(_, r, l): hasMethodParam(r) || Lambda.exists(l, hasMethodParam);
+			case _: false;
+		}
+	}
+
+	// Whether a call may leave out the parameter `i` of `margs`: it has a default value, is [Optional], or
+	// is the last one and a params array. A ref or out parameter never is.
+	static function canOmit(margs:Array<IlMethodArg>, i:Int):Bool {
+		var a = margs[i];
+		if (a.sig.snorm.match(LManagedPointer(_))) return false;
+		if (a.pdefault != null) return !a.pdefault.match(PParamArray) || i == margs.length - 1;
+		return a.constant != null || a.flags.io.indexOf(POpt) >= 0;
+	}
+
+	// The type arguments of the generic method `m` that the declared argument types `want` give: each type
+	// parameter meets one type wherever it occurs in the given parameters `got`. Null when one is not
+	// given or meets two types, or when one is constrained, which this does not check (ruling E).
+	function inferTypeArgs(m:IlMethod, got:Array<IlSigNorm>, want:Array<IlSigNorm>):Null<Array<IlSigNorm>> {
+		for (tp in m.mtypes) if (tp.tflags.constraint.length > 0 || tp.tconstraints.length > 0) return null;
+		var bound:Array<Null<IlSigNorm>> = [for (_ in m.mtypes) null];
+		var clash = false;
+		function meet(g:IlSigNorm, w:IlSigNorm):Void {
+			switch [g, w] {
+				case [LMethodTypeParam(i), _] if (i < bound.length):
+					if (bound[i] == null) bound[i] = w else if (!IlPaths.sigEq(bound[i], w)) clash = true;
+				case [LManagedPointer(g1), LManagedPointer(w1)] | [LVector(g1), LVector(w1)]:
+					meet(g1, w1);
+				case [LClass(p1, l1), LClass(p2, l2)] | [LValueType(p1, l1), LValueType(p2, l2)] if (IlPaths.equals(p1, p2) && l1.length == l2.length):
+					for (k in 0...l1.length) meet(l1[k], l2[k]);
+				case _:
+			}
+		}
+		for (i in 0...want.length) if (i < got.length) meet(got[i], want[i]);
+		if (clash) return null;
+		var r = [];
+		for (b in bound) {
+			if (b == null) return null;
+			r.push(b);
+		}
+		return r;
+	}
+
+	// System.Object, System.String and the primitives as signatures write them.
+	static function norm(s:IlSigNorm):IlSigNorm {
+		return switch (s) {
+			case LClass(p, []) | LValueType(p, []):
+				var prim = DotnetTypes.primitive(p);
+				prim != null ? prim : s;
+			case _: s;
+		}
+	}
+
+	// C#'s implicit numeric conversions between the primitives (decimal and nint/nuint are left to
+	// `converts`).
+	static function widens(from:IlSigNorm, to:IlSigNorm):Bool {
+		return switch (from) {
+			case LInt8: to.match(LInt16 | LInt32 | LInt64 | LFloat32 | LFloat64);
+			case LUInt8: to.match(LInt16 | LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64);
+			case LInt16: to.match(LInt32 | LInt64 | LFloat32 | LFloat64);
+			case LUInt16: to.match(LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64);
+			case LChar: to.match(LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64);
+			case LInt32: to.match(LInt64 | LFloat32 | LFloat64);
+			case LUInt32: to.match(LInt64 | LUInt64 | LFloat32 | LFloat64);
+			case LInt64 | LUInt64: to.match(LFloat32 | LFloat64);
+			case LFloat32: to.match(LFloat64);
+			case _: false;
+		}
+	}
+
+	// Whether C# converts a `from` to a `to` implicitly, as `converts` decides it for certain.
+	public function implicitlyConverts(from:IlSigNorm, to:IlSigNorm):Bool return converts(from, to) == AYes;
+
+	static function isSystemNamed(s:IlSigNorm, name:String):Bool {
+		return switch (s) {
+			case LClass(p, _) | LValueType(p, _): p.nested.length == 0 && p.name == name && IlPaths.strsEq(p.ns, ["System"]);
+			case _: false;
+		}
+	}
+
+	// Whether C# converts a `from` to a `to` implicitly (ruling 1, with ruling E's unknowns): yes for
+	// identity, a reference upcast along the metadata's superclasses and interfaces, anything to object,
+	// boxing to a superclass or interface of the value type, the implicit numeric conversions between
+	// primitives, and A to Nullable<A>. Unknown where hxc does not model C#'s rules: Span and
+	// ReadOnlySpan, decimal, nint and nuint, Nullable<B> from another type, a type declaring
+	// op_Implicit, a Haxe-compiled class as the source, an array to a generic interface or another array,
+	// and a variant generic target. A by-reference type converts by identity only.
+	function converts(from:IlSigNorm, to:IlSigNorm):Applies {
+		from = norm(from);
+		to = norm(to);
+		if (IlPaths.sigEq(from, to)) return AYes;
+		inline function opaque(s:IlSigNorm) return s.match(LVoid | LPointer(_) | LManagedPointer(_) | LTypedReference | LSentinel | LMethod(_, _, _));
+		if (opaque(from) || opaque(to)) return ANo;
+		inline function span(s:IlSigNorm) return isSystemNamed(s, "Span`1") || isSystemNamed(s, "ReadOnlySpan`1");
+		if (span(from) || span(to)) return AUnknown;
+		if (to.match(LObject)) return AYes;
+		inline function unmodelled(s:IlSigNorm) return s.match(LIntPtr | LUIntPtr) || isSystemNamed(s, "Decimal");
+		if (unmodelled(from) || unmodelled(to)) return AUnknown;
+		if (widens(from, to)) return AYes;
+		if (DotnetTypes.isSystemNullable(to)) return switch (to) {
+			case LValueType(_, [a]) if (IlPaths.sigEq(from, norm(a))): AYes;
+			case _: AUnknown;
+		}
+		if (from.match(LTypeParam(_) | LMethodTypeParam(_))) return ANo;
+		var r = ANo;
+		switch (from) {
+			case LVector(_) | LArray(_, _):
+				switch (to) {
+					case LVector(_) | LArray(_, _):
+						return AUnknown;
+					case LClass(_, l) if (l.length > 0):
+						return AUnknown;
+					case _:
+				}
+			case LClass(_, _) | LValueType(_, _) if (isCompiled(from)):
+				return AUnknown;
+			case _:
+		}
+		if (to.match(LClass(_, _)) && reaches(from, to)) return AYes;
+		if (isVariant(to) || declaresImplicit(from) || declaresImplicit(to)) return AUnknown;
+		return r;
+	}
+
+	// A type of the program being compiled (no referenced assembly defines it), but haxe.lang.Null<T>.
+	function isCompiled(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LClass(p, _) | LValueType(p, _): !types.isNullOf(s) && !isDefined(p);
+			case _: false;
+		}
+	}
+
+	function isDefined(p:IlPath):Bool {
+		return try NetRefs.of(ctx).definer(p) != null catch (_:Unsupported) false;
+	}
+
+	// Whether the metadata's superclasses and interfaces of `from` reach `to`.
+	function reaches(from:IlSigNorm, to:IlSigNorm):Bool {
+		var todo = [from], seen = new Map<String, Bool>();
+		while (todo.length > 0) {
+			for (sup in supertypes(todo.shift())) {
+				var n = norm(sup);
+				if (IlPaths.sigEq(n, to)) return true;
+				var k = sigS(n);
+				if (!seen.exists(k)) {
+					seen.set(k, true);
+					todo.push(n);
+				}
+			}
+		}
+		return false;
+	}
+
+	// The .NET class of `s`, or null for one no referenced assembly defines.
+	function classOf(s:IlSigNorm):Null<IlClass> {
+		var path = switch (s) {
+			case LClass(p, _) | LValueType(p, _): p;
+			case LVector(_) | LArray(_, _): ({ns: ["System"], nested: [], name: "Array"} : IlPath);
+			case _: DotnetTypes.primitivePath(s);
+		}
+		if (path == null || !isDefined(path)) return null;
+		return try rawClass(path) catch (_:Unsupported) null;
+	}
+
+	// A generic interface or delegate with a variant type parameter.
+	function isVariant(s:IlSigNorm):Bool {
+		switch (s) {
+			case LClass(_, l) if (l.length > 0):
+			case _: return false;
+		}
+		var cls = classOf(s);
+		if (cls == null) return false;
+		for (tp in cls.ctypes) if (tp.tflags.variance != VNone) return true;
+		return false;
+	}
+
+	// Whether `s`'s .NET class or a superclass declares a user-defined implicit conversion.
+	function declaresImplicit(s:IlSigNorm):Bool {
+		var cls = classOf(s);
+		for (_ in 0...64) {
+			if (cls == null) return false;
+			for (m in cls.cmethods) if (m.mname == "op_Implicit") return true;
+			if (cls.csuper == null) return false;
+			cls = classOf(cls.csuper.snorm);
+		}
+		return false;
+	}
+
+	// The superclass and interfaces of `s`'s .NET type, with its type arguments applied; none for a type no
+	// referenced assembly defines. An array's are System.Array's.
+	function supertypes(s:IlSigNorm):Array<IlSigNorm> {
+		var cls = classOf(s);
+		if (cls == null) return [];
+		var args = switch (s) {
+			case LClass(_, l) | LValueType(_, l): l;
+			case _: [];
+		}
+		var r = [for (i in cls.cimplements) subst(i.snorm, args)];
+		if (cls.csuper != null) r.unshift(subst(cls.csuper.snorm, args));
+		return r;
 	}
 
 	// The binding of `cf` to `m`, a method of `link`'s class, for a call that gives `given` arguments.
@@ -226,167 +616,6 @@ class ExternMembers {
 			omitted: m.margs.slice(given),
 			typeArgs: typeArgs
 		};
-	}
-
-	// The methods named `name` of `link`'s class, in metadata order, that a call with arguments of the
-	// types `want` can bind: each argument converts implicitly to its parameter, and each parameter left
-	// out has a default or is the params array. A generic method of another arity than the extern's
-	// `typeParams` (which then has none) is one when the declared types give each type argument.
-	function applicable(link:{cls:IlClass, parent:IlSigNorm}, name:String, isStatic:Bool, want:Array<IlSigNorm>,
-			typeParams:Int):Array<{m:IlMethod, typeArgs:Null<Array<IlSigNorm>>}> {
-		var args = linkArgs(link);
-		var r = [];
-		for (m in link.cls.cmethods) {
-			if (m.mname != name || m.margs.length < want.length || !isAccessible(m)) continue;
-			if ((m.mflags.contract.indexOf(CMStatic) >= 0) != isStatic) continue;
-			var got = [for (a in m.margs) open(a.sig.snorm, args, isStatic)];
-			var typeArgs:Null<Array<IlSigNorm>> = null;
-			if (m.mtypes.length != typeParams) {
-				if (typeParams != 0) continue;
-				typeArgs = inferTypeArgs(m, got, want, args, isStatic);
-				if (typeArgs == null) continue;
-				got = [for (s in got) DotnetTypes.substitute(s, [], typeArgs)];
-			}
-			var ok = true;
-			for (i in 0...got.length) if (i < want.length ? !implicitlyConverts(want[i], got[i]) : !canOmit(m.margs, i)) {
-				ok = false;
-				break;
-			}
-			if (ok) r.push({m: m, typeArgs: typeArgs});
-		}
-		return r;
-	}
-
-	// C# sees public and protected members from outside the assembly.
-	static function isAccessible(m:IlMethod):Bool return m.mflags.access.match(FAPublic | FAFamily | FAFamOrAssem);
-
-	// Whether a call may leave out the parameter `i` of `margs`: it has a default value, is [Optional], or
-	// is the last one and a params array.
-	static function canOmit(margs:Array<IlMethodArg>, i:Int):Bool {
-		var a = margs[i];
-		if (a.pdefault != null) return !a.pdefault.match(PParamArray) || i == margs.length - 1;
-		return a.constant != null || a.flags.io.indexOf(POpt) >= 0;
-	}
-
-	// The type arguments of the generic method `m` that the declared argument types `want` give, as C#
-	// infers them from arguments of those types: each type parameter meets one type wherever it occurs in
-	// the given parameters `got`, and meets its constraints. Null when one is not given, meets two types
-	// or fails a constraint.
-	function inferTypeArgs(m:IlMethod, got:Array<IlSigNorm>, want:Array<IlSigNorm>, classArgs:Array<IlSigNorm>,
-			isStatic:Bool):Null<Array<IlSigNorm>> {
-		var bound:Array<Null<IlSigNorm>> = [for (_ in m.mtypes) null];
-		var clash = false;
-		function meet(g:IlSigNorm, w:IlSigNorm):Void {
-			switch [g, w] {
-				case [LMethodTypeParam(i), _] if (i < bound.length):
-					if (bound[i] == null) bound[i] = w else if (!IlPaths.sigEq(bound[i], w)) clash = true;
-				case [LManagedPointer(g1), LManagedPointer(w1)] | [LVector(g1), LVector(w1)]:
-					meet(g1, w1);
-				case [LClass(p1, l1), LClass(p2, l2)] | [LValueType(p1, l1), LValueType(p2, l2)] if (IlPaths.equals(p1, p2) && l1.length == l2.length):
-					for (k in 0...l1.length) meet(l1[k], l2[k]);
-				case _:
-			}
-		}
-		for (i in 0...want.length) meet(got[i], want[i]);
-		if (clash) return null;
-		var r = [];
-		for (b in bound) {
-			if (b == null) return null;
-			r.push(b);
-		}
-		for (k in 0...m.mtypes.length) {
-			var tp = m.mtypes[k], t = r[k];
-			var isValue = DotnetTypes.isValueType(t);
-			if (tp.tflags.constraint.indexOf(CValueType) >= 0 && (!isValue || DotnetTypes.isSystemNullable(t))) return null;
-			if (tp.tflags.constraint.indexOf(CInstanceType) >= 0 && isValue) return null;
-			for (cst in tp.tconstraints)
-				if (!implicitlyConverts(t, DotnetTypes.substitute(open(cst.snorm, classArgs, isStatic), [], r))) return null;
-		}
-		return r;
-	}
-
-	// System.Object, System.String and the primitives as signatures write them.
-	static function norm(s:IlSigNorm):IlSigNorm {
-		return switch (s) {
-			case LClass(p, []) | LValueType(p, []):
-				var prim = DotnetTypes.primitive(p);
-				prim != null ? prim : s;
-			case _: s;
-		}
-	}
-
-	// C#'s implicit numeric conversions, but those to decimal.
-	static function widens(from:IlSigNorm, to:IlSigNorm):Bool {
-		return switch (from) {
-			case LInt8: to.match(LInt16 | LInt32 | LInt64 | LFloat32 | LFloat64);
-			case LUInt8: to.match(LInt16 | LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64);
-			case LInt16: to.match(LInt32 | LInt64 | LFloat32 | LFloat64);
-			case LUInt16: to.match(LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64);
-			case LChar: to.match(LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64);
-			case LInt32: to.match(LInt64 | LFloat32 | LFloat64);
-			case LUInt32: to.match(LInt64 | LUInt64 | LFloat32 | LFloat64);
-			case LInt64 | LUInt64: to.match(LFloat32 | LFloat64);
-			case LFloat32: to.match(LFloat64);
-			case _: false;
-		}
-	}
-
-	// Whether C# converts a `from` to a `to` implicitly, as ruling 1 counts it: identity, a reference
-	// upcast along the metadata's superclasses and interfaces or to object, boxing (to object, or to a
-	// superclass or interface of the value type: System.ValueType, System.Enum for an enum), the implicit
-	// numeric conversions but those to decimal, and A to Nullable<A>. A by-reference type converts by
-	// identity only. A type no referenced assembly defines has no supertypes but object.
-	public function implicitlyConverts(from:IlSigNorm, to:IlSigNorm):Bool {
-		from = norm(from);
-		to = norm(to);
-		if (IlPaths.sigEq(from, to)) return true;
-		inline function opaque(s:IlSigNorm) return s.match(LVoid | LPointer(_) | LManagedPointer(_) | LTypedReference | LSentinel | LMethod(_, _, _));
-		if (opaque(from) || opaque(to)) return false;
-		if (widens(from, to)) return true;
-		if (DotnetTypes.isSystemNullable(to)) return switch (to) {
-			case LValueType(_, [a]): IlPaths.sigEq(from, norm(a));
-			case _: false;
-		}
-		if (to.match(LObject)) return true;
-		if (from.match(LTypeParam(_) | LMethodTypeParam(_)) || !to.match(LClass(_, _))) return false;
-		var todo = [from], seen = new Map<String, Bool>();
-		while (todo.length > 0) {
-			for (sup in supertypes(todo.shift())) {
-				var n = norm(sup);
-				if (IlPaths.sigEq(n, to)) return true;
-				var k = sigS(n);
-				if (!seen.exists(k)) {
-					seen.set(k, true);
-					todo.push(n);
-				}
-			}
-		}
-		return false;
-	}
-
-	// The superclass and interfaces of `s`'s .NET type, with its type arguments applied; none for a type no
-	// referenced assembly defines. An array's are System.Array's.
-	function supertypes(s:IlSigNorm):Array<IlSigNorm> {
-		var path:Null<IlPath> = null, args:Array<IlSigNorm> = [];
-		switch (s) {
-			case LClass(p, l) | LValueType(p, l):
-				path = p;
-				args = l;
-			case LVector(_) | LArray(_, _):
-				path = {ns: ["System"], nested: [], name: "Array"};
-			case _:
-				path = DotnetTypes.primitivePath(s);
-		}
-		if (path == null) return [];
-		try {
-			if (NetRefs.of(ctx).definer(path) == null) return [];
-			var cls = rawClass(path);
-			var r = [for (i in cls.cimplements) subst(i.snorm, args)];
-			if (cls.csuper != null) r.unshift(subst(cls.csuper.snorm, args));
-			return r;
-		} catch (_:Unsupported) {
-			return [];
-		}
 	}
 
 	// The .NET type of `c`, as messages name it.
@@ -492,7 +721,7 @@ class ExternMembers {
 		var name = memberName(cf);
 		for (link in chain(c)) {
 			for (f in link.cls.cfields) if (f.fname == name) {
-				checkVar(c, cf, link, f.fsig.snorm, reads, writes);
+				checkVar(c, cf, link, f.fsig.snorm, f.fflags.contract.indexOf(CStatic) >= 0, reads, writes);
 				return f.fconstant != null ? XConstant(f.fconstant, f.fsig.snorm) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
 			}
 			for (p in link.cls.cprops) if (p.pname == name) {
@@ -500,20 +729,27 @@ class ExternMembers {
 					case LMethod(_, ret, _): ret;
 					case s: s;
 				}
-				checkVar(c, cf, link, t, reads, writes);
+				var acc = p.pget != null ? p.pget : p.pset;
+				checkVar(c, cf, link, t, acc != null && acc.flags.contract.indexOf(CMStatic) >= 0, reads, writes);
 				return XProperty(t, p.pget == null ? null : p.pget.name, p.pset == null ? null : p.pset.name);
 			}
 		}
 		throw new Unsupported("the unknown .NET field " + Globals.sTypePath(c.path) + "." + cf.name, false);
 	}
 
-	// Refuses an access to `link`'s member of the type `sig` through the hand-written extern variable `cf`
-	// whose declared type does not convert as the access needs.
-	function checkVar(c:TClass, cf:TClassField, link:{cls:IlClass, parent:IlSigNorm}, sig:IlSigNorm, reads:Bool, writes:Bool):Void {
+	// Refuses an access to `link`'s member of the type `sig` (static or not, `isStatic`) through the
+	// hand-written extern variable `cf` that declares it the other way, or whose declared type does not
+	// convert as the access needs.
+	function checkVar(c:TClass, cf:TClassField, link:{cls:IlClass, parent:IlSigNorm}, sig:IlSigNorm, isStatic:Bool, reads:Bool,
+			writes:Bool):Void {
 		if (!isHandWritten(c)) return;
-		var declared = types.withParams(c.params, [], () -> types.toSig(cf.type));
-		var actual = open(sig, linkArgs(link), TypeFunctions.hasClassFieldFlag(cf, CfStatic));
 		var what = typeS(c) + "." + memberName(cf);
+		var declaredStatic = TypeFunctions.hasClassFieldFlag(cf, CfStatic);
+		if (declaredStatic != isStatic)
+			throw Unsupported.error(what + " is " + (isStatic ? "a static" : "an instance") + " member, which the extern declares as "
+				+ (isStatic ? "an instance" : "a static") + " variable");
+		var declared = types.withParams(c.params, [], () -> types.toSig(cf.type));
+		var actual = open(sig, linkArgs(link), isStatic);
 		if (reads && !implicitlyConverts(actual, declared))
 			throw Unsupported.error(what + " is of the type " + sigS(actual) + ", which does not convert to the declared " + sigS(declared));
 		if (writes && !implicitlyConverts(declared, actual))

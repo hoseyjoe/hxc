@@ -950,7 +950,7 @@ class TexprCalls {
 	function externCall(ret:Ret, obj:TExpr, fa:TFieldAccess, c:TClass, cf:TClassField, args:Array<TExpr>, calleeType:T):Void {
 		var isStatic = fa.match(FStatic(_, _));
 		var isSuper = !isStatic && strip(obj).expr.match(TConst(TSuper));
-		var m = g.externs.method(c, cf);
+		var m = g.externs.method(c, cf, false, externCallSite(args));
 		// A generic method's type arguments: those the declared types give when the extern method has no
 		// type parameters (ExternMembers.method), else inferred from the call as for a Haxe method.
 		var margs:Array<IlSigNorm> = m.typeArgs != null ? m.typeArgs : [];
@@ -994,7 +994,7 @@ class TexprCalls {
 		var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
 		if (r == null) throw "internal error: no constructor of " + Globals.sTypePath(c.path) + " fits";
 		if (r.c != c) throw new Unsupported("inherited .NET constructors", true);
-		var m = g.externs.method(c, r.cf);
+		var m = g.externs.method(c, r.cf, false, externCallSite(args));
 		var parent = ExternMembers.subst(m.parent, g.types.classArgs(c, params));
 		var parentArgs = switch (parent) {
 			case LClass(_, l) | LValueType(_, l): l;
@@ -1006,6 +1006,16 @@ class TexprCalls {
 		}
 		pushExternArgs(args, [for (a in ilArgs) ExternMembers.subst(a, parentArgs)], m.omitted);
 		return {token: g.mb.memberRef(g.typeTokenOf(parent), ".ctor", g.sigs.methodSig(m.sig, 0)), parent: parent, argc: ilArgs.length};
+	}
+
+	// A call site of an extern method with the arguments `args`, as ExternMembers.method takes it: each
+	// argument's own type, as gencs's C# sees it, unless it is Dynamic.
+	function externCallSite(args:Array<TExpr>):ExternCall {
+		return {
+			args: args,
+			argTypes: [for (a in args) TexprDynamic.isDynamic(a.type) ? null : try tl.sig(a.type) catch (_:Unsupported) null],
+			caller: tl.cls
+		};
 	}
 
 	// Pushes the arguments of a call of a .NET method whose parameters are of the types `slots`: those
@@ -1028,8 +1038,7 @@ class TexprCalls {
 		}
 		// Wraps the value on the stack when the slot is its Nullable.
 		function wrap():Void {
-			if (inner == null) return;
-			code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(slot), ".ctor", g.sigs.method(true, LVoid, [LTypeParam(0)], 0)), 1, 1);
+			if (inner != null) tl.convert(inner, slot);
 		}
 		switch (arg.pdefault) {
 			case PDecimal(scale, negative, hi, mid, lo):

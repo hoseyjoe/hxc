@@ -111,5 +111,22 @@ namespace ValLib
         public static string Pick(Control c) { return "Pick(Control)"; }
         public static string Cmp(IComparable c) { return "Cmp(" + c.GetType().Name + " " + c + ")"; }
         public static string Wide(long l, float f) { return "Wide(" + l + "," + f + ")"; }
+        public static string Ifc(object o) { return "Ifc(object)"; }
+        public static string Ifc(IComparable c) { return "Ifc(IComparable)"; }
+        public static string Pick2(Visual v) { return "Pick2(Visual)"; }
+        public static string Pick2(Panel p) { return "Pick2(Panel)"; }
+    }
+
+    public class LinkBase { public string Foo(string s) { return "LinkBase.Foo(string)"; } }
+    public class LinkDerived : LinkBase { public string Foo(object o) { return "LinkDerived.Foo(object)"; } }
+
+    public class OvA { public virtual string Bar(object o) { return "OvA.Bar(object)"; } }
+    public class OvB : OvA { public string Bar(Control c) { return "OvB.Bar(Control)"; } }
+    public class OvD : OvB { public override string Bar(object o) { return "OvD.Bar(object)"; } }
+
+    public class Prot
+    {
+        public string Go(object o) { return "Go(object)"; }
+        protected string Go(string s) { return "Go(string)"; }
     }
 }

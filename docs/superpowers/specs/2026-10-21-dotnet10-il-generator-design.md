@@ -521,9 +521,27 @@ and `List` copy, and two threads casting one array at once.
      them; a generic method's type arguments taken from the declared types, as for the server app's
      `JsonSerializer.Serialize(obj:Any)`). Two applicable overloads are a compile error where C# would
      pick the more specific one (`netlib-extern-ambiguous-is-an-error`), and so is a return, field or
-     property type that does not convert implicitly. A left-out Haxe-optional value-type argument
-     (`?b:Int`) stays refused, as gencs's C# fails there (CS1503). A converted `--net-lib` member still
-     binds only its exact signature.
+     property type that does not convert implicitly, or a variable declared static over an instance
+     member or the other way. A Haxe-optional value-type argument (`?b:Int`) stays refused, left out or
+     passed, as gencs's C# fails there (CS1503). A converted `--net-lib` member still binds only its
+     exact signature. Three amendments keep hxc from picking an overload by accident:
+     - **Unknown applicability.** A candidate or conversion outside hxc's model of C# may apply: a
+       variant generic interface or delegate target, `Span`/`ReadOnlySpan`, `decimal`, `nint`/`nuint`,
+       `Nullable<B>` from another type, a type declaring `op_Implicit`, a Haxe-compiled class as the
+       source, an array to a generic interface or another array, a `params` array's expanded form, a
+       generic candidate with a type argument the declared types do not give or with any constraint,
+       and a protected member called from a class that does not derive from its type. A call that such
+       a candidate may also take is refused ("more than one .NET overload of T.m may accept (…)"), as
+       `String.Concat(a:NativeArray<Int>)` is (`netlib-extern-unknown-candidate-refused`; C# binds
+       `Concat<int>(IEnumerable<int>)`).
+     - **Link by link.** The chain is walked from the most derived type, and an override is a candidate
+       only where its method was first declared. In a link, the one exact match binds, else the one
+       applicable method when nothing else may apply; a link passes to the next only when nothing in it
+       applies or may apply. So a derived `Foo(object)` beats a base's exact `Foo(string)`, as in C#.
+     - **Argument types.** At a call, the arguments' own types (what gencs's C# sees; a Dynamic one counts
+       as declared) must bind the same method as the declared types, or the call is refused ("the .NET
+       overload of T.m depends on the argument types (…); declare it with @:overload"). An `@:overload`
+       extern is exempt: gencs casts its arguments to the declared types.
    - gencs renames a method type parameter that shadows another (`sh<T,T1>`) where hxc emits
      `sh<T,T>`. Only reflection on generic-parameter names can see it.
    - An `@:overload` override that changes only the return type is refused. gencs compiles it as a C#
