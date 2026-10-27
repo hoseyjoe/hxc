@@ -166,7 +166,21 @@ namespace ValLib
         public static string Co(object o) { return "Co(object)"; }
         public static string Vt(ValueType v) { return "Vt(ValueType)"; }
         public static string Vt(object o) { return "Vt(object)"; }
+        public static T Id<T>(T x) { Console.WriteLine("Id<" + typeof(T).Name + ">"); return x; }
+        public static string N(int i) { return "N(int)"; }
+        public static string N(double d) { return "N(double)"; }
     }
+
+    public interface IBaseF { string F(object o); }
+    public interface IDerivedF : IBaseF { string F(IFoo f); }
+    public class FImpl : IDerivedF
+    {
+        public string F(object o) { return "IBaseF.F(object)"; }
+        public string F(IFoo f) { return "IDerivedF.F(IFoo)"; }
+    }
+    public interface IBaseG { string G(object o); }
+    public interface IDerivedG : IBaseG { }
+    public class GImpl : IDerivedG { public string G(object o) { return "IBaseG.G(object)"; } }
 
     public class FBase { public string F(object o) { return "FBase.F(object)"; } }
     public class FDerived : FBase { public string F(IFoo f) { return "FDerived.F(IFoo " + f.Name() + ")"; } }

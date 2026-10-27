@@ -15605,3 +15605,94 @@ class P {
 [compile]
 P.hx:21: characters 9-39 : dotnet: the .NET overload of ValLib.FDerived.F depends on the argument types (MyFoo); declare it with @:overload
 P.hx:22: characters 9-41 : dotnet: the .NET overload of ValLib.FDerived.F depends on the argument types (ValLib.FooImpl); declare it with @:overload
+# Ruling N: gencs casts a basic-typed argument to a declared basic type of another kind before C# binds
+# (`T1(((double) (i)))`), so the argument counts as the declared type: T1<Double> for Float, T1<UInt32> for UInt and so
+# on, and N(double) binds for a declared Float where an Int argument would bind N(int). hxc bound T1<Int32> and refused N
+# before ruling N.
+--- netlib-extern-basic-argument-cast @gencs @netlib
+@:native("ValLib.HxInfer") extern class HF {
+	static function T1(x:Float):String;
+	static function Id(x:Float):Float;
+	static function N(x:Float):String;
+}
+@:native("ValLib.HxInfer") extern class HU {
+	static function T1(x:UInt):String;
+}
+@:native("ValLib.HxInfer") extern class HS {
+	static function T1(x:Single):String;
+}
+@:native("ValLib.HxInfer") extern class HL {
+	static function T1(x:haxe.Int64):String;
+}
+class P {
+	static function main() {
+		trace(HF.T1(1));
+		var i:Int = 2;
+		trace(HF.T1(i));
+		trace(HF.Id(i));
+		trace(HU.T1(i));
+		trace(HS.T1(i));
+		trace(HL.T1(i));
+		var u:UInt = 4;
+		trace(HF.T1(u));
+		var s:Single = 1.5;
+		trace(HF.T1(s));
+		trace(HF.N(i));
+		trace(HF.N(1.5));
+	}
+}
+===
+# Ruling O: through an extern interface receiver, C# looks up F from the .NET IDerivedF, which declares F(IFoo) and hides
+# IBaseF.F(object). hxc does not model C#'s interface member lookup, so a call whose path from the receiver's interface
+# to the declaring one has another member of that name is refused. C# (gencs) binds IDerivedF.F(IFoo); hxc bound
+# IBaseF.F(object) before ruling O.
+--- netlib-extern-interface-receiver-hidden-refused @netlib
+@:native("ValLib.IFoo") extern interface IFoo {
+	function Name():String;
+}
+@:native("ValLib.IBaseF") extern interface IBaseFD {
+	function F(o:IFoo):String;
+}
+@:native("ValLib.IDerivedF") extern interface IDerivedFD extends IBaseFD {}
+@:native("ValLib.FImpl") extern class FImpl implements IDerivedFD {
+	function new():Void;
+	function F(o:IFoo):String;
+}
+class MyFoo implements IFoo {
+	public function new() {}
+	public function Name():String return "MyFoo";
+}
+class P {
+	static function main() {
+		var d:IDerivedFD = new FImpl();
+		trace(d.F(new MyFoo()));
+	}
+}
+===
+[compile]
+P.hx:19: characters 9-25 : dotnet: the .NET method ValLib.IBaseF.F is also declared on ValLib.IDerivedF; hxc does not model C#'s interface member lookup
+# Ruling O: through an extern interface receiver whose .NET interface declares no other G, the call binds as before,
+# IBaseG.G(object), as in C#.
+--- netlib-extern-interface-receiver @gencs @netlib
+@:native("ValLib.IFoo") extern interface IFoo {
+	function Name():String;
+}
+@:native("ValLib.IBaseG") extern interface IBaseGD {
+	function G(o:IFoo):String;
+}
+@:native("ValLib.IDerivedG") extern interface IDerivedGD extends IBaseGD {}
+@:native("ValLib.GImpl") extern class GImpl implements IDerivedGD {
+	function new():Void;
+	function G(o:IFoo):String;
+}
+class MyFoo implements IFoo {
+	public function new() {}
+	public function Name():String return "MyFoo";
+}
+class P {
+	static function main() {
+		var d:IDerivedGD = new GImpl();
+		trace(d.G(new MyFoo()));
+	}
+}
+===

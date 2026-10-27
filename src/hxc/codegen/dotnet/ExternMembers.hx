@@ -258,8 +258,9 @@ class ExternMembers {
 			var byArgs = [
 				for (i in 0...want.length) {
 					var s = i < call.argTypes.length ? call.argTypes[i] : null;
-					// gencs unwraps or wraps a haxe.lang.Null<T> where the declared type is not one.
-					if (s == null || types.isNullOf(s) && !types.isNullOf(want[i])) want[i] else s;
+					// gencs unwraps or wraps a haxe.lang.Null<T> where the declared type is not one, and casts a
+					// basic-typed argument to another declared basic type (ruling N).
+					if (s == null || types.isNullOf(s) && !types.isNullOf(want[i]) || isBasic(s) && isBasic(want[i])) want[i] else s;
 				}
 			];
 			if (!IlPaths.sigsEq(byArgs, want)) {
@@ -275,6 +276,52 @@ class ExternMembers {
 		}
 		var link = links[found.link];
 		return bound(c, cf, link, link.cls.cmethods[found.index], isStatic, want.length, found.typeArgs, !isCtor, inst, candInst);
+	}
+
+	// A type gencs casts an argument to where the declared type is another one of them (ruling N): Bool, the
+	// integers, Char and the floating-point types.
+	static function isBasic(s:IlSigNorm):Bool {
+		return norm(s).match(LBool | LChar | LInt8 | LUInt8 | LInt16 | LUInt16 | LInt32 | LUInt32 | LInt64 | LUInt64 | LFloat32 | LFloat64);
+	}
+
+	// Ruling O: a call through the extern interface `receiver` of the method `cf` that the extern interface
+	// `c` declares, which `receiver` extends. Refused when a .NET interface between their .NET types (the
+	// receiver's included, `c`'s not) declares a member of the same name, where C#'s interface member
+	// lookup, which hxc does not model, may bind another method. A converted `c`'s member was chosen by the
+	// typer from the metadata.
+	public function checkInterfaceReceiver(receiver:TClass, c:TClass, cf:TClassField):Void {
+		if (!isHandWritten(c)) return;
+		var name = memberName(cf);
+		var target = types.externPath(c);
+		var derives = new Map<String, Bool>();
+		function reachesTarget(p:IlPath):Bool {
+			var k = IlPaths.key(p);
+			if (derives.exists(k)) return derives.get(k);
+			derives.set(k, false);
+			var r = IlPaths.equals(p, target);
+			if (!r) for (i in rawClass(p).cimplements) switch (i.snorm) {
+				case LClass(ip, _) if (isDefined(ip) && reachesTarget(ip)):
+					r = true;
+				case _:
+			}
+			derives.set(k, r);
+			return r;
+		}
+		var seen = new Map<String, Bool>();
+		function visit(p:IlPath):Void {
+			if (IlPaths.equals(p, target) || seen.exists(IlPaths.key(p))) return;
+			seen.set(IlPaths.key(p), true);
+			var cls = rawClass(p);
+			for (m in cls.cmethods) if (m.mname == name)
+				throw Unsupported.error("the .NET method " + typeS(c) + "." + name + " is also declared on " + sigS(LClass(p, []))
+					+ "; hxc does not model C#'s interface member lookup");
+			for (i in cls.cimplements) switch (i.snorm) {
+				case LClass(ip, _) if (isDefined(ip) && reachesTarget(ip)): visit(ip);
+				case _:
+			}
+		}
+		var start = types.externPath(receiver);
+		if (isDefined(start) && reachesTarget(start)) visit(start);
 	}
 
 	// The program's class or interface whose CLR path is `p`, or null.

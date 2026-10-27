@@ -543,13 +543,21 @@ and `List` copy, and two threads casting one array at once.
        receiver expression's extern class (or of its nearest extern superclass that has one), not the
        extern class declaring the Haxe field; for a static call, the class the call names. So
        `new FDerivedD().F(x)` finds `FDerived.F(IFoo)` although the field is declared on the extern
-       `FBase` (`netlib-extern-receiver-type-starts-the-walk`).
+       `FBase` (`netlib-extern-receiver-type-starts-the-walk`). Through an extern interface receiver
+       that extends the declaring extern interface, the call binds as declared, unless a .NET interface
+       between the receiver's .NET type (included) and the declaring one (excluded) declares a member of
+       the same name: C#'s interface member lookup may then bind it, which hxc does not model, so the
+       call is refused ("the .NET method T.m is also declared on I; hxc does not model C#'s interface
+       member lookup", `netlib-extern-interface-receiver-hidden-refused`).
      - **Argument types.** At a call, the arguments' own types (what gencs's C# sees) must bind the same
        method definition as the declared types, or the call is refused ("the .NET overload of T.m
        depends on the argument types (…); declare it with @:overload"). An `@:overload` extern is
        exempt: gencs casts its arguments to the declared types. An argument's own type counts as
        declared when it is Dynamic or has no signature, or when it is a `haxe.lang.Null<T>` and the
-       declared type is not one (gencs unwraps or wraps it). A generic method's type arguments come from
+       declared type is not one (gencs unwraps or wraps it), or when it is a basic type (`Bool`, the
+       integers, `Char`, `Single`, `Float`) and the declared type is another one, as gencs casts it
+       (`T1(x:Float)` with an `Int` is `T1<double>`, and `N(int)`/`N(double)` binds `N(double)`;
+       `netlib-extern-basic-argument-cast`). A generic method's type arguments come from
        the arguments' own types, as C# infers them (`T1(x:Any)` with a `MyPlain` is `T1<MyPlain>`, a
        TypeDef or TypeSpec of the program's own module); where they differ from the declared ones, the
        declared return type must still convert from the method's return with them, or the call is
@@ -605,6 +613,10 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   the boxed `default(T)`. gencs's C# binds `x.Equals(default(T))` to the struct's own `Equals(T)` when it
   declares one. The two differ only when that `Equals(T)` and `Equals(object)` disagree, which is not
   normally observable. Non-generic structs, .NET or Haxe, bind as C# does (`struct-own-equals-null`).
+- A generic .NET method's type argument inferred from a closure, an array literal or an anonymous
+  object passed to a hand-written extern is hxc's representation class (`haxe.lang.Function`,
+  `Array`, `object`), where gencs's C# infers the closure's own class, ``Array`1`` or
+  `haxe.lang.DynamicObject`. Only reflection on the type argument (`typeof(T)`) can tell.
 
 ## Left to the builder
 

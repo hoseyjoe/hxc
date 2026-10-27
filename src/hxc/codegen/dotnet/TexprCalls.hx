@@ -965,6 +965,13 @@ class TexprCalls {
 		if (start != null) {
 			site.receiver = start.c;
 			site.receiverArgs = start.args;
+		} else if (!isStatic && !isSuper && TypeFunctions.hasClassFlag(c, CInterface)) {
+			// Ruling O: through an extern interface that extends the declaring one.
+			switch (TypeFunctions.follow(obj.type)) {
+				case TInst(rc, _) if (rc != c && TypeFunctions.hasClassFlag(rc, CInterface) && TypeFunctions.hasClassFlag(rc, CExtern) && hasNetType(rc)):
+					g.externs.checkInterfaceReceiver(rc, c, cf);
+				case _:
+			}
 		}
 		var m = g.externs.method(c, cf, false, site);
 		// A generic method's type arguments: those the call's argument types give when the extern method has
