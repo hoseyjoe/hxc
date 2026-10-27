@@ -26,6 +26,7 @@ import hxc.codegen.dotnet.TexprToIl.isStringClass;
 import hxc.codegen.dotnet.TexprToIl.isTypeParam;
 import hxc.codegen.dotnet.TexprToIl.refTarget;
 import hxc.codegen.dotnet.TexprToIl.needVal;
+import hxc.codegen.dotnet.TexprToIl.paramsOf;
 import hxc.codegen.dotnet.TexprToIl.staticOwner;
 import hxc.codegen.dotnet.TexprToIl.strip;
 import hxc.codegen.dotnet.TexprOps.stringKind;
@@ -112,6 +113,9 @@ class TexprCalls {
 			case TConst(TThis) if (tl.thisSig != null && DotnetTypes.isValueType(tl.thisSig)):
 				code.ldarg(0);
 				return true;
+			case TField(obj, fa = FStatic(_, cf) | FInstance(_, _, cf)) if (g.varProperties.exists(cf) && !tl.dyn.isDynamicReceiver(fa, obj)):
+				// A @:property var has no home: C# works on a copy of the getter's value.
+				return false;
 			case TField(obj, fa = FInstance(c, cparams, cf)) if (!isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))
 				&& !tl.dyn.isDynamicReceiver(fa, obj)):
 				var f = instanceField(c, cparams, cf);
@@ -206,6 +210,12 @@ class TexprCalls {
 				if (plan == null) throw Unsupported.bug("a closure of " + Globals.sTypePath(c.path) + "." + cf.name + " without a method (an hxc bug)");
 				pushClosure(null, staticOwner(plan), cf.name);
 				tl.coerce(closureSig(), ret);
+			case FStatic(c, cf) | FInstance(c, _, cf) if (g.varProperties.exists(cf)):
+				// A @:property var: its getter, as gencs's C# reads the auto-property.
+				var a = varAccessor(c, paramsOf(fa), cf, false);
+				if (!a.isStatic) receiver(obj, a.owner);
+				code.opToken(a.op, a.token, a.isStatic ? 0 : 1, 1);
+				tl.coerce(a.sig, ret);
 			case FStatic(c, cf) if (!isExtern(c)):
 				var f = tl.staticField(c, cf);
 				if (!needVal(ret)) return;
@@ -896,6 +906,29 @@ class TexprCalls {
 		return {token: g.memberOf(plan, owner, cf), sig: DotnetTypes.substitute(g.fieldSigs.get(cf), inst, []), owner: owner};
 	}
 
+	// The getter or (`isSet`) the setter of the CLR property a @:property var is (DotnetCtx.varProperties), as
+	// an access through `c` with `params` reaches it: its token and call opcode, the property's type there, the
+	// type of the class declaring it (for a static, gencs's instantiation of a generic class with object) and
+	// whether it is static.
+	function varAccessor(c:TClass, params:TParams, cf:TClassField, isSet:Bool):{token:Int, op:Int, sig:IlSigNorm, owner:IlSigNorm, isStatic:Bool} {
+		g.types.checkKept(TClassDecl(c));
+		var p = g.varProperties.get(cf), plan = g.ownerOf.get(cf);
+		var m = isSet ? p.setter : p.getter;
+		if (p.isStatic) {
+			var owner = staticOwner(plan);
+			return {token: g.methodOf(plan, owner, m), op: IlOps.CALL, sig: p.sig, owner: owner, isStatic: true};
+		}
+		var inst = g.types.classArgs(plan.c, tl.ownerArgs(c, params, plan));
+		var owner = DotnetCtx.instanceOf(plan, inst);
+		return {
+			token: g.methodOf(plan, owner, m),
+			op: DotnetTypes.isValueType(owner) ? IlOps.CALL : IlOps.CALLVIRT,
+			sig: DotnetTypes.substitute(p.sig, inst, []),
+			owner: owner,
+			isStatic: false
+		};
+	}
+
 	// The field an overriding dynamic method of `c` stands for: the one its superclass declares.
 	static function declaredField(c:TClass, cf:TClassField):TClassField {
 		var cur = c;
@@ -1372,7 +1405,7 @@ class TexprCalls {
 	// hxcs's Array, is an object[], whose elements convert as they are read, as in gencs's C#.
 	function vectorSig(e:TExpr):IlSigNorm {
 		switch (strip(e).expr) {
-			case TField(_, FInstance(c, params, cf)) if (!isExtern(c) && cf.kind.match(Var(_))):
+			case TField(_, FInstance(c, params, cf)) if (!isExtern(c) && cf.kind.match(Var(_)) && !g.varProperties.exists(cf)):
 				var s = try instanceField(c, params, cf).sig catch (_:Unsupported) null;
 				if (s != null && s.match(LVector(_))) return s;
 			case _:

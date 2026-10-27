@@ -83,14 +83,17 @@ typedef MethodPlan = {
 	?ownArgs:Array<IlSigNorm>
 };
 
-// `cf` is null for a field of an enum's classes (EnumToIl); `token` is set when the row is written.
-typedef FieldPlan = {cf:Null<TClassField>, name:String, flags:Int, sig:IlSigNorm, ?token:Int};
+// `cf` is null for a field of an enum's classes (EnumToIl); `token` is set when the row is written. The
+// backing field of a @:property var has its property (`property`), whose accessors every access calls.
+typedef FieldPlan = {cf:Null<TClassField>, name:String, flags:Int, sig:IlSigNorm, ?token:Int, ?property:PropertyPlan};
 
 // A CLR property of a class, as gencs's gen_prop writes one for a var its InterfaceProps filter marks: the
 // var `cf` (of the class or, for an override of its accessors, a superclass), the property's name and
 // type, the private non-virtual bodies the Haxe get_X/set_X become (`_get_X`/`_set_X`, null for an accessor
 // the class does not declare), the public accessors that call them and that every Haxe use of
-// get_X/set_X calls, and its Property row's token, set when the row is written.
+// get_X/set_X calls, and its Property row's token, set when the row is written. A physical @:property var,
+// which gencs writes as a C# auto-property (`{ get; set; }`), has no bodies: its accessors read and write
+// its private backing field `backing` (planVarProperty), and it is static when the var is.
 typedef PropertyPlan = {
 	cf:TClassField,
 	name:String,
@@ -99,7 +102,9 @@ typedef PropertyPlan = {
 	setBody:Null<MethodPlan>,
 	getter:Null<MethodPlan>,
 	setter:Null<MethodPlan>,
-	token:Int
+	token:Int,
+	?backing:FieldPlan,
+	?isStatic:Bool
 };
 
 // A var as a class or one of its superclasses has it: the class declaring it, with its type arguments in
@@ -272,6 +277,10 @@ class TclassToIl {
 		var props = isInterface ? null : planProperties(g, c, interfaces, implementing);
 
 		var fields:Array<FieldPlan> = [];
+		// The CLR properties of the class's @:property vars (planVarProperty): the statics', then the instance
+		// vars', each in declaration order, as gencs writes them around its own properties.
+		var varProps = new ObjectMap<TClassField, PropertyPlan>();
+		var staticProps:Array<PropertyPlan> = [], instanceProps:Array<PropertyPlan> = [];
 		function addFields(list:Array<TClassField>, isStatic:Bool) {
 			for (cf in list) {
 				if (TypeFunctions.hasClassFieldFlag(cf, CfExtern) || !TypeFunctions.isPhysicalField(cf)) continue;
@@ -284,6 +293,13 @@ class TclassToIl {
 						case Var(_):
 							// C# has no field initializers in structs, and gencs moves none into their constructors.
 							if (isStruct && !isStatic && cf.expr != null) throw new Unsupported("instance variable initializers in structs", true);
+							if (TypeFunctions.hasMeta(":property", cf.meta)) {
+								var f = planVarProperty(g, c, cf, isStatic);
+								fields.push(f);
+								varProps.set(cf, f.property);
+								(isStatic ? staticProps : instanceProps).push(f.property);
+								continue;
+							}
 						case Method(MethDynamic):
 							// A field of type haxe.lang.Function, which an override sets again (fieldInits).
 							if (TypeFunctions.hasClassFieldFlag(cf, CfOverride)) continue;
@@ -308,7 +324,14 @@ class TclassToIl {
 			switch (cf.kind) {
 				case Method(MethMacro | MethDynamic): return;
 				case Method(_):
-				case Var(_): return;
+				case Var(_):
+					// A @:property var's accessors, where C# has its auto-property.
+					var p = varProps.get(cf);
+					if (p != null) {
+						methods.push(p.getter);
+						methods.push(p.setter);
+					}
+					return;
 			}
 			if (TypeFunctions.hasClassFieldFlag(cf, CfExtern)) return;
 			// An @:overload method is one MethodDef per overload.
@@ -539,9 +562,59 @@ class TclassToIl {
 			initFlag: hasCctor && c.params.length > 0,
 			ctors: ctors,
 			emptyCtor: emptyCtor,
-			properties: props == null ? [] : props.list,
+			properties: staticProps.concat(props == null ? [] : props.list).concat(instanceProps),
 			token: 0
 		};
+	}
+
+	// A physical @:property var as gencs writes it, a C# auto-property (`public T X { get; set; }`, its
+	// initializer moved into the constructor or the static constructor): Roslyn's private backing field
+	// `<X>k__BackingField`, public non-virtual accessors get_X and set_X that read and write it, and a Property
+	// row. Returns the backing field's plan, its `property` the PropertyPlan. C# reserves the accessors' names,
+	// so gencs's C# for a class that declares get_X or set_X beside the var fails (CS0082).
+	static function planVarProperty(g:DotnetCtx, c:TClass, cf:TClassField, isStatic:Bool):FieldPlan {
+		for (prefix in ["get_", "set_"])
+			if (c.fields.exists(prefix + cf.name) || c.statics.exists(prefix + cf.name))
+				throw Unsupported.error("the @:property variable " + cf.name + " cannot have a method " + prefix + cf.name
+					+ " beside it: its CLR property's accessor has that name");
+		var name = DotnetNames.fieldName(c, cf.name);
+		var sig = g.types.toSig(cf.type);
+		var p:PropertyPlan = {
+			cf: cf,
+			name: name,
+			sig: sig,
+			getBody: null,
+			setBody: null,
+			getter: null,
+			setter: null,
+			token: 0,
+			isStatic: isStatic
+		};
+		var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME | (isStatic ? MethodAttrs.STATIC : 0);
+		function accessor(isSet:Bool):MethodPlan {
+			return {
+				kind: MPropertyAccessor(p, isSet),
+				name: (isSet ? "set_" : "get_") + name,
+				flags: flags,
+				hasThis: !isStatic,
+				ret: isSet ? LVoid : sig,
+				args: isSet ? [sig] : [],
+				argNames: isSet ? ["value"] : [],
+				generics: [],
+				pos: cf.pos,
+				token: 0
+			};
+		}
+		p.getter = accessor(false);
+		p.setter = accessor(true);
+		p.backing = {
+			cf: cf,
+			name: "<" + name + ">k__BackingField",
+			flags: FieldAttrs.PRIVATE | (isStatic ? FieldAttrs.STATIC : 0),
+			sig: sig,
+			property: p
+		};
+		return p.backing;
 	}
 
 	// Two methods of one name, static-ness, generic arity and CLR signature are invalid metadata (ECMA-335
@@ -1434,6 +1507,12 @@ class TclassToIl {
 		for (f in plan.fields) {
 			f.token = mb.field(plan.token, f.flags, f.name, g.sigs.field(f.sig));
 			if (f.cf == null) continue;
+			if (f.property != null) {
+				// A @:property var has no field of its own to Haxe code: every access calls an accessor.
+				g.varProperties.set(f.cf, f.property);
+				g.ownerOf.set(f.cf, plan);
+				continue;
+			}
 			g.fieldTokens.set(f.cf, f.token);
 			g.fieldSigs.set(f.cf, f.sig);
 			g.ownerOf.set(f.cf, plan);
@@ -1458,7 +1537,7 @@ class TclassToIl {
 			}
 		}
 		for (p in plan.properties) {
-			p.token = mb.property(plan.token, p.name, g.sigs.property(p.sig));
+			p.token = mb.property(plan.token, p.name, g.sigs.property(p.sig, p.isStatic != true));
 			if (p.getter != null) mb.methodSemantics(SemanticsAttrs.GETTER, p.getter.token, p.token);
 			if (p.setter != null) mb.methodSemantics(SemanticsAttrs.SETTER, p.setter.token, p.token);
 			// Every Haxe use of get_X and set_X calls the public accessor, as gencs writes `o.X` and `o.X = v`.
@@ -1894,7 +1973,7 @@ class TclassToIl {
 				case MCompanionMember:
 					throw "internal error: a companion member with a body";
 				case MPropertyAccessor(p, isSet):
-					accessorBody(p, isSet, code);
+					if (p.backing != null) backingAccessorBody(g, plan, p, isSet, code) else accessorBody(p, isSet, code);
 				case MEntryPoint:
 					var boot = g.bootInit();
 					if (boot != null) code.opToken(IlOps.CALL, boot, 0, 0);
@@ -1933,6 +2012,23 @@ class TclassToIl {
 		if (isSet) code.ldarg(1);
 		code.opToken(IlOps.CALL, body.token, isSet ? 2 : 1, body.ret.match(LVoid) ? 0 : 1);
 		if (isSet && !body.ret.match(LVoid)) code.op(IlOps.POP, 1, 0);
+		code.op(IlOps.RET, isSet ? 0 : 1, 0);
+	}
+
+	// A @:property var's accessor, as Roslyn compiles an auto-property's: `ldarg.0; ldfld; ret` and
+	// `ldarg.0; ldarg.1; stfld; ret`, or for a static `ldsfld; ret` and `ldarg.0; stsfld; ret`. A generic
+	// class's accessor reaches the field through the class's own instantiation.
+	static function backingAccessorBody(g:DotnetCtx, plan:ClassPlan, p:PropertyPlan, isSet:Bool, code:IlCode):Void {
+		var f = p.backing;
+		var token = plan.classParams.length == 0 ? f.token : g.mb.memberRef(g.typeTokenOf(plan.thisSig), f.name, g.sigs.field(f.sig));
+		if (p.isStatic) {
+			if (isSet) code.ldarg(0);
+			code.opToken(isSet ? IlOps.STSFLD : IlOps.LDSFLD, token, isSet ? 1 : 0, isSet ? 0 : 1);
+		} else {
+			code.ldarg(0);
+			if (isSet) code.ldarg(1);
+			code.opToken(isSet ? IlOps.STFLD : IlOps.LDFLD, token, isSet ? 2 : 1, isSet ? 0 : 1);
+		}
 		code.op(IlOps.RET, isSet ? 0 : 1, 0);
 	}
 

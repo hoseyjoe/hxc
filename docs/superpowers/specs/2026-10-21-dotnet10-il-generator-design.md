@@ -649,6 +649,18 @@ and `List` copy, and two threads casting one array at once.
        property, for which C# adds a forwarding stub (ruling S,
        `netlib-iface-property-base-nonvirtual-is-unsupported`; the stub is milestone 4c's), properties
        of generic classes, events, and overloaded, generic, dynamic or abstract accessors.
+   - A physical `@:property` var is a CLR property, as gencs writes it a C# auto-property (ruling 8;
+     `property-meta-vars`, `property-json`): a private `<X>k__BackingField`, public non-virtual
+     `HideBySig | SpecialName` accessors `get_X` and `void set_X(T)` that read and write it, static for a
+     static var, and a Property row. Every Haxe access calls the accessors: the initializers, which run
+     in the constructor or the static constructor, compound assignment and `++`, Dynamic access,
+     reflection and a hxgen class's reflection members (`property-vars-access`, which also covers a
+     generic class and a struct). A member of a struct-typed one is reached through a copy of the
+     getter's value, as in C#. System.Text.Json and .NET reflection see the properties, and no field.
+     Roslyn's `CompilerGeneratedAttribute` on the backing field and the accessors is not written
+     (attributes are milestone 4b's).
+     - Error, as gencs's C# does not compile: a `get_X` or `set_X` the class declares beside the var
+       (CS0082, `property-var-accessor-clash-is-an-error`).
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code

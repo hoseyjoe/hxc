@@ -932,6 +932,14 @@ class TexprToIl {
 		return {token: g.memberOf(plan, staticOwner(plan), cf), sig: g.fieldSigs.get(cf)};
 	}
 
+	// The type arguments of a static or instance field access's class (none for a static).
+	static function paramsOf(fa:TFieldAccess):TParams {
+		return switch (fa) {
+			case FInstance(_, params, _): params;
+			case _: [];
+		}
+	}
+
 	// As gencs writes it, a static member of a generic class is reached through the instantiation
 	// with object for each type parameter.
 	static function staticOwner(plan:ClassPlan):IlSigNorm {
@@ -1160,6 +1168,12 @@ class TexprToIl {
 				code.opToken(IlOps.CALLVIRT, m.token, 3, 1);
 				// __set returns the value it stored.
 				coerce(m.ret, ret);
+			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (g.varProperties.exists(cf) && !dyn.isDynamicReceiver(fa, obj)):
+				// A @:property var: its setter, as gencs's C# stores into the auto-property, the value the stored one.
+				var a = calls.varAccessor(c, paramsOf(fa), cf, true);
+				if (!a.isStatic) calls.receiver(obj, a.owner, true);
+				texprStore(a.sig, lhs.type, rhs);
+				storeKeeping(ret, a.sig, () -> code.opToken(a.op, a.token, a.isStatic ? 1 : 2, 0));
 			case TField(_, FStatic(c, cf)) if (!isExtern(c)):
 				var f = staticField(c, cf);
 				texprStore(f.sig, lhs.type, rhs);
@@ -1358,6 +1372,20 @@ class TexprToIl {
 			case TLocal(v):
 				var s = slot(v);
 				return {sig: s.sig, receiver: false, prepare: () -> {}, load: () -> load(s), store: () -> store(s)};
+			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (g.varProperties.exists(cf) && !dyn.isDynamicReceiver(fa, obj)):
+				// A @:property var: its getter and setter on the receiver evaluated once.
+				var get = calls.varAccessor(c, paramsOf(fa), cf, false), set = calls.varAccessor(c, paramsOf(fa), cf, true);
+				var isStatic = get.isStatic;
+				return {
+					sig: get.sig,
+					receiver: !isStatic,
+					prepare: () -> if (!isStatic) calls.receiver(obj, get.owner, true),
+					load: () -> {
+						if (!isStatic) code.op(IlOps.DUP, 1, 2);
+						code.opToken(get.op, get.token, isStatic ? 0 : 1, 1);
+					},
+					store: () -> code.opToken(set.op, set.token, isStatic ? 1 : 2, 0)
+				};
 			case TField(_, FStatic(c, cf)) if (!isExtern(c) && cf.kind.match(Var(_))):
 				var f = staticField(c, cf);
 				return {

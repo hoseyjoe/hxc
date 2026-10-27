@@ -30,6 +30,9 @@ class DotnetCtx {
 	public final planOf = new ObjectMap<TClass, ClassPlan>();
 	// The plan of the class declaring each Haxe field and method.
 	public final ownerOf = new ObjectMap<TClassField, ClassPlan>();
+	// The CLR property each physical @:property var is (TclassToIl.planVarProperty), whose accessors every
+	// access calls; such a var has no entry in fieldTokens.
+	public final varProperties = new ObjectMap<TClassField, PropertyPlan>();
 	// What each hxgen enum became (EnumToIl).
 	public final enumPlans = new ObjectMap<TEnum, EnumPlan>();
 	public var plans:Array<ClassPlan> = [];
@@ -167,14 +170,17 @@ class DotnetCtx {
 	// instantiation, with the definition's signature.
 	public function memberOf(plan:ClassPlan, owner:IlSigNorm, cf:TClassField):Int {
 		var m = methodPlans.get(cf);
-		if (m != null) {
-			if (plan.classParams.length == 0) return m.token;
-			return mb.memberRef(typeTokenOf(owner), m.name, sigs.method(m.hasThis, m.ret, m.args, m.generics.length));
-		}
+		if (m != null) return methodOf(plan, owner, m);
 		var token = fieldTokens.get(cf);
 		if (token == null) throw "internal error: no member " + plan.hxPath + "." + cf.name;
 		if (plan.classParams.length == 0) return token;
 		return mb.memberRef(typeTokenOf(owner), DotnetNames.fieldName(plan.c, cf.name), sigs.field(fieldSigs.get(cf)));
+	}
+
+	// The token code uses for the method `m` of `plan`'s class reached through `owner`, as memberOf.
+	public function methodOf(plan:ClassPlan, owner:IlSigNorm, m:MethodPlan):Int {
+		if (plan.classParams.length == 0) return m.token;
+		return mb.memberRef(typeTokenOf(owner), m.name, sigs.method(m.hasThis, m.ret, m.args, m.generics.length));
 	}
 
 	// Whether the hxgeneric class or interface `c` has a companion interface: not a struct, nor a local

@@ -16723,3 +16723,184 @@ class P {
 prop Sink set
 [got,set_Sink]
 [Sink,got]
+# `@:property` vars as CLR properties (milestone 4a, ruling 8): gencs writes C# auto-properties, so each becomes a
+# private <X>k__BackingField, public non-virtual get_X/set_X and a Property row, and every Haxe access calls the accessors.
+--- property-meta-vars @gencs
+@:nativeGen
+class Model {
+	@:property public var name:String = "";
+	@:property public var count:Int = 3;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var m = new Model();
+		m.name = "bob";
+		m.count++;
+		Sys.println(m.name + " " + m.count);
+		var t = cs.Lib.toNativeType(Model);
+		Sys.println([for (p in t.GetProperties()) p.Name].join(","));
+		Sys.println([for (f in t.GetFields()) f.Name].join(","));
+		Sys.println(Reflect.field(m, "name"));
+	}
+}
+===
+[run]
+bob 4
+name,count
+
+bob
+# System.Text.Json serializing a @:property model, as the server app's AI tools do (Review Focus 2): the JSON has the
+# properties' names and values, a Nullable<Int> one set to null included, and IncludeFields finds no field.
+--- property-json @gencs
+import cs.system.Nullable_1;
+
+@:native("System.Text.Json.JsonSerializer") extern class JsonSerializer {
+	@:overload
+	public static function Serialize(obj:Any):String;
+	@:overload
+	public static function Serialize(obj:Any, opts:JsonSerializerOptions):String;
+}
+
+@:native("System.Text.Json.JsonSerializerOptions") extern class JsonSerializerOptions {
+	public function new();
+	public var IncludeFields:Bool;
+}
+
+@:nativeGen
+class ToolArgs {
+	@:property public var name:String = "";
+	@:property public var count:Int;
+	@:property public var limit:Nullable_1<Int> = null;
+	public function new() {}
+}
+
+class P {
+	static function main() {
+		var a = new ToolArgs();
+		Sys.println(JsonSerializer.Serialize(a));
+		a.name = "search";
+		a.count = 2;
+		a.limit = new Nullable_1(5);
+		var opts = new JsonSerializerOptions();
+		opts.IncludeFields = true;
+		Sys.println(JsonSerializer.Serialize(a, opts));
+		a.limit = null;
+		Sys.println(JsonSerializer.Serialize(a));
+		var f = Reflect.fields(a); f.sort(Reflect.compare); Sys.println(f);
+		var i = Type.getInstanceFields(ToolArgs); i.sort(Reflect.compare); Sys.println(i);
+	}
+}
+===
+# Every access goes through the accessors: initializers (instance and static), compound assignment, ++ with its value,
+# statics, Dynamic, reflection, a hxgen class's reflection members, a struct-typed property read through a copy, a
+# generic class, and a struct's properties.
+--- property-vars-access @gencs
+import cs.system.DateTime;
+
+class Counter {
+	@:property public var n:Int = 1;
+	@:property public var label:String;
+	@:property public static var total:Int = 10;
+	@:property public static var tag:String;
+	public var plain:Int = 0;
+	public function new() {
+		label = "c";
+	}
+	public function bump():Int {
+		n += 2;
+		total++;
+		return n++;
+	}
+}
+
+@:nativeGen
+class Stamp {
+	@:property public var at:DateTime;
+	@:property public var v:Float = 1.5;
+	public function new() {}
+}
+
+class Box<T> {
+	@:property public var item:T;
+	@:property public var hits:Int = 0;
+	public function new(item:T) {
+		this.item = item;
+	}
+	public function take():T {
+		hits++;
+		return item;
+	}
+}
+
+@:struct
+class Pair {
+	@:property public var a:Int;
+	@:property public var b:String;
+	public function new(a:Int, b:String) {
+		this.a = a;
+		this.b = b;
+	}
+}
+
+class P {
+	static function main() {
+		var c = new Counter();
+		Sys.println(c.bump() + " " + c.n + " " + Counter.total);
+		Sys.println((c.n *= 3) + " " + (c.label += "x") + " " + (Counter.total -= 1) + " " + (Counter.tag = "t"));
+		Reflect.setField(c, "n", 40);
+		Sys.println(Reflect.field(c, "n") + " " + Reflect.getProperty(c, "label"));
+		Reflect.setProperty(c, "label", "y");
+		Sys.println(c.label);
+		var dc:Dynamic = c;
+		dc.n++;
+		Sys.println(dc.n + " " + dc.label + " " + Reflect.field(Counter, "total") + " " + Reflect.field(Counter, "tag"));
+		Reflect.setField(Counter, "total", 7);
+		Sys.println(Counter.total);
+		var f = Reflect.fields(c); f.sort(Reflect.compare); Sys.println(f);
+		var i = Type.getInstanceFields(Counter); i.sort(Reflect.compare); Sys.println(i);
+		var s = Type.getClassFields(Counter); s.sort(Reflect.compare); Sys.println(s);
+		var t = cs.Lib.toNativeType(Counter);
+		var ps = [for (p in t.GetProperties()) p.Name]; ps.sort(Reflect.compare); Sys.println(ps);
+		var fs = [for (x in t.GetFields()) x.Name]; fs.sort(Reflect.compare); Sys.println(fs);
+		var st = new Stamp();
+		Sys.println(st.at.Year + " " + st.at.AddYears(1).Year);
+		st.at = st.at.AddDays(40);
+		Sys.println(st.at.Month);
+		st.v += 1;
+		Sys.println(st.v++ + " " + st.v);
+		var nf = Reflect.fields(st); nf.sort(Reflect.compare); Sys.println(nf);
+		var ni = Type.getInstanceFields(Stamp); ni.sort(Reflect.compare); Sys.println(ni);
+		var b = new Box("x");
+		Sys.println(b.take() + b.take() + " " + b.hits);
+		b.item = "y";
+		var db:Dynamic = b;
+		Sys.println(db.item + " " + db.hits);
+		var bt = cs.Lib.toNativeType(Box);
+		var bps = [for (p in bt.GetProperties()) p.Name]; bps.sort(Reflect.compare); Sys.println(bps);
+		var p = new Pair(3, "q");
+		p.a += 4;
+		Sys.println(p.a + p.b);
+		var pt = cs.Lib.toNativeType(Pair);
+		var pps = [for (x in pt.GetProperties()) x.Name]; pps.sort(Reflect.compare); Sys.println(pps);
+	}
+}
+===
+# A physical @:property var whose class also declares get_X or set_X: C# reserves those names for the property's
+# accessors (gencs's C#: CS0082).
+--- property-var-accessor-clash-is-an-error
+class A {
+	@:property @:isVar public var x(get, set):Int;
+	function get_x() return x;
+	function set_x(v) return x = v;
+	public function new() {}
+}
+class P {
+	static function main() {
+		new A();
+	}
+}
+===
+[compile]
+P.hx:2: characters 21-48 : dotnet: the @:property variable x cannot have a method get_x beside it: its CLR property's accessor has that name
+P.hx:9: characters 3-10 : dotnet: A (left out: the @:property variable x cannot have a method get_x beside it: its CLR property's accessor has that name) is not supported yet
