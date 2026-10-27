@@ -976,6 +976,10 @@ class TexprCalls {
 		var site = externCallSite(args, inst, own);
 		var recv = isStatic ? null : receiverType(obj, c, cf);
 		var start = recv == null ? null : receiverClass(recv, c);
+		if (!isSuper) switch (recv) {
+			case TInst(rc, _) if (!rc.kind.match(KTypeParameter(_))): site.receiverStatic = rc;
+			case _:
+		}
 		if (start != null) {
 			site.receiver = start.c;
 			site.receiverArgs = start.args;
@@ -1417,11 +1421,11 @@ class TexprCalls {
 
 	// The extern class with a .NET type that `e1[i]` is an indexer of, with its type arguments: the class of
 	// `e1`'s type, or the nearest superclass of a Haxe class that is one. Null for any other array access.
-	function indexerClass(e1:TExpr):Null<{c:TClass, params:Array<T>}> {
-		var rc:TClass, params:Array<T>;
+	function indexerClass(e1:TExpr):Null<{c:TClass, params:Array<T>, recv:TClass}> {
+		var rc:TClass, params:Array<T>, recv:TClass;
 		switch (TypeFunctions.follow(e1.type)) {
 			case TInst(c, p) if (!c.kind.match(KTypeParameter(_))):
-				rc = c;
+				rc = recv = c;
 				params = p;
 			case _:
 				return null;
@@ -1433,20 +1437,20 @@ class TexprCalls {
 			params = [for (p in sup.params) TypeFunctions.applyParams(cparams, args, p)];
 			rc = sup.c;
 		}
-		return {c: rc, params: params};
+		return {c: rc, params: params, recv: recv};
 	}
 
 	// Whether `e1[i]` is a .NET class's indexer (values notes §3): get_Item and set_Item.
 	function isNetIndexer(e1:TExpr):Bool {
 		var r = indexerClass(e1);
-		return r != null && g.externs.indexer(r.c, r.params, tl.cls) != null;
+		return r != null && g.externs.indexer(r.c, r.params, tl.cls, r.recv) != null;
 	}
 
 	// Refuses a read-modify-write through the indexer of a .NET struct, whose receiver would have to be kept
 	// as an address across the load and the store.
 	function refuseStructIndexer(e1:TExpr):Void {
 		var r = indexerClass(e1);
-		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls);
+		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls, r.recv);
 		if (ix != null && DotnetTypes.isValueType(ix.parent))
 			throw new Unsupported("read-modify-write through an indexer of a .NET struct", false);
 	}
@@ -1455,7 +1459,7 @@ class TexprCalls {
 	// `writes`.
 	function netIndexer(e1:TExpr, element:T, reads:Bool, writes:Bool):NetIndexer {
 		var r = indexerClass(e1);
-		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls);
+		var ix = r == null ? null : g.externs.indexer(r.c, r.params, tl.cls, r.recv);
 		if (ix == null) throw "internal error: not a .NET indexer";
 		var args = switch (ix.parent) {
 			case LClass(_, l) | LValueType(_, l): l;

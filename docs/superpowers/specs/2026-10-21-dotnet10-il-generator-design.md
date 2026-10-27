@@ -530,7 +530,9 @@ and `List` copy, and two threads casting one array at once.
        `nint`/`nuint`, `Nullable<B>` from another type, a type declaring `op_Implicit`, an array to
        a generic interface or another array, a `params` array's expanded form, a generic candidate
        with a type argument the declared types do not give or with any constraint, and a protected
-       member called from a class that does not derive from its type. A call that such a candidate
+       member that ruling R makes inaccessible: the calling class must derive from its type, and the
+       receiver's static type must be the calling class or below it. C# then skips the member, which
+       hxc does not model. A call that such a candidate
        may also take is refused ("more than one .NET overload of T.m may accept (…)", or "hxc cannot
        tell whether the .NET method T.m accepts (…)" when it is the only candidate), as
        `String.Concat(a:NativeArray<Int>)` is (`netlib-extern-unknown-candidate-refused`; C# binds
@@ -592,28 +594,34 @@ and `List` copy, and two threads casting one array at once.
      covariant-return override, which needs `newslot`, a MethodImpl row and
      `PreserveBaseOverridesAttribute`.
    - `a[i]` on an extern class with a .NET indexer is a call of its `get_Item` or `set_Item`
-     (`netlib-indexers`). The indexer is the one C# picks for an `int` argument: walking the class's
-     .NET chain from the receiver's class (a Haxe class's nearest extern superclass), the first class
-     that declares an accessible one-parameter property named by its `DefaultMemberAttribute`
-     (explicit interface implementations, named by the interface, and overrides, which C# looks for
-     where the base declared them, are left out: `netlib-indexer-override`), and there the one
-     whose parameter is `int`, else the one `int` converts to implicitly. A class's own indexer
-     hides the base's, as in C# (`netlib-indexer-inherited`). A protected indexer is accessible to a
-     class below its class (`netlib-indexer-protected`) and otherwise may apply, which refuses the
-     access, as C# picks another one there (`netlib-indexer-protected-is-an-error`). Two such indexers, or one hxc cannot tell applies,
-     are refused, where C# would pick the better one (`netlib-indexer-ambiguous-is-an-error`); a store
-     to a get-only indexer is refused (`netlib-indexer-readonly-is-an-error`). Compound assignment,
-     `++` and `--` read once and store once, on the receiver and index evaluated once
-     (`netlib-indexer-compound`), except through a .NET struct's indexer, which is refused, with a
-     Dynamic operand too, where gencs evaluates the receiver once into a copy
-     (`netlib-indexer-struct-compound-is-an-error`). The element type the typer gives (Dynamic for a
-     generic class, else that of the class's first one-parameter property, which need not be the
-     bound indexer) must convert to and from the bound indexer's type as the access needs, or the
-     access is refused, where gencs's C# fails (`netlib-indexer-element-mismatch-is-an-error`). The
-     element of a converted extern is typed Dynamic: a read passes a struct or `Nullable` element as an object,
-     which Runtime converts (`netlib-indexer-nullable-elements`). The value of an assignment through an
-     indexer or a .NET property is the value stored, kept across the call, not what a setter returns
-     (`netlib-property-store-value`).
+     (`netlib-indexers`). The indexer is the one C# picks for an `int` argument. Walking the class's
+     .NET chain from the receiver's class (a Haxe class's nearest extern superclass), it is in the
+     first class that declares an accessible one-parameter property named by its
+     `DefaultMemberAttribute`. Explicit interface implementations (named by the interface) and
+     overrides (which C# looks for where the base declared them) are left out
+     (`netlib-indexer-override`). There the indexer is the one whose parameter is `int`, else the one
+     `int` converts to implicitly. A class's own indexer hides the base's, as in C#
+     (`netlib-indexer-inherited`).
+     - A protected indexer is accessible only under ruling R: the calling class derives from the
+       declaring type, and the receiver's static type is the calling class or below it
+       (`netlib-indexer-protected`). Otherwise it may apply, which refuses the access, as C# picks
+       another indexer there (`netlib-indexer-protected-is-an-error`,
+       `netlib-indexer-protected-base-receiver-is-an-error`).
+     - Two applicable indexers, or one hxc cannot tell applies, are refused, where C# would pick the
+       better one (`netlib-indexer-ambiguous-is-an-error`). A store to a get-only indexer is refused
+       (`netlib-indexer-readonly-is-an-error`).
+     - Compound assignment, `++` and `--` read once and store once, on the receiver and index
+       evaluated once (`netlib-indexer-compound`). Through a .NET struct's indexer they are refused,
+       with a Dynamic operand too, where gencs evaluates the receiver once into a copy
+       (`netlib-indexer-struct-compound-is-an-error`).
+     - The element type the typer gives is Dynamic for a generic class, else that of the class's first
+       one-parameter property, which need not be the bound indexer. It must convert to and from the
+       bound indexer's type as the access needs, or the access is refused, where gencs's C# fails
+       (`netlib-indexer-element-mismatch-is-an-error`).
+     - The element of a converted extern is typed Dynamic: a read passes a struct or `Nullable`
+       element as an object, which Runtime converts (`netlib-indexer-nullable-elements`).
+     - The value of an assignment through an indexer or a .NET property is the value stored, kept
+       across the call, not what a setter returns (`netlib-property-store-value`).
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code

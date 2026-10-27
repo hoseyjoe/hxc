@@ -57,7 +57,8 @@ typedef ExternCall = {
 	classArgs:Array<IlSigNorm>,
 	methodArgs:Array<IlSigNorm>,
 	?receiver:TClass,
-	?receiverArgs:Array<IlSigNorm>
+	?receiverArgs:Array<IlSigNorm>,
+	?receiverStatic:TClass
 };
 
 // The type arguments a call gives the extern class's and the extern method's type parameters.
@@ -239,6 +240,7 @@ class ExternMembers {
 			throw new Unsupported("the .NET method " + Globals.sTypePath(c.path) + "." + cf.name + " with these argument types", false);
 		}
 		var caller = call == null ? null : call.caller;
+		var receiverStatic = call == null ? null : call.receiverStatic;
 		// The call's type arguments for the declared types (`c`'s and the method's), and for the methods'
 		// parameters (the receiver's class's when the walk starts there, ruling M).
 		var inst:Null<Inst> = call == null ? null : {cls: call.classArgs, meth: call.methodArgs};
@@ -252,7 +254,7 @@ class ExternMembers {
 		if (inst != null) want = [for (s in want) DotnetTypes.substitute(s, inst.cls, inst.meth)];
 		var what = isCtor ? "constructor of " + typeS(start) : "overload of " + typeS(start) + "." + name;
 		inline function list(l:Array<IlSigNorm>) return "(" + [for (s in l) sigS(s)].join(", ") + ")";
-		var found = switch (resolve(links, name, isStatic, want, cf.params.length, caller, candInst)) {
+		var found = switch (resolve(links, name, isStatic, want, cf.params.length, caller, receiverStatic, candInst)) {
 			case RBound(b):
 				b;
 			case RAmbiguous:
@@ -263,7 +265,7 @@ class ExternMembers {
 			case RUnknown(_):
 				throw Unsupported.error("more than one .NET " + what + " may accept " + list(want));
 			case RNone:
-				ruling4(links, name, isStatic, want, declared, cf.params.length, caller, call, candInst);
+				ruling4(links, name, isStatic, want, declared, cf.params.length, caller, receiverStatic, call, candInst);
 				throw Unsupported.error("no .NET " + what + " takes " + list(want));
 		}
 		if (call != null && !isOverloaded(c, cf, isStatic, isCtor)) {
@@ -281,7 +283,7 @@ class ExternMembers {
 			if (!IlPaths.sigsEq(byArgs, want)) {
 				// Ruling F′: both bind the same method; its type arguments are the arguments' own, as C# infers
 				// them, and `bound` checks the return with them.
-				switch (resolve(links, name, isStatic, byArgs, cf.params.length, caller, candInst)) {
+				switch (resolve(links, name, isStatic, byArgs, cf.params.length, caller, receiverStatic, candInst)) {
 					case RBound(b) if (b.link == found.link && b.index == found.index):
 						found = b;
 					case _:
@@ -428,7 +430,7 @@ class ExternMembers {
 	// value type; gencs's C# fails there (CS1503). Refuses when the call would bind with such arguments
 	// as their T; a null argument (what the typer pads a left-out one with) is left out.
 	function ruling4(links:Array<{cls:IlClass, parent:IlSigNorm}>, name:String, isStatic:Bool, want:Array<IlSigNorm>,
-			declared:TSignature, typeParams:Int, caller:Null<TClass>, call:Null<ExternCall>, inst:Null<Inst>):Void {
+			declared:TSignature, typeParams:Int, caller:Null<TClass>, receiverStatic:Null<TClass>, call:Null<ExternCall>, inst:Null<Inst>):Void {
 		var plain = want.copy(), first = -1;
 		for (i in 0...want.length) switch (want[i]) {
 			case LValueType(_, [t]) if (declared.args[i].opt && types.isNullOf(want[i])):
@@ -436,7 +438,7 @@ class ExternMembers {
 				if (first < 0) first = i;
 			case _:
 		}
-		if (first < 0 || resolve(links, name, isStatic, plain, typeParams, caller, inst).match(RNone)) return;
+		if (first < 0 || resolve(links, name, isStatic, plain, typeParams, caller, receiverStatic, inst).match(RNone)) return;
 		var argName = declared.args[first].name;
 		var given = call != null && first < call.args.length && !isNull(call.args[first]);
 		if (given)
@@ -458,7 +460,7 @@ class ExternMembers {
 	// may apply (ruling E). A link where none applies or may apply passes to the next. `inst`: the call's
 	// type arguments, which the methods' parameters take (ruling I).
 	function resolve(links:Array<{cls:IlClass, parent:IlSigNorm}>, name:String, isStatic:Bool, want:Array<IlSigNorm>,
-			typeParams:Int, caller:Null<TClass>, inst:Null<Inst>):Resolution {
+			typeParams:Int, caller:Null<TClass>, receiverStatic:Null<TClass>, inst:Null<Inst>):Resolution {
 		for (li in 0...links.length) {
 			var link = links[li];
 			var exact = [], yes = [], unknown = 0;
@@ -473,7 +475,7 @@ class ExternMembers {
 				var a = applies(m, link, want, typeParams, isStatic, inst);
 				if (a.applies == ANo) continue;
 				var b:Bound = {link: li, index: idx, typeArgs: a.typeArgs};
-				if (isProtected && !callerReaches(caller, link.cls.cpath)) unknown++;
+				if (isProtected && !protectedOk(caller, link.cls.cpath, receiverStatic, isStatic)) unknown++;
 				else if (a.applies == AUnknown) unknown++;
 				else {
 					yes.push(b);
@@ -493,6 +495,20 @@ class ExternMembers {
 
 	static function overrides(flags:MethodFlags):Bool
 		return flags.contract.indexOf(CMVirtual) >= 0 && flags.vtable.indexOf(VNewSlot) < 0;
+
+	// Ruling R: whether a protected member of the .NET type `path` is accessible: `caller` derives from `path`,
+	// and the receiver's static class `receiver` is `caller` or derives from it (a static member has no
+	// receiver; a null `receiver` is a call whose receiver is `this` or `base`, or has none).
+	function protectedOk(caller:Null<TClass>, path:IlPath, receiver:Null<TClass>, isStatic:Bool):Bool {
+		if (!callerReaches(caller, path)) return false;
+		if (isStatic || receiver == null) return true;
+		var c = receiver;
+		while (c != null) {
+			if (c == caller) return true;
+			c = c.superClass == null ? null : c.superClass.c;
+		}
+		return false;
+	}
 
 	// Whether `caller` derives from the .NET type `path`, which a protected member needs.
 	function callerReaches(caller:Null<TClass>, path:IlPath):Bool {
@@ -950,9 +966,9 @@ class ExternMembers {
 	// interface, and the overrides, which C# looks for where the base declared them) that int32 converts to;
 	// there the one with an int32 parameter, else the one such. Null when no class has one. Refused when hxc
 	// cannot tell which applies, or when more than one does, rather than picking by chance (as `resolve` does
-	// for methods). A protected one is accessible to a `caller` below its class (`callerReaches`), and may apply
-	// otherwise. `params`: `c`'s type arguments.
-	public function indexer(c:TClass, params:Array<T>, ?caller:TClass):Null<ExternIndexer> {
+	// for methods). A protected one is accessible to a `caller` below its class through a `receiver` of the caller's
+	// type or below it (`protectedOk`, ruling R), and may apply otherwise. `params`: `c`'s type arguments.
+	public function indexer(c:TClass, params:Array<T>, ?caller:TClass, ?receiver:TClass):Null<ExternIndexer> {
 		var args = types.classArgs(c, params);
 		for (link in chain(c)) {
 			var name = defaultMember(link.cls);
@@ -973,7 +989,7 @@ class ExternMembers {
 					return switch (a.flags.access) {
 						case FAPublic:
 							a.name;
-						case FAFamily | FAFamOrAssem if (callerReaches(caller, link.cls.cpath)):
+						case FAFamily | FAFamOrAssem if (protectedOk(caller, link.cls.cpath, receiver, false)):
 							a.name;
 						case FAFamily | FAFamOrAssem:
 							hidden = true;
