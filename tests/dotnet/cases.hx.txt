@@ -17466,3 +17466,186 @@ class P {
 [compile]
 P.hx:8: lines 8-10 : dotnet: the interface method INamed.name is implemented by FooImplR.name, whose CLR name Name differs from the interface method's name
 P.hx:13: characters 9-19 : dotnet: Mine (left out: the interface method INamed.name is implemented by FooImplR.name, whose CLR name Name differs from the interface method's name) is not supported yet
+# hxcs's own first-class rethrow: cs.Lib.rethrow(e) is `throw untyped __rethrow__`, which gencs writes as
+# `throw;`. hxc: IL `rethrow` (TexprFlow.throwExpr).
+--- inline-cs-rethrow-lib @gencs
+// hxcs's cs.Lib.rethrow(e) is `throw untyped __rethrow__`, which gencs writes as C#'s `throw;`: it rethrows
+// and keeps the stack trace.
+class P {
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function viaLib() {
+		try thrower() catch (e:cs.system.Exception) {
+			Sys.println("cleanup");
+			cs.Lib.rethrow(e);
+		}
+	}
+	static function main() {
+		try viaLib() catch (e:cs.system.Exception) Sys.println(cs.Lib.getNativeType(e).Name + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+}
+===
+[run]
+cleanup
+InvalidOperationException, thrower in trace true
+# The exceptions filter's `throw _g` (its own catch variable, VGenerated, when no catch matches) is C#'s
+# `throw;` in gencs and keeps the stack trace, which hxc matches with IL `rethrow`.
+--- rethrow-unmatched-catch @gencs
+// A catch that does not match rethrows what it caught. The exceptions filter leaves `throw _g` of its own
+// catch variable, which gencs writes as C#'s `throw;`, keeping the stack trace.
+class P {
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function strThrower():Void {
+		throw "str";
+	}
+	static function report(tag:String, e:cs.system.Exception) {
+		Sys.println(tag + ": " + cs.Lib.getNativeType(e).Name + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+	static function intCatch() {
+		try strThrower() catch (e:Int) Sys.println("no");
+	}
+	static function stringCatchNative() {
+		try thrower() catch (e:String) Sys.println("no");
+	}
+	static function main() {
+		try intCatch() catch (e:cs.system.Exception) report("Int catch", e);
+		try stringCatchNative() catch (e:cs.system.Exception) report("String catch", e);
+	}
+}
+===
+[run]
+Int catch: ValueException, thrower in trace true
+String catch: InvalidOperationException, thrower in trace true
+# The spec's first-class rethrow: `throw e` of an unchanged catch variable, directly in its own catch, is
+# `rethrow` in hxc. gencs writes `throw e;`, which resets the trace (the [gencs] section). A reassigned e, a
+# `throw e` inside a nested catch (rethrow would throw e2) and the haxe.Exception and Dynamic catches (the
+# filter throws Exception.thrown(e), a call's result) stay plain throws, as in gencs.
+--- rethrow-throw-caught-value @gencs
+// `throw e` of the caught value, unchanged, directly in its catch: hxc emits `rethrow`, which keeps the stack
+// trace (the spec's first-class rethrow); gencs writes `throw e;`, which resets it. Reassigned, thrown from a
+// nested catch, or caught as haxe.Exception or Dynamic (the filter wraps those), it stays a plain throw.
+class MyErr extends haxe.Exception {}
+class P {
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function hxThrower():Void {
+		throw new MyErr("hx");
+	}
+	static function report(tag:String, e:cs.system.Exception) {
+		Sys.println(tag + ": " + cs.Lib.getNativeType(e).Name + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+	static function native() {
+		try thrower() catch (e:cs.system.Exception) { Sys.println("cleanup"); throw e; }
+	}
+	static function haxeSubclass() {
+		try hxThrower() catch (e:MyErr) throw e;
+	}
+	static function reassigned() {
+		try thrower() catch (e:cs.system.Exception) { e = new cs.system.Exception("other"); throw e; }
+	}
+	static function fromNestedCatch() {
+		try thrower() catch (e:cs.system.Exception) {
+			try throw "inner" catch (e2:Dynamic) throw e;
+		}
+	}
+	static function haxeException() {
+		try thrower() catch (e:haxe.Exception) throw e;
+	}
+	static function dynamicCatch() {
+		try thrower() catch (e:Dynamic) throw e;
+	}
+	static function main() {
+		try native() catch (e:cs.system.Exception) report("native", e);
+		try haxeSubclass() catch (e:cs.system.Exception) report("haxe subclass", e);
+		try reassigned() catch (e:cs.system.Exception) report("reassigned", e);
+		try fromNestedCatch() catch (e:cs.system.Exception) report("from nested catch", e);
+		try haxeException() catch (e:cs.system.Exception) report("haxe.Exception", e);
+		try dynamicCatch() catch (e:cs.system.Exception) report("Dynamic", e);
+	}
+}
+===
+[run]
+cleanup
+native: InvalidOperationException, thrower in trace true
+haxe subclass: MyErr, thrower in trace true
+reassigned: Exception, thrower in trace false
+from nested catch: InvalidOperationException, thrower in trace false
+haxe.Exception: InvalidOperationException, thrower in trace false
+Dynamic: InvalidOperationException, thrower in trace false
+[gencs]
+cleanup
+native: InvalidOperationException, thrower in trace false
+haxe subclass: MyErr, thrower in trace false
+reassigned: Exception, thrower in trace false
+from nested catch: InvalidOperationException, thrower in trace false
+haxe.Exception: InvalidOperationException, thrower in trace false
+Dynamic: InvalidOperationException, thrower in trace false
+# `throw e` of a catch variable that a closure captures. A closure that only reads e leaves it a local of the
+# catch, so `throw e` is `rethrow` in hxc and keeps the stack trace (gencs's `throw e;` resets it). A closure
+# that writes e makes CapturedVars box it, so it is no longer a local and the throw stays a plain `throw` of its
+# current value (the new exception, with no trace), as in gencs.
+--- rethrow-captured-catch-variable @gencs
+class P {
+	static function thrower():Void {
+		throw new cs.system.InvalidOperationException("boom");
+	}
+	static function report(tag:String, e:cs.system.Exception) {
+		Sys.println(tag + ": " + e.Message + ", thrower in trace " + (e.StackTrace.indexOf("hrower") >= 0));
+	}
+	static function readByClosure() {
+		try thrower() catch (e:cs.system.InvalidOperationException) {
+			var f = () -> e.Message;
+			Sys.println("closure read " + f());
+			throw e;
+		}
+	}
+	static function writeByClosure() {
+		try thrower() catch (e:cs.system.InvalidOperationException) {
+			var f = () -> { e = new cs.system.InvalidOperationException("other"); };
+			f();
+			throw e;
+		}
+	}
+	static function main() {
+		try readByClosure() catch (e:cs.system.Exception) report("read by closure", e);
+		try writeByClosure() catch (e:cs.system.Exception) report("written by closure", e);
+	}
+}
+===
+[run]
+closure read boom
+read by closure: boom, thrower in trace true
+written by closure: other, thrower in trace false
+[gencs]
+closure read boom
+read by closure: boom, thrower in trace false
+written by closure: other, thrower in trace false
+
+# A first-class rethrow that is not directly inside a catch, or in a local function inside one, is a lasting error
+# (C# error CS0156 in gencs).
+--- rethrow-outside-catch-is-an-error
+class P {
+	static function bare(e:cs.system.Exception) {
+		cs.Lib.rethrow(e);
+	}
+	static function inClosure() {
+		try {
+			Sys.println("t");
+		} catch (e:cs.system.Exception) {
+			var f = () -> cs.Lib.rethrow(e);
+			f();
+		}
+	}
+	static function main() {
+		try bare(null) catch (e:cs.system.Exception) {}
+		inClosure();
+	}
+}
+===
+[compile]
+P.hx:3: characters 3-20 : dotnet: a rethrow (a bare `throw`, cs.Lib.rethrow) must be directly inside a catch (C# error CS0156)
+P.hx:9: characters 18-35 : dotnet: a rethrow (a bare `throw`, cs.Lib.rethrow) must be directly inside a catch (C# error CS0156)

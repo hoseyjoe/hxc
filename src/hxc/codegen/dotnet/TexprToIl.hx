@@ -28,6 +28,10 @@ enum Ret {
 	RReturn;
 }
 
+// A catch body or a finally handler that encloses the code being lowered. `v` and `body` are the catch
+// variable and the catch's body, for the rethrow of the variable; a finally handler has neither.
+typedef HandlerFrame = {isCatch:Bool, v:Null<TVar>, body:Null<TExpr>};
+
 // A local or argument slot.
 typedef Slot = {arg:Bool, index:Int, sig:IlSigNorm};
 
@@ -59,6 +63,10 @@ class TexprToIl {
 	final loops:Array<{brk:Label, cont:Label, tries:Int}> = [];
 	// How many try blocks and handlers enclose the code being lowered. A jump out of one is a `leave`.
 	var tryDepth = 0;
+	// The catch bodies and finally handlers being lowered, innermost last. IL `rethrow` is valid exactly
+	// when the last one is a catch; a local function is lowered by a TexprToIl of its own, so it starts
+	// with none.
+	final handlers:Array<HandlerFrame> = [];
 	// Where a `return` inside a try goes: a label after the outermost try, which returns the value
 	// stored in `retLocal` (-1 until needed).
 	var retLabel:Label = -1;
@@ -743,7 +751,7 @@ class TexprToIl {
 			case TTry(body, catches):
 				flow.tryExpr(ret, e, body, catches);
 			case TThrow(e1):
-				flow.throwExpr(e1);
+				flow.throwExpr(e1, e.pos);
 			case TEnumIndex(e1) if (clrEnum(e1.type) != null):
 				// A CLR enum's value is its index.
 				texpr(RValue(sig(e1.type)), e1);

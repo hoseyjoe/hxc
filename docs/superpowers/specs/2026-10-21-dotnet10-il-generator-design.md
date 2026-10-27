@@ -447,7 +447,20 @@ and `List` copy, and two threads casting one array at once.
     names;
   - member access, method calls, indexers with any number of arguments (`cells[row, col]`);
   - casts to named types (`(decimal){0}`, `(System.Char)ch`), literals;
-  - a bare `throw;` statement, which emits IL `rethrow` and keeps the stack trace.
+  - a bare `throw`, as `throw` or `throw;`, which emits IL `rethrow` and keeps the stack trace.
+
+  Rethrow rules. Each of these emits IL `rethrow` when the innermost enclosing handler is a catch, in the
+  catch body or in a try block inside it:
+  - the bare `throw` (inline C#, both spellings);
+  - `cs.Lib.rethrow(e)`, which the std writes as `throw untyped __rethrow__`;
+  - the exceptions filter's own `throw _g`, when no catch matched. This is gencs parity: it writes `throw;`;
+  - `throw e` of the innermost catch's own variable, when that catch never assigns it. This is the first-class
+    form below, and a recorded divergence: gencs writes `throw e;`, which resets the stack trace.
+
+  A bare `throw` or `cs.Lib.rethrow` anywhere else is a lasting error (C# error CS0156): outside a catch, in
+  a local function, or in hxc's own try/finally (`__lock__`). Any other `throw e` is a plain `throw`: an
+  assigned `e`, an outer catch's variable thrown from a nested catch, and the `haxe.Exception` and
+  `Dynamic` catches, which throw a call's result.
 
   This covers the server app's 4 patterns unchanged, plus the 5 `__cs__` uses in the `haxe-strings` haxelib
   (`StringBuilder.hx` lines 134/201/278/350, `Strings.hx` line 1366), so no third-party library has to
@@ -807,6 +820,10 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   type-argument erasure, is carried, and is observable only through `typeof(T)`.
 - A delegate made from a static method is a new delegate each time (ruling 9). Roslyn caches it in a
   `<>O` class, so only reference equality between two such delegates can tell.
+- `throw e` of the innermost catch's own, unassigned variable is IL `rethrow` in hxc and keeps the stack
+  trace (`rethrow-throw-caught-value`); gencs's `throw e;` resets it. A closure that only reads `e` leaves
+  that unchanged (`rethrow-captured-catch-variable`); one that writes `e` makes it a plain `throw`, as in
+  gencs.
 
 ## Left to the builder
 

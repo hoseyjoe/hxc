@@ -1,6 +1,7 @@
 package hxc.codegen.dotnet;
 
 import hxc.ast.Ast;
+import hxc.ast.Position;
 import hxc.core.Globals;
 import hxc.core.TexprTools;
 import hxc.core.Type;
@@ -185,8 +186,53 @@ class TexprFlow {
 
 	static final systemException:IlSigNorm = LClass({ns: ["System"], nested: [], name: "Exception"}, []);
 
-	// The exceptions filter has already wrapped values that are not .NET exceptions.
-	function throwExpr(e1:TExpr):Void {
+	// IL `rethrow`, which throws the exception of the catch it is in again, keeping its stack trace. It is
+	// valid in a catch body, and in a try block inside one, but not in a finally handler or a local
+	// function (C# error CS0156).
+	function rethrow(pos:Position):Void {
+		if (tl.handlers.length == 0 || !tl.handlers[tl.handlers.length - 1].isCatch) {
+			var u = Unsupported.error("a rethrow (a bare `throw`, cs.Lib.rethrow) must be directly inside a catch (C# error CS0156)");
+			u.pos = pos;
+			throw u;
+		}
+		code.op(IlOps.RETHROW, 0, 0);
+	}
+
+	// Whether `v` is the variable of the innermost enclosing catch, and that catch's body never assigns it,
+	// so `throw v` throws what `rethrow` does.
+	function isRethrowable(v:TVar):Bool {
+		if (tl.handlers.length == 0) return false;
+		var frame = tl.handlers[tl.handlers.length - 1];
+		return frame.isCatch && frame.v.id == v.id && !assigns(v, frame.body);
+	}
+
+	// Whether `e` assigns `v`: `=`, a compound assignment, `++` or `--`.
+	static function assigns(v:TVar, e:TExpr):Bool {
+		function isV(x:TExpr) return switch (strip(x).expr) {
+			case TLocal(v2): v2.id == v.id;
+			case _: false;
+		}
+		return switch (e.expr) {
+			case TBinop(OpAssign | OpAssignOp(_), lhs, _) if (isV(lhs)): true;
+			case TUnop(Increment | Decrement, _, e1) if (isV(e1)): true;
+			case _: TexprTools.checkExpr(x -> assigns(v, x), e);
+		}
+	}
+
+	// The exceptions filter has already wrapped values that are not .NET exceptions. A rethrow is `throw`
+	// of the filter's own catch variable (when no catch matched; it is never assigned), `cs.Lib.rethrow`
+	// (`throw untyped __rethrow__`) and `throw e` of the catch's own, unchanged variable. gencs writes the
+	// first two as `throw;` and the third as `throw e;`, which resets the stack trace.
+	function throwExpr(e1:TExpr, pos:Position):Void {
+		switch (strip(e1).expr) {
+			case TIdent("__rethrow__"):
+				rethrow(pos);
+				return;
+			case TLocal(v) if (isRethrowable(v)):
+				rethrow(pos);
+				return;
+			case _:
+		}
 		var s = tl.sig(e1.type);
 		if (!s.match(LObject | LClass(_, _))) throw new Unsupported("throw of " + hxc.core.TPrinting.sTypeStr(e1.type), false);
 		tl.texpr(RValue(s), e1);
@@ -225,6 +271,7 @@ class TexprFlow {
 		}
 		var outermost = tl.tryDepth == 0;
 		var open = code.openTries;
+		var frames = tl.handlers.length;
 		tl.tryDepth++;
 		try {
 			code.beginTry();
@@ -236,11 +283,14 @@ class TexprFlow {
 				var local = {arg: false, index: code.addLocal(classes[i]), sig: classes[i]};
 				tl.store(local);
 				tl.slots.set(catches[i].v.id, local);
+				tl.handlers.push({isCatch: true, v: catches[i].v, body: catches[i].expr});
 				tl.texpr(inner, catches[i].expr);
+				tl.handlers.pop();
 				leave();
 			}
 			code.endTry();
 		} catch (x:Dynamic) {
+			tl.handlers.resize(frames);
 			tl.tryDepth--;
 			code.abandonTries(open);
 			if (outermost) tl.retLabel = -1;
@@ -279,16 +329,20 @@ class TexprFlow {
 		var end = code.newLabel();
 		var outermost = tl.tryDepth == 0;
 		var open = code.openTries;
+		var frames = tl.handlers.length;
 		tl.tryDepth++;
 		try {
 			code.beginTry();
 			body();
 			if (code.reachable()) code.branch(IlOps.LEAVE, end);
 			code.beginFinally();
+			tl.handlers.push({isCatch: false, v: null, body: null});
 			fin();
+			tl.handlers.pop();
 			code.op(IlOps.ENDFINALLY, 0, 0);
 			code.endTry();
 		} catch (x:Dynamic) {
+			tl.handlers.resize(frames);
 			tl.tryDepth--;
 			code.abandonTries(open);
 			if (outermost) tl.retLabel = -1;
