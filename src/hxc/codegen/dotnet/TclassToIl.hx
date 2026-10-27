@@ -635,7 +635,9 @@ class TclassToIl {
 			// gencs's InterfaceProps makes properties only for an interface converted from a --net-lib; a
 			// hand-written extern interface's would be no member of the class.
 			if (isExternInterface && !TypeFunctions.hasMeta(":csNative", i.c.meta)) for (im in i.c.orderedFields)
-				if (im.kind.match(Var(_))) throw new Unsupported("properties of hand-written .NET interface externs", true);
+				if (im.kind.match(Var(_)))
+					throw Unsupported.error("a class cannot implement the property " + im.name + " of the hand-written .NET interface extern "
+						+ DotnetTypes.haxePath(TClassDecl(i.c)));
 			for (im in i.c.orderedFields) {
 				switch (im.kind) {
 					case Var(_) if (isExternInterface):
@@ -765,17 +767,22 @@ class TclassToIl {
 	static function checkProperty(g:DotnetCtx, c:TClass, i:ImplementedInterface, iv:TClassField):Void {
 		var v = findVar(c, iv.name);
 		if (v == null) throw new Unsupported("abstract classes that leave interface methods unimplemented", true);
-		// The .NET base class's own property, which the CLR checks when it loads the type.
-		if (TypeFunctions.hasClassFlag(v.owner, CExtern)) return;
-		var what = " (" + DotnetTypes.haxePath(TClassDecl(i.c)) + "." + iv.name + ")";
-		if (TypeFunctions.isPhysicalField(v.cf)) throw new Unsupported("physical variables implementing a .NET interface property" + what, true, v.cf.pos);
+		if (TypeFunctions.hasClassFlag(v.owner, CExtern)) {
+			checkBaseProperty(g, c, i, iv);
+			return;
+		}
+		var iname = DotnetTypes.haxePath(TClassDecl(i.c));
+		var what = " (" + iname + "." + iv.name + ")";
+		if (TypeFunctions.isPhysicalField(v.cf))
+			throw at(Unsupported.error("a physical variable cannot implement the .NET interface property " + iname + "." + iv.name), v.cf.pos);
 		if (!isPropertyVar(v.owner, v.cf))
-			throw new Unsupported(".NET interface properties implemented by a variable whose class does not list their interface itself" + what, true,
-				v.cf.pos);
+			throw at(Unsupported.error(iv.name + " implements the .NET interface property " + iname + "." + iv.name
+				+ ", so the class declaring it must list " + iname + " itself"), v.cf.pos);
 		var want = g.types.toSig(TypeFunctions.applyParams(i.c.params, i.params, iv.type));
 		var have = g.types.toSig(TypeFunctions.applyParams(v.owner.params, v.params, v.cf.type));
 		if (!IlPaths.sigEq(want, have))
-			throw new Unsupported("variables of another type than the .NET interface property they implement" + what, true, v.cf.pos);
+			throw at(Unsupported.error(iv.name + " is of another type than the .NET interface property " + iname + "." + iv.name + " it implements"),
+				v.cf.pos);
 		switch (iv.kind) {
 			case Var(a):
 				for (prefix in [a.read == AccCall ? "get_" : null, a.write == AccCall ? "set_" : null]) {
@@ -784,6 +791,46 @@ class TclassToIl {
 					if (m == null || !m.kind.match(Method(_)) || TypeFunctions.hasClassFieldFlag(m, CfExtern))
 						throw new Unsupported(".NET interface properties whose " + prefix + iv.name + " the class of their variable does not declare" + what,
 							true, v.cf.pos);
+				}
+			case _:
+		}
+	}
+
+	// The .NET interface property `iv` of `i` implemented by the .NET base class's property, of which the CLR
+	// maps each accessor the interface declares to a public virtual method of the base of exactly its
+	// signature when it loads the class. For a non-virtual one C# adds a forwarding stub, which hxc does not
+	// write yet (ruling S).
+	static function checkBaseProperty(g:DotnetCtx, c:TClass, i:ImplementedInterface, iv:TClassField):Void {
+		var base = c, params = TypeFunctions.extractParamTypes(c.params);
+		while (!TypeFunctions.hasClassFlag(base, CExtern)) {
+			var s = base.superClass;
+			params = [for (t in s.params) TypeFunctions.applyParams(base.params, params, t)];
+			base = s.c;
+		}
+		var baseArgs = [for (t in params) g.types.toSig(t)];
+		var iargs = switch (i.sig) {
+			case LClass(_, l): l;
+			case _: [];
+		}
+		var t:Null<IlSigNorm> = null;
+		switch (iv.kind) {
+			case Var(a):
+				for (prefix in [a.read == AccCall ? "get_" : null, a.write == AccCall ? "set_" : null]) {
+					if (prefix == null) continue;
+					var acc = i.c.fields.get(prefix + iv.name);
+					var name:String, sig:IlSigNorm;
+					if (acc != null && acc.kind.match(Method(_))) {
+						var m = g.externs.method(i.c, acc, true);
+						name = m.name;
+						sig = ExternMembers.subst(m.sig, iargs);
+					} else {
+						if (t == null) t = g.types.toSig(TypeFunctions.applyParams(i.c.params, i.params, iv.type));
+						name = prefix + ExternMembers.memberName(iv);
+						sig = prefix == "get_" ? LMethod([], t, []) : LMethod([], LVoid, [t]);
+					}
+					if (!g.externs.inheritsVirtual(base, baseArgs, name, sig))
+						throw new Unsupported("a .NET interface property (" + DotnetTypes.haxePath(TClassDecl(i.c)) + "." + iv.name
+							+ ") implemented by a non-virtual property of the .NET base class " + DotnetTypes.haxePath(TClassDecl(base)), false);
 				}
 			case _:
 		}
@@ -828,7 +875,7 @@ class TclassToIl {
 				if (body == null) continue;
 				var f = functionSig(g, body.type);
 				if (body == e.get ? f.args.length != 0 || !IlPaths.sigEq(f.ret, sig) : f.args.length != 1 || !IlPaths.sigEq(f.args[0], sig))
-					throw new Unsupported("accessors of another type than their .NET interface property", true, body.pos);
+					throw at(Unsupported.error(body.name + " is of another type than its .NET interface property " + name), body.pos);
 			}
 			// gen_prop: an override when an accessor is one; else virtual when neither the class, the var nor
 			// an accessor is final and both accessors are there.
@@ -836,8 +883,10 @@ class TclassToIl {
 				|| e.set != null && TypeFunctions.hasClassFieldFlag(e.set, CfOverride);
 			if (isOverride && e.v.owner == c) throw new Unsupported("accessors of .NET interface properties that override a method", true);
 			// C# overrides a property only when its base declares it virtual (gencs's C# fails with CS0506).
-			if (isOverride && !isVirtualProperty(e.v.owner, e.v.cf, ownMethod(e.v.owner, "get_" + name), ownMethod(e.v.owner, "set_" + name)))
-				throw new Unsupported("overriding the accessor of a non-virtual .NET interface property", false);
+			if (isOverride && !isVirtualProperty(e.v.owner, e.v.cf, ownMethod(e.v.owner, "get_" + name), ownMethod(e.v.owner, "set_" + name))) {
+				var o = e.get != null && TypeFunctions.hasClassFieldFlag(e.get, CfOverride) ? e.get : e.set;
+				throw at(Unsupported.error(o.name + " cannot override the accessor of the non-virtual .NET interface property " + name), o.pos);
+			}
 			var isVirtual = isVirtualProperty(c, e.v.cf, e.get, e.set);
 			var p:PropertyPlan = {
 				cf: e.v.cf,

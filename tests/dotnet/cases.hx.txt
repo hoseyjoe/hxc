@@ -16397,7 +16397,8 @@ ctr=1
 prop Count get
 
 201
-# Overriding the getter of a get-only property: gencs's property is non-virtual and its C# fails (CS0506), so hxc refuses.
+# Overriding the getter of a get-only property: gencs's property is non-virtual and its C# fails (CS0506), so it is an error, at the
+# override.
 --- netlib-iface-property-getonly-override @netlib=M4Lib
 import m4.*;
 import cs.system.collections.generic.List_1;
@@ -16422,8 +16423,8 @@ class P {
 }
 ===
 [compile]
-P.hx:13: lines 13-15 : dotnet: overriding the accessor of a non-virtual .NET interface property is not supported yet
-P.hx:19: characters 29-45 : dotnet: SubHandler (left out: overriding the accessor of a non-virtual .NET interface property) is not supported yet
+P.hx:14: characters 2-57 : dotnet: get_Guid cannot override the accessor of the non-virtual .NET interface property Guid
+P.hx:19: characters 29-45 : dotnet: SubHandler (left out: get_Guid cannot override the accessor of the non-virtual .NET interface property Guid) is not supported yet
 # C# reading a Haxe class's implementation of a .NET interface property through the interface (M4Lib's PropReader.Describe):
 # each value comes from the Haxe getter, which counts its calls.
 --- netlib-iface-property-from-csharp @gencs @netlib=M4Lib
@@ -16554,10 +16555,10 @@ class P {
 }
 ===
 [compile]
-P.hx:8: characters 2-39 : dotnet: .NET interface properties implemented by a variable whose class does not list their interface itself (m4.IHandler.Prompt) are not supported yet
-P.hx:17: characters 2-39 : dotnet: .NET interface properties implemented by a variable whose class does not list their interface itself (m4.IHandler.Prompt) are not supported yet
-P.hx:29: characters 29-42 : dotnet: Handler (left out: .NET interface properties implemented by a variable whose class does not list their interface itself (m4.IHandler.Prompt)) is not supported yet
-P.hx:30: characters 29-42 : dotnet: Derived (left out: .NET interface properties implemented by a variable whose class does not list their interface itself (m4.IHandler.Prompt)) is not supported yet
+P.hx:8: characters 2-39 : dotnet: Prompt implements the .NET interface property m4.IHandler.Prompt, so the class declaring it must list m4.IHandler itself
+P.hx:17: characters 2-39 : dotnet: Prompt implements the .NET interface property m4.IHandler.Prompt, so the class declaring it must list m4.IHandler itself
+P.hx:29: characters 29-42 : dotnet: Handler (left out: Prompt implements the .NET interface property m4.IHandler.Prompt, so the class declaring it must list m4.IHandler itself) is not supported yet
+P.hx:30: characters 29-42 : dotnet: Derived (left out: Prompt implements the .NET interface property m4.IHandler.Prompt, so the class declaring it must list m4.IHandler itself) is not supported yet
 # A physical var (@:isVar) implementing a .NET interface property: gencs writes a field, and its C# fails with CS0535.
 --- netlib-iface-property-physical-is-an-error @netlib=M4Lib
 import m4.*;
@@ -16579,8 +16580,8 @@ class P {
 }
 ===
 [compile]
-P.hx:5: characters 10-51 : dotnet: physical variables implementing a .NET interface property (m4.IHandler.Guid) are not supported yet
-P.hx:15: characters 29-42 : dotnet: Handler (left out: physical variables implementing a .NET interface property (m4.IHandler.Guid)) is not supported yet
+P.hx:5: characters 10-51 : dotnet: a physical variable cannot implement the .NET interface property m4.IHandler.Guid
+P.hx:15: characters 29-42 : dotnet: Handler (left out: a physical variable cannot implement the .NET interface property m4.IHandler.Guid) is not supported yet
 # A property of another type than the interface's (Int for IEnumerator's object Current): gencs's C# fails with CS0738.
 --- iface-property-type-is-an-error
 import cs.system.collections.IEnumerator;
@@ -16602,8 +16603,8 @@ class P {
 }
 ===
 [compile]
-P.hx:4: characters 2-37 : dotnet: variables of another type than the .NET interface property they implement (cs.system.collections.IEnumerator.Current) are not supported yet
-P.hx:14: characters 23-39 : dotnet: Countdown (left out: variables of another type than the .NET interface property they implement (cs.system.collections.IEnumerator.Current)) is not supported yet
+P.hx:4: characters 2-37 : dotnet: Current is of another type than the .NET interface property cs.system.collections.IEnumerator.Current it implements
+P.hx:14: characters 23-39 : dotnet: Countdown (left out: Current is of another type than the .NET interface property cs.system.collections.IEnumerator.Current it implements) is not supported yet
 # Compound assignments and increments of a Haxe property (the value of a postfix increment is the old value), and a struct's
 # properties read by C#.
 --- netlib-iface-property-compound-and-struct @gencs @netlib=M4Lib
@@ -16647,3 +16648,78 @@ class P {
 14
 14 30
 sg/sp/0
+# A Haxe subclass listing a .NET interface whose property its .NET base class declares non-virtual: the CLR maps an
+# interface method only to a virtual one, and C# adds a forwarding stub, which hxc does not write yet (ruling S).
+--- netlib-iface-property-base-nonvirtual-is-unsupported @netlib=M4Lib
+import m4.*;
+
+class HN extends BaseN implements INamed {
+	public function new() super();
+}
+
+class P {
+	static function main() {
+		Sys.println(Names.Read(new HN()));
+	}
+}
+===
+[compile]
+P.hx:3: lines 3-5 : dotnet: a .NET interface property (m4.INamed.Name) implemented by a non-virtual property of the .NET base class m4.BaseN is not supported yet
+P.hx:9: characters 26-34 : dotnet: HN (left out: a .NET interface property (m4.INamed.Name) implemented by a non-virtual property of the .NET base class m4.BaseN) is not supported yet
+# The same with a virtual base property, which the CLR maps the interface's getter to.
+--- netlib-iface-property-base-virtual @gencs @netlib=M4Lib
+import m4.*;
+
+class HV extends BaseV implements INamed {
+	public function new() super();
+}
+
+class P {
+	static function main() {
+		var h = new HV();
+		Sys.println(Names.Read(h));
+		Sys.println(h.Name);
+		var n:INamed = h;
+		Sys.println(n.Name);
+	}
+}
+===
+[run]
+basev
+basev
+basev
+# A set-only property (M4Lib's IWriteOnly): the value of a store is the stored value (ruling 7), and reflection lists the setter.
+--- netlib-iface-property-set-only @gencs @netlib=M4Lib
+import m4.*;
+
+class S implements IWriteOnly {
+	public var Sink(never, set):Int;
+	public var got = 0;
+	public function new() {}
+	public function set_Sink(v:Int) {
+		got = v * 10;
+		return got;
+	}
+}
+
+class P {
+	static function main() {
+		var s = new S();
+		Sys.println(s.Sink = 4);
+		Sys.println(s.got);
+		var w:IWriteOnly = s;
+		w.Sink = 5;
+		Sys.println(s.got);
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(s)));
+		var f = Type.getInstanceFields(S); f.sort(Reflect.compare); Sys.println(f);
+		var r = Reflect.fields(s); r.sort(Reflect.compare); Sys.println(r);
+	}
+}
+===
+[run]
+4
+40
+50
+prop Sink set
+[got,set_Sink]
+[Sink,got]

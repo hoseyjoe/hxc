@@ -631,15 +631,24 @@ and `List` copy, and two threads casting one array at once.
      the class is final, else `virtual final newslot` where they implement an interface method. An
      override of an accessor makes an override property with only the accessors the class declares
      (`netlib-iface-property-override`, `netlib-iface-property-setter-override`). Every Haxe use calls
-     the public accessor, reflection included, and the value of a set call is its argument. C# code reads
-     the values the Haxe getters return (`netlib-iface-property-from-csharp`).
-     - Refused, as gencs's C# does not compile: overriding an accessor of a property that is not virtual,
-       such as the getter of a get-only one (CS0506, `netlib-iface-property-getonly-override`); a var
-       whose class does not list the interface itself, which a Haxe interface extending it or a
-       superclass would give (CS0535, `netlib-iface-property-not-listed-is-an-error`); a physical var
-       (CS0535, `netlib-iface-property-physical-is-an-error`); and a var of another type than the
-       interface property's (CS0738, `iface-property-type-is-an-error`). Properties of generic classes
-       and of hand-written extern interfaces stay refused.
+     the public accessor, reflection included, and the value of a set call is its argument
+     (`netlib-iface-property-set-only`). C# code reads the values the Haxe getters return
+     (`netlib-iface-property-from-csharp`). A property of the .NET base class implements the interface
+     property of a Haxe subclass that lists the interface when each accessor the interface declares is a
+     public virtual method of the base, with exactly the interface's signature
+     (`netlib-iface-property-base-virtual`).
+     - Errors, as gencs's C# does not compile: an override of an accessor of a property that is not
+       virtual, such as the getter of a get-only one, at the override (CS0506,
+       `netlib-iface-property-getonly-override`); a var whose class does not list the interface
+       itself, which a Haxe interface extending it or a superclass would give (CS0535,
+       `netlib-iface-property-not-listed-is-an-error`); a physical var (CS0535,
+       `netlib-iface-property-physical-is-an-error`); a var or an accessor of another type than the
+       interface property's (CS0738, `iface-property-type-is-an-error`); and a property of a
+       hand-written extern interface (CS0535).
+     - Not supported yet: a non-virtual property of the .NET base class implementing the interface
+       property, for which C# adds a forwarding stub (ruling S,
+       `netlib-iface-property-base-nonvirtual-is-unsupported`; the stub is milestone 4c's), properties
+       of generic classes, events, and overloaded, generic, dynamic or abstract accessors.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code

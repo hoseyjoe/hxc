@@ -932,6 +932,28 @@ class ExternMembers {
 		throw new Unsupported("the unknown .NET enum constant " + Globals.sTypePath(en.path) + "." + ef.name, false);
 	}
 
+	// Whether the method the CLR finds for an interface method named `name` of the signature `sig` (an
+	// LMethod), walking `c`'s .NET class and its base classes with `classArgs` for `c`'s type parameters, is a
+	// public virtual one: the first instance method of that name and signature decides it, as C# binds the
+	// inherited member there and needs no forwarding stub only when the CLR maps the interface method to it.
+	public function inheritsVirtual(c:TClass, classArgs:Array<IlSigNorm>, name:String, sig:IlSigNorm):Bool {
+		var want = switch (sig) {
+			case LMethod(_, r, l): {ret: r, args: l};
+			case _: throw "internal error: not a method signature";
+		}
+		for (link in chain(c)) {
+			var args = [for (a in linkArgs(link)) subst(a, classArgs)];
+			for (m in link.cls.cmethods) {
+				if (m.mname != name || m.mtypes.length != 0 || m.margs.length != want.args.length) continue;
+				if (m.mflags.contract.indexOf(CMStatic) >= 0) continue;
+				if (!IlPaths.sigEq(subst(m.mret.snorm, args), want.ret)) continue;
+				if (!IlPaths.sigsEq([for (a in m.margs) subst(a.sig.snorm, args)], want.args)) continue;
+				return m.mflags.access == FAPublic && m.mflags.contract.indexOf(CMVirtual) >= 0;
+			}
+		}
+		return false;
+	}
+
 	// The field or property of `c`'s .NET class that the extern variable `cf` stands for, which an access
 	// `reads` or `writes` (both: by address). A hand-written extern's declared type must convert from the
 	// member's for a read and to it for a write (ruling 1).

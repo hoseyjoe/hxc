@@ -16,6 +16,11 @@ namespace M4 {
 	public static class PropReader {
 		public static string Describe(IHandler h) => h.Guid + "|" + h.Prompt;
 	}
+	// a .NET base class's property implementing an interface property that a Haxe subclass lists (non-virtual and virtual)
+	public interface INamed { string Name { get; } }
+	public class BaseN { public string Name => "base"; }
+	public class BaseV { public virtual string Name => "basev"; }
+	public static class Names { public static string Read(INamed n) => n.Name; }
 	public static class UseProps {
 		public static string Read(IHandler h) => h.Guid + "/" + h.Prompt + "/" + h.Plugins().Count;
 		public static string Bump(ICounter c) { c.Count = c.Count + 1; return c.Label + "=" + c.Count; }
