@@ -283,7 +283,12 @@ class TclassToIl {
 		var staticProps:Array<PropertyPlan> = [], instanceProps:Array<PropertyPlan> = [];
 		function addFields(list:Array<TClassField>, isStatic:Bool) {
 			for (cf in list) {
-				if (TypeFunctions.hasClassFieldFlag(cf, CfExtern) || !TypeFunctions.isPhysicalField(cf)) continue;
+				if (TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
+				// gencs's gen_prop makes a static property of a static @:property var with an accessor, its
+				// accessors private static _get_X/_set_X; hxc does not write one yet.
+				if (isStatic && !TypeFunctions.isPhysicalField(cf) && isCallVar(cf) && TypeFunctions.hasMeta(":property", cf.meta))
+					throw new Unsupported("static @:property variables with get or set accessors", true, cf.pos);
+				if (!TypeFunctions.isPhysicalField(cf)) continue;
 				// As gencs's InterfaceVarsDeleteModf leaves them off, an interface has no fields, which a CLR
 				// interface cannot have: its variables and dynamic methods are reached through Runtime
 				// (TexprDynamic.isInterfaceField), its properties' accessors are its methods.
@@ -808,11 +813,14 @@ class TclassToIl {
 		return null;
 	}
 
-	// gencs's InterfaceProps: a var of a Haxe class with a get or set accessor whose name an interface the
-	// class lists itself declares as such a var, when that interface was converted from a --net-lib. It
-	// becomes a property unless it is physical (gencs's C# for that one fails, checkProperty).
+	// A var of a Haxe class with a get or set accessor that gencs's gen_prop makes a property of: one marked
+	// @:property (ruling T), or one InterfaceProps marks, whose name an interface the class lists itself
+	// declares as such a var, when that interface was converted from a --net-lib. It becomes a property
+	// unless it is physical (a physical @:property var is an auto-property, planVarProperty; gencs's C# for
+	// a physical one implementing a .NET interface property fails, checkProperty).
 	static function isPropertyVar(owner:TClass, cf:TClassField):Bool {
 		if (TypeFunctions.hasClassFlag(owner, CInterface) || TypeFunctions.hasClassFlag(owner, CExtern) || !isCallVar(cf)) return false;
+		if (TypeFunctions.hasMeta(":property", cf.meta)) return true;
 		for (i in owner.interfaces) {
 			if (!TypeFunctions.hasMeta(":csNative", i.c.meta)) continue;
 			var iv = i.c.fields.get(cf.name);
@@ -939,7 +947,10 @@ class TclassToIl {
 			var e = found.get(cf.name);
 			if (e != null && e.v.cf == cf) names.push(cf.name);
 		}
-		if (names.length > 0 && c.params.length > 0) throw new Unsupported(".NET interface properties of generic classes", true);
+		// For a hxgen generic class gencs's C# fails too (CS0686: the accessor would implement the companion
+		// interface's get_X); a @:nativeGen one gencs compiles.
+		if (names.length > 0 && c.params.length > 0)
+			throw new Unsupported(".NET interface properties and @:property variables with accessors in generic classes", true);
 		var list:Array<PropertyPlan> = [];
 		for (name in names) {
 			var e = found.get(name);

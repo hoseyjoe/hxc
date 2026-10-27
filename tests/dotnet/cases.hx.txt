@@ -16904,3 +16904,94 @@ class P {
 [compile]
 P.hx:2: characters 21-48 : dotnet: the @:property variable x cannot have a method get_x beside it: its CLR property's accessor has that name
 P.hx:9: characters 3-10 : dotnet: A (left out: the @:property variable x cannot have a method get_x beside it: its CLR property's accessor has that name) is not supported yet
+# A non-physical @:property var with get and set, or get only, is a CLR property through gencs's gen_prop (ruling T): private
+# _get_X/_set_X bodies, public accessors (virtual newslot with both, an override's own property for a subclass's get_X), the
+# value of a set its argument. System.Text.Json, GetProperties and the unsorted reflection listings see them as gencs's build does.
+--- property-var-accessors @gencs
+@:native("System.Text.Json.JsonSerializer") extern class JsonSerializer {
+	@:overload
+	public static function Serialize(obj:Any):String;
+	@:overload
+	public static function Serialize(obj:Any, opts:JsonSerializerOptions):String;
+}
+
+@:native("System.Text.Json.JsonSerializerOptions") extern class JsonSerializerOptions {
+	public function new();
+	public var IncludeFields:Bool;
+}
+
+class Temp {
+	@:property public var celsius(get, set):Float;
+	@:property public var kelvin(get, never):Float;
+	var c:Float = 20;
+	public function new() {}
+	function get_celsius() return c;
+	function set_celsius(v:Float) {
+		c = v;
+		return 99.0;
+	}
+	function get_kelvin() return c + 273;
+}
+
+class Hot extends Temp {
+	override function get_celsius() return super.get_celsius() + 100;
+}
+
+@:nativeGen
+class Shape {
+	@:property public var area(get, never):Int;
+	@:property public var side(get, set):Int;
+	var s:Int = 2;
+	public function new() {}
+	function get_area() return s * s;
+	function get_side() return s;
+	function set_side(v) return s = v;
+}
+
+class P {
+	static function props(c:Class<Dynamic>):String {
+		return [for (p in cs.Lib.toNativeType(c).GetProperties()) p.Name + (p.CanWrite ? ":rw" : ":r")].join(",");
+	}
+	static function main() {
+		var t = new Temp();
+		Sys.println((t.celsius = 30) + " " + t.celsius + " " + t.kelvin);
+		t.celsius += 5;
+		Sys.println(t.celsius);
+		var h:Temp = new Hot();
+		Sys.println(h.celsius + " " + h.kelvin);
+		var sh = new Shape();
+		sh.side++;
+		Sys.println(sh.area + " " + JsonSerializer.Serialize(sh));
+		var opts = new JsonSerializerOptions();
+		opts.IncludeFields = true;
+		Sys.println(JsonSerializer.Serialize(t, opts));
+		Sys.println(JsonSerializer.Serialize(h));
+		Sys.println(props(Temp) + " " + props(Hot) + " " + props(Shape));
+		Sys.println(Reflect.fields(t));
+		Sys.println(Type.getInstanceFields(Temp));
+		Sys.println(Type.getInstanceFields(Shape));
+		var d:Dynamic = t;
+		d.celsius = 1;
+		Sys.println(d.celsius + " " + Reflect.getProperty(t, "kelvin") + " " + Reflect.getProperty(h, "celsius"));
+	}
+}
+===
+# A static one, which gencs makes a static property with private static bodies, is not written yet.
+--- property-var-static-accessors-is-unsupported
+class S {
+	@:property public static var x(get, set):Int;
+	static var v = 1;
+	static function get_x() return v;
+	static function set_x(n) return v = n;
+}
+class P {
+	static function main() {
+		S.x = 4;
+		Sys.println(S.x);
+	}
+}
+===
+[compile]
+P.hx:2: characters 13-47 : dotnet: static @:property variables with get or set accessors are not supported yet
+P.hx:9: characters 3-10 : dotnet: S (left out: static @:property variables with get or set accessors) is not supported yet
+P.hx:10: characters 15-18 : dotnet: S (left out: static @:property variables with get or set accessors) is not supported yet

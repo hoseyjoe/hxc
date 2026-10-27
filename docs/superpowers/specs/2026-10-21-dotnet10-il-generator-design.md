@@ -661,6 +661,13 @@ and `List` copy, and two threads casting one array at once.
      (attributes are milestone 4b's).
      - Error, as gencs's C# does not compile: a `get_X` or `set_X` the class declares beside the var
        (CS0082, `property-var-accessor-clash-is-an-error`).
+     - A non-physical `@:property` var with a get or set accessor is a property as gencs's gen_prop
+       makes one, the same as a .NET interface property's implementation above (ruling T,
+       `property-var-accessors`): private `_get_X`/`_set_X` bodies, public accessors (`virtual newslot`
+       with both and nothing final), an override property for a subclass's override of an accessor, and
+       the argument as a set call's value. Not supported yet: a static one, which gencs makes a static
+       property (`property-var-static-accessors-is-unsupported`), and one in a generic class, where
+       gencs's C# for a hxgen class fails (CS0686).
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
