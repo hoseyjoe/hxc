@@ -622,6 +622,24 @@ and `List` copy, and two threads casting one array at once.
        element as an object, which Runtime converts (`netlib-indexer-nullable-elements`).
      - The value of an assignment through an indexer or a .NET property is the value stored, kept
        across the call, not what a setter returns (`netlib-property-store-value`).
+   - A Haxe class implements the properties of a .NET interface converted from a `--net-lib` as gencs
+     does (ruling 7; `iface-property-bcl`, `netlib-iface-properties`). gencs's InterfaceProps picks the
+     vars: one with a get or set accessor, named as such a var of an interface its class lists itself.
+     Each becomes a CLR property with a Property row: the Haxe `get_X` and `set_X` are private,
+     non-virtual `_get_X` and `_set_X`, and public `get_X` and `set_X` accessors (`void set_X(T)`) call
+     them. The accessors are `virtual newslot` when the class declares both and neither they, the var nor
+     the class is final, else `virtual final newslot` where they implement an interface method. An
+     override of an accessor makes an override property with only the accessors the class declares
+     (`netlib-iface-property-override`, `netlib-iface-property-setter-override`). Every Haxe use calls
+     the public accessor, reflection included, and the value of a set call is its argument. C# code reads
+     the values the Haxe getters return (`netlib-iface-property-from-csharp`).
+     - Refused, as gencs's C# does not compile: overriding an accessor of a property that is not virtual,
+       such as the getter of a get-only one (CS0506, `netlib-iface-property-getonly-override`); a var
+       whose class does not list the interface itself, which a Haxe interface extending it or a
+       superclass would give (CS0535, `netlib-iface-property-not-listed-is-an-error`); a physical var
+       (CS0535, `netlib-iface-property-physical-is-an-error`); and a var of another type than the
+       interface property's (CS0738, `iface-property-type-is-an-error`). Properties of generic classes
+       and of hand-written extern interfaces stay refused.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code

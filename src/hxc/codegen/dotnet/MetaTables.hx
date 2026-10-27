@@ -23,6 +23,7 @@ class CodedIndex {
 	static final resolutionScopeTables = [T.IModule, T.IModuleRef, T.IAssemblyRef, T.ITypeRef];
 	static final typeOrMethodDefTables = [T.ITypeDef, T.IMethod];
 	static final hasConstantTables = [T.IField, T.IParam, T.IProperty];
+	static final hasSemanticsTables = [T.IEvent, T.IProperty];
 
 	public static function tables(kind:Int):Array<Int> {
 		return switch (kind) {
@@ -34,6 +35,7 @@ class CodedIndex {
 			case T.IResolutionScope: resolutionScopeTables;
 			case T.ITypeOrMethodDef: typeOrMethodDefTables;
 			case T.IHasConstant: hasConstantTables;
+			case T.IHasSemantics: hasSemanticsTables;
 			case _: throw "unsupported coded index " + kind;
 		}
 	}
@@ -67,6 +69,8 @@ class CodedIndex {
 	public static inline function resolutionScope(table:Int, row:Int):Int return encode(T.IResolutionScope, table, row);
 
 	public static inline function typeOrMethodDef(table:Int, row:Int):Int return encode(T.ITypeOrMethodDef, table, row);
+
+	public static inline function hasSemantics(table:Int, row:Int):Int return encode(T.IHasSemantics, table, row);
 }
 
 class MetaTables {
@@ -92,6 +96,9 @@ class MetaTables {
 	public final constant:Array<Row> = [];
 	public final customAttribute:Array<Row> = [];
 	public final standAloneSig:Array<Row> = [];
+	public final propertyMap:Array<Row> = [];
+	public final property:Array<Row> = [];
+	public final methodSemantics:Array<Row> = [];
 	public final methodImpl:Array<Row> = [];
 	public final typeSpec:Array<Row> = [];
 	public final assembly:Array<Row> = [];
@@ -117,6 +124,9 @@ class MetaTables {
 			{table: T.IConstant, rows: constant, schema: [U16, T.IHasConstant, BLOB]},
 			{table: T.ICustomAttribute, rows: customAttribute, schema: [T.IHasCustomAttribute, T.ICustomAttributeType, BLOB]},
 			{table: T.IStandAloneSig, rows: standAloneSig, schema: [BLOB]},
+			{table: T.IPropertyMap, rows: propertyMap, schema: [T.ITypeDef, T.IProperty]},
+			{table: T.IProperty, rows: property, schema: [U16, STR, BLOB]},
+			{table: T.IMethodSemantics, rows: methodSemantics, schema: [U16, T.IMethod, T.IHasSemantics]},
 			{table: T.IMethodImpl, rows: methodImpl, schema: [T.ITypeDef, T.IMethodDefOrRef, T.IMethodDefOrRef]},
 			{table: T.ITypeSpec, rows: typeSpec, schema: [BLOB]},
 			{table: T.IAssembly, rows: assembly, schema: [U32, U16, U16, U16, U16, U32, BLOB, STR, STR]},
@@ -145,11 +155,14 @@ class MetaTables {
 	}
 
 	public function writeMetadata(h:MetaHeaps):{bytes:Bytes, mvidOffset:Int} {
-		// Nothing points at a Constant, CustomAttribute or MethodImpl row, so those tables alone are sorted here.
+		// Nothing points at a Constant, CustomAttribute, MethodSemantics or MethodImpl row, so those tables alone
+		// are sorted here.
 		sortBy(constant, [1]);
 		sortBy(customAttribute, [0]);
+		sortBy(methodSemantics, [2]);
 		sortBy(methodImpl, [0]);
 		checkSorted("InterfaceImpl", interfaceImpl, [0, 1]);
+		checkSorted("PropertyMap", propertyMap, [0]);
 		checkSorted("GenericParam", genericParam, [2, 0]);
 		checkSorted("GenericParamConstraint", genericParamConstraint, [0]);
 

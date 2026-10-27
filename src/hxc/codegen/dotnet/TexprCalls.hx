@@ -520,6 +520,12 @@ class TexprCalls {
 				if (isSuper) code.ldarg(0) else receiver(obj, m.owner);
 				pushArgs(args, m.args, argTypes(callee.type));
 				var op = isSuper || DotnetTypes.isValueType(m.owner) ? IlOps.CALL : IlOps.CALLVIRT;
+				if (m.isSetter) {
+					// A property's set_X is its setter, and the call's value is the argument (ruling 7), as
+					// gencs writes `o.X = v`.
+					tl.storeKeeping(ret, m.args[0], () -> code.opToken(op, m.token, 2, 0));
+					return;
+				}
 				code.opToken(op, m.token, args.length + 1, m.ret.match(LVoid) ? 0 : 1);
 				tl.coerce(m.ret, ret);
 			case TField(_, FEnum(en, ef)) if (EnumToIl.isHxGenEnum(en)):
@@ -941,7 +947,7 @@ class TexprCalls {
 	// A Haxe class's instance method, the overload the call reaches. A virtual call of an @:overload override
 	// that erasure gave a bridge reaches, as gencs's does, the overload it overrides, whose slot the bridge takes.
 	function haxeMethod(c:TClass, params:TParams, cf:TClassField, args:Array<TExpr>, calleeType:T,
-			isVirtual = false):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm, owner:IlSigNorm} {
+			isVirtual = false):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm, owner:IlSigNorm, isSetter:Bool} {
 		g.types.checkKept(TClassDecl(c));
 		var target = pickOverload(c, params, cf, args, false);
 		var declaring = g.ownerOf.get(target);
@@ -956,7 +962,9 @@ class TexprCalls {
 		var owner = DotnetCtx.instanceOf(plan, inst);
 		var declared = plan.c == null ? target.type : TypeFunctions.applyParams(plan.c.params, hxArgs, target.type);
 		var m = methodRef(plan, owner, inst, target, declared, calleeType);
-		return {token: m.token, args: m.args, ret: m.ret, owner: owner};
+		// The set_X of a property var stands for the property's setter (TclassToIl.write).
+		var isSetter = g.methodPlans.get(target).kind.match(MPropertyAccessor(_, true));
+		return {token: m.token, args: m.args, ret: m.ret, owner: owner, isSetter: isSetter};
 	}
 
 	// A method of a referenced assembly; super.m() calls the base method itself.

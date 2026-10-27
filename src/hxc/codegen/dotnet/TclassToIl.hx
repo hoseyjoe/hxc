@@ -52,6 +52,8 @@ enum MethodKind {
 	MCast(c:TClass, body:CastBody);
 	// A member of a class's companion interface, which has no body.
 	MCompanionMember;
+	// The public accessor of a CLR property (PropertyPlan), its getter or (`isSet`) its setter.
+	MPropertyAccessor(p:PropertyPlan, isSet:Bool);
 }
 
 // How an override takes the slot of the method it overrides, as gencs's FixOverrides fixes one whose
@@ -84,6 +86,26 @@ typedef MethodPlan = {
 // `cf` is null for a field of an enum's classes (EnumToIl); `token` is set when the row is written.
 typedef FieldPlan = {cf:Null<TClassField>, name:String, flags:Int, sig:IlSigNorm, ?token:Int};
 
+// A CLR property of a class, as gencs's gen_prop writes one for a var its InterfaceProps filter marks: the
+// var `cf` (of the class or, for an override of its accessors, a superclass), the property's name and
+// type, the private non-virtual bodies the Haxe get_X/set_X become (`_get_X`/`_set_X`, null for an accessor
+// the class does not declare), the public accessors that call them and that every Haxe use of
+// get_X/set_X calls, and its Property row's token, set when the row is written.
+typedef PropertyPlan = {
+	cf:TClassField,
+	name:String,
+	sig:IlSigNorm,
+	getBody:Null<MethodPlan>,
+	setBody:Null<MethodPlan>,
+	getter:Null<MethodPlan>,
+	setter:Null<MethodPlan>,
+	token:Int
+};
+
+// A var as a class or one of its superclasses has it: the class declaring it, with its type arguments in
+// terms of the first class's type parameters.
+private typedef VarAt = {cf:TClassField, owner:TClass, params:Array<T>};
+
 // A constructor of a class in gencs's class model: the real one, and the static one holding its body
 // (null when the class descends from a native type).
 typedef CtorPlan = {hx:HaxeCtor, real:MethodPlan, stat:Null<MethodPlan>};
@@ -112,6 +134,8 @@ typedef ClassPlan = {
 	// taking haxe.lang.EmptyObject.
 	ctors:Null<Array<CtorPlan>>,
 	emptyCtor:Null<MethodPlan>,
+	// The CLR properties, in the order gencs writes them.
+	properties:Array<PropertyPlan>,
 	token:Int
 };
 
@@ -165,6 +189,11 @@ class MethodAttrs {
 	public static inline var ABSTRACT = 0x400;
 	public static inline var SPECIAL_NAME = 0x800;
 	public static inline var RT_SPECIAL_NAME = 0x1000;
+}
+
+class SemanticsAttrs {
+	public static inline var SETTER = 0x1;
+	public static inline var GETTER = 0x2;
 }
 
 class FieldAttrs {
@@ -240,6 +269,7 @@ class TclassToIl {
 		var interfaces = interfaceClosure(g, c);
 		var impls = isInterface ? null : interfaceImpls(g, c, interfaces);
 		var implementing = impls == null ? new ObjectMap<TClassField, Bool>() : impls.own;
+		var props = isInterface ? null : planProperties(g, c, interfaces, implementing);
 
 		var fields:Array<FieldPlan> = [];
 		function addFields(list:Array<TClassField>, isStatic:Bool) {
@@ -294,12 +324,15 @@ class TclassToIl {
 					continue;
 				}
 				if (isCtor && !isStruct && !hasSuperCall(f.expr)) checkParameterlessBase(g, c);
-				var shape = !isStatic && !isCtor && !isInterface && isOverride(f) ? overrideShape(g, c, TypeFunctions.extractParamTypes(c.params), f, sig) : OSame;
+				// The body of a property's accessor, which takes no slot: its public accessor does.
+				var prop = isStatic || props == null ? null : props.bodies.get(f);
+				var shape = prop == null && !isStatic && !isCtor && !isInterface && isOverride(f) ? overrideShape(g, c, TypeFunctions.extractParamTypes(c.params), f, sig) : OSame;
 				var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG;
-				if (isStatic) flags |= MethodAttrs.STATIC;
+				if (prop != null) flags = MethodAttrs.PRIVATE | MethodAttrs.HIDE_BY_SIG;
+				else if (isStatic) flags |= MethodAttrs.STATIC;
 				else if (isCtor) flags |= MethodAttrs.SPECIAL_NAME | MethodAttrs.RT_SPECIAL_NAME;
 				else flags |= virtuality(c, f, isStruct, implementing.exists(f) || CompanionToIl.isMember(g, c, f), !shape.match(OOverload(_)));
-				var name = isCtor ? ".ctor" : DotnetNames.fieldName(c, f.name);
+				var name = isCtor ? ".ctor" : prop != null ? "_" + f.name : DotnetNames.fieldName(c, f.name);
 				var generics = [for (p in f.params) p.name];
 				if (!shape.match(OSame) && TypeFunctions.hasClassFieldFlag(f, CfAbstract))
 					throw new Unsupported("abstract overrides that change the signature", true);
@@ -308,7 +341,7 @@ class TclassToIl {
 				if (made != null) for (b in made) methods.push(bridgeMethod(g, c, b));
 				switch (shape) {
 					case OSame:
-						methods.push({
+						var m:MethodPlan = {
 							kind: MField(f),
 							name: name,
 							flags: flags,
@@ -319,7 +352,11 @@ class TclassToIl {
 							generics: generics,
 							pos: f.pos,
 							token: 0
-						});
+						};
+						methods.push(m);
+						if (prop != null) {
+							if (f.name.charAt(0) == "s") prop.setBody = m else prop.getBody = m;
+						}
 					case OInline(slot):
 						methods.push({
 							kind: MField(f),
@@ -416,6 +453,11 @@ class TclassToIl {
 			checkParameterlessBase(g, c);
 			methods.push(implicitCtor(c.pos, TypeFunctions.hasClassFlag(c, CAbstract)));
 		}
+		// gencs writes the properties after the constructors.
+		if (props != null) for (p in props.list) {
+			if (p.getter != null) methods.push(p.getter);
+			if (p.setter != null) methods.push(p.setter);
+		}
 		if (isStruct && impls != null && (impls.bridges.length > 0 || impls.overloads.keys().hasNext()))
 			throw new Unsupported("interface methods implemented with other types", true);
 		// gencs adds each bridge in front of the class's fields, so the last one made comes first, after
@@ -497,6 +539,7 @@ class TclassToIl {
 			initFlag: hasCctor && c.params.length > 0,
 			ctors: ctors,
 			emptyCtor: emptyCtor,
+			properties: props == null ? [] : props.list,
 			token: 0
 		};
 	}
@@ -589,10 +632,17 @@ class TclassToIl {
 			// The reflection members, which the class or HxObject has, implement IHxObject.
 			if (i.c == ihx) continue;
 			var isExternInterface = TypeFunctions.hasClassFlag(i.c, CExtern);
+			// gencs's InterfaceProps makes properties only for an interface converted from a --net-lib; a
+			// hand-written extern interface's would be no member of the class.
+			if (isExternInterface && !TypeFunctions.hasMeta(":csNative", i.c.meta)) for (im in i.c.orderedFields)
+				if (im.kind.match(Var(_))) throw new Unsupported("properties of hand-written .NET interface externs", true);
 			for (im in i.c.orderedFields) {
 				switch (im.kind) {
+					case Var(_) if (isExternInterface):
+						if (!isCallVar(im)) throw new Unsupported("events of .NET interfaces", true);
+						checkProperty(g, c, i, im);
+						continue;
 					case Var(_):
-						if (isExternInterface) throw new Unsupported("properties of .NET interfaces", true);
 						// A Haxe interface's variable is no member of the CLR interface.
 						continue;
 					case Method(MethDynamic):
@@ -602,6 +652,8 @@ class TclassToIl {
 						continue;
 					case Method(_):
 				}
+				// A property's accessor is implemented by the class's property (checkProperty).
+				if (isExternInterface && accessorOf(i.c, im) != null) continue;
 				for (f in [im].concat(im.overloads)) {
 					var name:String, want:{args:Array<IlSigNorm>, ret:IlSigNorm};
 					// Whether erasure makes the interface's CLR signature differ from its Haxe types applied.
@@ -655,6 +707,205 @@ class TclassToIl {
 			}
 		}
 		return {own: own, bridges: bridgeOrder(c, bridges), overloads: overloads};
+	}
+
+	// A var with a get or set accessor method.
+	static function isCallVar(cf:TClassField):Bool {
+		return switch (cf.kind) {
+			case Var(v): v.read == AccCall || v.write == AccCall;
+			case _: false;
+		}
+	}
+
+	// The var named `name` of `c` or of its nearest superclass that has a field of that name; null when that
+	// field is no var or there is none.
+	static function findVar(c:TClass, name:String):Null<VarAt> {
+		var cur = c;
+		var params = TypeFunctions.extractParamTypes(c.params);
+		while (cur != null) {
+			var cf = cur.fields.get(name);
+			if (cf != null) return cf.kind.match(Var(_)) ? {cf: cf, owner: cur, params: params} : null;
+			var s = cur.superClass;
+			if (s == null) break;
+			params = [for (t in s.params) TypeFunctions.applyParams(cur.params, params, t)];
+			cur = s.c;
+		}
+		return null;
+	}
+
+	// gencs's InterfaceProps: a var of a Haxe class with a get or set accessor whose name an interface the
+	// class lists itself declares as such a var, when that interface was converted from a --net-lib. It
+	// becomes a property unless it is physical (gencs's C# for that one fails, checkProperty).
+	static function isPropertyVar(owner:TClass, cf:TClassField):Bool {
+		if (TypeFunctions.hasClassFlag(owner, CInterface) || TypeFunctions.hasClassFlag(owner, CExtern) || !isCallVar(cf)) return false;
+		for (i in owner.interfaces) {
+			if (!TypeFunctions.hasMeta(":csNative", i.c.meta)) continue;
+			var iv = i.c.fields.get(cf.name);
+			if (iv != null && isCallVar(iv)) return true;
+		}
+		return false;
+	}
+
+	// The property var the method `cf` of `c` is an accessor of, as gencs's partition finds it: a get_X or
+	// set_X method of the class, X a property var of the class or a superclass (for a converted .NET
+	// interface, a var of it with an accessor); null when there is none.
+	static function accessorOf(c:TClass, cf:TClassField):Null<VarAt> {
+		if (!cf.kind.match(Method(_)) || cf.name.length <= 4) return null;
+		var prefix = cf.name.substr(0, 4);
+		if (prefix != "get_" && prefix != "set_") return null;
+		var v = findVar(c, cf.name.substr(4));
+		if (v == null) return null;
+		if (TypeFunctions.hasClassFlag(c, CExtern)) return TypeFunctions.hasMeta(":csNative", c.meta) && isCallVar(v.cf) ? v : null;
+		return isPropertyVar(v.owner, v.cf) && !TypeFunctions.isPhysicalField(v.cf) ? v : null;
+	}
+
+	// The class's implementation of the .NET interface property `iv` of `i`: a property var of the class or a
+	// superclass, of the interface property's type, whose class declares the accessors the interface has.
+	// gencs's C# fails to compile each other shape (CS0535, CS0738).
+	static function checkProperty(g:DotnetCtx, c:TClass, i:ImplementedInterface, iv:TClassField):Void {
+		var v = findVar(c, iv.name);
+		if (v == null) throw new Unsupported("abstract classes that leave interface methods unimplemented", true);
+		// The .NET base class's own property, which the CLR checks when it loads the type.
+		if (TypeFunctions.hasClassFlag(v.owner, CExtern)) return;
+		var what = " (" + DotnetTypes.haxePath(TClassDecl(i.c)) + "." + iv.name + ")";
+		if (TypeFunctions.isPhysicalField(v.cf)) throw new Unsupported("physical variables implementing a .NET interface property" + what, true, v.cf.pos);
+		if (!isPropertyVar(v.owner, v.cf))
+			throw new Unsupported(".NET interface properties implemented by a variable whose class does not list their interface itself" + what, true,
+				v.cf.pos);
+		var want = g.types.toSig(TypeFunctions.applyParams(i.c.params, i.params, iv.type));
+		var have = g.types.toSig(TypeFunctions.applyParams(v.owner.params, v.params, v.cf.type));
+		if (!IlPaths.sigEq(want, have))
+			throw new Unsupported("variables of another type than the .NET interface property they implement" + what, true, v.cf.pos);
+		switch (iv.kind) {
+			case Var(a):
+				for (prefix in [a.read == AccCall ? "get_" : null, a.write == AccCall ? "set_" : null]) {
+					if (prefix == null) continue;
+					var m = v.owner.fields.get(prefix + iv.name);
+					if (m == null || !m.kind.match(Method(_)) || TypeFunctions.hasClassFieldFlag(m, CfExtern))
+						throw new Unsupported(".NET interface properties whose " + prefix + iv.name + " the class of their variable does not declare" + what,
+							true, v.cf.pos);
+				}
+			case _:
+		}
+	}
+
+	// The class's CLR properties (PropertyPlan), in gencs's order: those whose var a superclass declares and
+	// whose accessors the class overrides, by their last accessor in the class, then the class's own, last
+	// declared first; and the property of each accessor body (`bodies`).
+	static function planProperties(g:DotnetCtx, c:TClass, interfaces:Array<ImplementedInterface>,
+			implementing:ObjectMap<TClassField, Bool>):{list:Array<PropertyPlan>, bodies:ObjectMap<TClassField, PropertyPlan>} {
+		var bodies = new ObjectMap<TClassField, PropertyPlan>();
+		var found = new Map<String, {v:VarAt, get:Null<TClassField>, set:Null<TClassField>}>();
+		var inherited:Array<String> = [];
+		var n = c.orderedFields.length;
+		for (k in 0...n) {
+			var cf = c.orderedFields[n - 1 - k];
+			var v = accessorOf(c, cf);
+			if (v == null || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
+			if (cf.overloads.length > 0 || cf.params.length > 0 || !cf.kind.match(Method(MethNormal | MethInline))
+				|| TypeFunctions.hasClassFieldFlag(cf, CfAbstract))
+				throw new Unsupported("accessors of .NET interface properties that are overloaded, generic, dynamic or abstract", true, cf.pos);
+			var e = found.get(v.cf.name);
+			if (e == null) {
+				found.set(v.cf.name, e = {v: v, get: null, set: null});
+				if (v.owner != c) inherited.push(v.cf.name);
+			}
+			if (cf.name.charAt(0) == "g") e.get = cf else e.set = cf;
+		}
+		var names = inherited.copy();
+		names.reverse();
+		for (k in 0...n) {
+			var cf = c.orderedFields[n - 1 - k];
+			var e = found.get(cf.name);
+			if (e != null && e.v.cf == cf) names.push(cf.name);
+		}
+		if (names.length > 0 && c.params.length > 0) throw new Unsupported(".NET interface properties of generic classes", true);
+		var list:Array<PropertyPlan> = [];
+		for (name in names) {
+			var e = found.get(name);
+			var sig = g.types.toSig(TypeFunctions.applyParams(e.v.owner.params, e.v.params, e.v.cf.type));
+			for (body in [e.get, e.set]) {
+				if (body == null) continue;
+				var f = functionSig(g, body.type);
+				if (body == e.get ? f.args.length != 0 || !IlPaths.sigEq(f.ret, sig) : f.args.length != 1 || !IlPaths.sigEq(f.args[0], sig))
+					throw new Unsupported("accessors of another type than their .NET interface property", true, body.pos);
+			}
+			// gen_prop: an override when an accessor is one; else virtual when neither the class, the var nor
+			// an accessor is final and both accessors are there.
+			var isOverride = e.get != null && TypeFunctions.hasClassFieldFlag(e.get, CfOverride)
+				|| e.set != null && TypeFunctions.hasClassFieldFlag(e.set, CfOverride);
+			if (isOverride && e.v.owner == c) throw new Unsupported("accessors of .NET interface properties that override a method", true);
+			// C# overrides a property only when its base declares it virtual (gencs's C# fails with CS0506).
+			if (isOverride && !isVirtualProperty(e.v.owner, e.v.cf, ownMethod(e.v.owner, "get_" + name), ownMethod(e.v.owner, "set_" + name)))
+				throw new Unsupported("overriding the accessor of a non-virtual .NET interface property", false);
+			var isVirtual = isVirtualProperty(c, e.v.cf, e.get, e.set);
+			var p:PropertyPlan = {
+				cf: e.v.cf,
+				name: name,
+				sig: sig,
+				getBody: null,
+				setBody: null,
+				getter: null,
+				setter: null,
+				token: 0
+			};
+			function accessor(body:TClassField, isSet:Bool):MethodPlan {
+				var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME;
+				if (isOverride) flags |= MethodAttrs.VIRTUAL;
+				else if (isVirtual) flags |= MethodAttrs.VIRTUAL | MethodAttrs.NEW_SLOT;
+				// C# makes the accessor of a non-virtual property that implements an interface method final virtual.
+				else if (implementing.exists(body) || declaresAccessor(interfaces, body.name))
+					flags |= MethodAttrs.VIRTUAL | MethodAttrs.FINAL | MethodAttrs.NEW_SLOT;
+				return {
+					kind: MPropertyAccessor(p, isSet),
+					name: body.name,
+					flags: flags,
+					hasThis: true,
+					ret: isSet ? LVoid : sig,
+					args: isSet ? [sig] : [],
+					argNames: isSet ? ["value"] : [],
+					generics: [],
+					pos: body.pos,
+					token: 0
+				};
+			}
+			if (e.get != null) {
+				p.getter = accessor(e.get, false);
+				bodies.set(e.get, p);
+			}
+			if (e.set != null) {
+				// A Haxe interface's set_X returns a value; the setter returns none.
+				if (implementing.exists(e.set))
+					throw new Unsupported("Haxe interface methods implemented by the setter of a .NET interface property", true, e.set.pos);
+				p.setter = accessor(e.set, true);
+				bodies.set(e.set, p);
+			}
+			list.push(p);
+		}
+		return {list: list, bodies: bodies};
+	}
+
+	// The method of that name `c` declares itself, or null.
+	static function ownMethod(c:TClass, name:String):Null<TClassField> {
+		var cf = c.fields.get(name);
+		return cf != null && cf.kind.match(Method(_)) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern) ? cf : null;
+	}
+
+	// gen_prop's is_virtual for the property var `cf` of `c` with the accessors `get` and `set` the class
+	// declares (fn_is_final: a missing accessor counts as final).
+	static function isVirtualProperty(c:TClass, cf:TClassField, get:Null<TClassField>, set:Null<TClassField>):Bool {
+		if (get == null || set == null || TypeFunctions.hasClassFieldFlag(cf, CfFinal)) return false;
+		return !isFinalMethod(c, get) && !isFinalMethod(c, set);
+	}
+
+	// Whether a .NET interface the class implements declares the accessor `name` of one of its properties.
+	static function declaresAccessor(interfaces:Array<ImplementedInterface>, name:String):Bool {
+		for (i in interfaces) {
+			if (!TypeFunctions.hasClassFlag(i.c, CExtern)) continue;
+			var m = i.c.fields.get(name);
+			if (m != null && accessorOf(i.c, m) != null) return true;
+		}
+		return false;
 	}
 
 	// Whether `made` has an overload `name` whose signature, with the class type arguments `inst` put in
@@ -1117,6 +1368,7 @@ class TclassToIl {
 			initFlag: false,
 			ctors: null,
 			emptyCtor: null,
+			properties: [],
 			token: 0
 		};
 	}
@@ -1156,6 +1408,22 @@ class TclassToIl {
 				case _:
 			}
 		}
+		for (p in plan.properties) {
+			p.token = mb.property(plan.token, p.name, g.sigs.property(p.sig));
+			if (p.getter != null) mb.methodSemantics(SemanticsAttrs.GETTER, p.getter.token, p.token);
+			if (p.setter != null) mb.methodSemantics(SemanticsAttrs.SETTER, p.setter.token, p.token);
+			// Every Haxe use of get_X and set_X calls the public accessor, as gencs writes `o.X` and `o.X = v`.
+			for (pair in [{body: p.getBody, accessor: p.getter}, {body: p.setBody, accessor: p.setter}]) {
+				if (pair.body == null) continue;
+				var cf = switch (pair.body.kind) {
+					case MField(cf): cf;
+					case _: throw "internal error: a property body that is no Haxe method";
+				}
+				g.methodTokens.set(cf, pair.accessor.token);
+				g.methodPlans.set(cf, pair.accessor);
+				g.methodSigs.set(cf, {ret: pair.accessor.ret, args: pair.accessor.args});
+			}
+		}
 	}
 
 	// A TypeDefOrRef coded index for a class signature.
@@ -1191,6 +1459,7 @@ class TclassToIl {
 			case MInterfaceBridge(b): b.im.name;
 			case MCast(_, _): m.name;
 			case MCompanionMember: m.name;
+			case MPropertyAccessor(_, _): m.name;
 		}
 	}
 
@@ -1575,6 +1844,8 @@ class TclassToIl {
 					CompanionToIl.emitCast(g, plan, m, c, body, code);
 				case MCompanionMember:
 					throw "internal error: a companion member with a body";
+				case MPropertyAccessor(p, isSet):
+					accessorBody(p, isSet, code);
 				case MEntryPoint:
 					var boot = g.bootInit();
 					if (boot != null) code.opToken(IlOps.CALL, boot, 0, 0);
@@ -1602,6 +1873,18 @@ class TclassToIl {
 			code.body(code.locals.length == 0 ? 0 : g.mb.standAloneSig(g.sigs.locals(code.locals)));
 		}
 		g.mb.setBody(m.token, body);
+	}
+
+	// A property's accessor, as C# compiles gencs's `get { return _get_X(); }` and `set { _set_X(value); }`:
+	// a call of the private body, whose value the setter drops.
+	static function accessorBody(p:PropertyPlan, isSet:Bool, code:IlCode):Void {
+		var body = isSet ? p.setBody : p.getBody;
+		if (body == null) throw "internal error: the property " + p.name + " has an accessor without a body";
+		code.ldarg(0);
+		if (isSet) code.ldarg(1);
+		code.opToken(IlOps.CALL, body.token, isSet ? 2 : 1, body.ret.match(LVoid) ? 0 : 1);
+		if (isSet && !body.ret.match(LVoid)) code.op(IlOps.POP, 1, 0);
+		code.op(IlOps.RET, isSet ? 0 : 1, 0);
 	}
 
 	// A statement outside any block, reported like a block's own in user code.

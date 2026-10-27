@@ -118,6 +118,23 @@ class ModuleBuilder {
 		return (T.IMethod << 24) | tables.methodDef.length;
 	}
 
+	// A Property row of the type `owner` (a TypeDef token), with its PropertyMap row when it is the type's
+	// first: must be added grouped by type, in TypeDef order, as each type's properties are one run of rows.
+	// `sig` is a SigWriter.property blob.
+	public function property(owner:Int, name:String, sig:Bytes):Int {
+		var last = tables.propertyMap.length == 0 ? 0 : tables.propertyMap[tables.propertyMap.length - 1][0];
+		if (row(owner) < last) throw "internal error: Property rows are not grouped by type";
+		tables.property.push([0, heaps.strings.add(name), heaps.blobs.add(sig)]);
+		if (row(owner) != last) tables.propertyMap.push([row(owner), tables.property.length]);
+		return (T.IProperty << 24) | tables.property.length;
+	}
+
+	// A MethodSemantics row making `method` (a MethodDef token) the accessor of `property` (a Property token):
+	// Getter 0x0002, Setter 0x0001. The table is sorted by association when it is written.
+	public function methodSemantics(semantics:Int, method:Int, property:Int):Void {
+		tables.methodSemantics.push([semantics, row(method), coded(T.IHasSemantics, property)]);
+	}
+
 	// A fat header must start 4-aligned; a tiny one, whose low two bits are 2, need not.
 	public function setBody(method:Int, body:Bytes):Void {
 		if (body.get(0) & 3 == 3) il.align(4);

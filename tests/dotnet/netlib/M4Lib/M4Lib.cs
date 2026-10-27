@@ -13,6 +13,9 @@ namespace M4 {
 		string Label { get; }
 	}
 	public interface IWriteOnly { int Sink { set; } }
+	public static class PropReader {
+		public static string Describe(IHandler h) => h.Guid + "|" + h.Prompt;
+	}
 	public static class UseProps {
 		public static string Read(IHandler h) => h.Guid + "/" + h.Prompt + "/" + h.Plugins().Count;
 		public static string Bump(ICounter c) { c.Count = c.Count + 1; return c.Label + "=" + c.Count; }

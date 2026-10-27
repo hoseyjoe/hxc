@@ -221,6 +221,7 @@ class EnumToIl {
 			initFlag: false,
 			ctors: null,
 			emptyCtor: null,
+			properties: [],
 			token: 0
 		};
 	}

@@ -1107,7 +1107,6 @@ class P {
 [compile]
 P.hx:4: lines 4-7 : dotnet: interface methods implemented with other parameter types are not supported yet
 P.hx:15: characters 1-54 : dotnet: interface methods implemented by a final inherited method are not supported yet
-P.hx:16: lines 16-22 : dotnet: properties of .NET interfaces are not supported yet
 P.hx:24: characters 10-41 : dotnet: structs that extend a class are not supported yet
 P.hx:26: characters 2-23 : dotnet: instance variable initializers in structs are not supported yet
 P.hx:30: lines 30-32 : dotnet: struct constructors without arguments that do something are not supported yet
@@ -16237,3 +16236,414 @@ class P {
 ===
 [compile]
 P.hx:7: characters 54-63 : dotnet: more than one .NET overload of ValLib.Prot.Go may accept (string)
+# Haxe classes implementing .NET interface properties (milestone 4a, ruling 7). Each property var gencs's InterfaceProps rule
+# picks becomes a CLR property: private _get_X/_set_X bodies, public get_X/set_X accessors and Property rows.
+# A BCL interface property (IEnumerator.Current), with no net-lib.
+--- iface-property-bcl @gencs
+import cs.system.collections.IEnumerator;
+
+class Countdown implements IEnumerator {
+	public var Current(get, never):Dynamic;
+	var n:Int;
+	public function new(n) this.n = n + 1;
+	public function get_Current():Dynamic return n;
+	public function MoveNext():Bool return --n > 0;
+	public function Reset():Void {}
+}
+
+class P {
+	static function main() {
+		var e:IEnumerator = new Countdown(3);
+		var out = [];
+		while (e.MoveNext()) out.push(e.Current);
+		Sys.println(out);
+		var c = new Countdown(1);
+		c.MoveNext();
+		Sys.println(c.Current + " " + c.get_Current());
+		var t = cs.Lib.getNativeType(c);
+		Sys.println(t.GetProperty("Current") != null);
+		var m = t.GetMethod("get_Current");
+		Sys.println(m.IsSpecialName + " " + m.IsVirtual + " " + m.IsFinal);
+		var f = Reflect.fields(c); f.sort(Reflect.compare); Sys.println(f);
+		Sys.println(Reflect.field(c, "Current"));
+	}
+}
+===
+[run]
+[3,2,1]
+1 1
+True
+true true true
+[Current,n]
+1
+# M4Lib's IHandler and ICounter, read and written by C# and by Haxe (directly, through the interface, by reflection and through
+# Dynamic). The value of Reflect.callMethod(set_Count) is the argument, not set_Count's return (ruling 7).
+--- netlib-iface-properties @gencs @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.List_1;
+
+class Handler implements IHandler {
+	public var Guid(get, never):String;
+	public var Prompt(get, never):String;
+	var name:String;
+	public function new(n:String) name = n;
+	public function get_Guid():String return "g-" + name;
+	public function get_Prompt() return "p-" + name;
+	public function Plugins():List_1<String> {
+		var l = new List_1<String>();
+		l.Add("a");
+		return l;
+	}
+}
+
+
+class Counter implements ICounter {
+	public var Count(get, set):Int;
+	public var Label(get, never):String;
+	var n = 0;
+	public function new() {}
+	public function get_Count() return n;
+	public function set_Count(v:Int) { n = v * 2; return n; }
+	public function get_Label() return "ctr";
+}
+
+class P {
+	static function main() {
+		var h = new Handler("x");
+		Sys.println(UseProps.Read(h));
+		Sys.println(h.Guid + " " + h.get_Guid() + " " + h.Prompt);
+		var ih:IHandler = h;
+		Sys.println(ih.Guid + " " + ih.Prompt);
+		var c = new Counter();
+		Sys.println(UseProps.Bump(c));
+		c.Count = 5;
+		Sys.println(c.Count);
+		var ic:ICounter = c;
+		ic.Count = 7;
+		Sys.println(ic.Count + " " + ic.Label);
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(h)));
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(c)));
+		// reflection
+		Sys.println(Reflect.field(h, "Guid"));
+		Sys.println(Reflect.callMethod(h, Reflect.field(h, "get_Guid"), []));
+		var f = Type.getInstanceFields(Handler); f.sort(Reflect.compare); Sys.println(f);
+		var f = Type.getInstanceFields(Counter); f.sort(Reflect.compare); Sys.println(f);
+		Sys.println(Reflect.callMethod(c, Reflect.field(c, "set_Count"), [5]));
+		Sys.println(c.Count = 6);
+		var r = Reflect.fields(h); r.sort(Reflect.compare); Sys.println(r);
+		var r = Reflect.fields(c); r.sort(Reflect.compare); Sys.println(r);
+		Reflect.setProperty(c, "Count", 10);
+		Sys.println(Reflect.getProperty(c, "Count"));
+		var d:Dynamic = h;
+		Sys.println(d.Guid + " " + d.get_Prompt());
+	}
+}
+===
+[run]
+g-x/p-x/1
+g-x g-x p-x
+g-x p-x
+ctr=2
+10
+14 ctr
+prop Prompt get, prop Guid get
+prop Label get, prop Count get set
+g-x
+g-x
+[Plugins,get_Guid,get_Prompt,name]
+[get_Count,get_Label,n,set_Count]
+5
+6
+[Guid,Prompt,name]
+[Count,Label,n]
+20
+g-x p-x
+# Overriding one accessor of a get/set (virtual) property: an override property with only that accessor, and super.get_Count()
+# calls the base accessor.
+--- netlib-iface-property-override @gencs @netlib=M4Lib
+import m4.*;
+
+class Counter implements ICounter {
+	public var Count(get, set):Int;
+	public var Label(get, never):String;
+	var n = 0;
+	public function new() {}
+	public function get_Count() return n;
+	public function set_Count(v:Int) { n = v; return n; }
+	public function get_Label() return "ctr";
+}
+
+class SubCounter extends Counter {
+	override public function get_Count() return super.get_Count() + 100;
+}
+
+class Plain extends Counter {}
+
+class P {
+	static function main() {
+		var c = new SubCounter();
+		Sys.println(UseProps.Bump(c));
+		Sys.println(UseProps.Bump(new Plain()));
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(c)));
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(new Plain())));
+		var x:Counter = c;
+		Sys.println(x.Count);
+	}
+}
+===
+[run]
+ctr=201
+ctr=1
+prop Count get
+
+201
+# Overriding the getter of a get-only property: gencs's property is non-virtual and its C# fails (CS0506), so hxc refuses.
+--- netlib-iface-property-getonly-override @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.List_1;
+
+class Handler implements IHandler {
+	public var Guid(get, never):String;
+	public var Prompt(get, never):String;
+	public function new() {}
+	public function get_Guid():String return "g";
+	public function get_Prompt():String return "p";
+	public function Plugins():List_1<String> return new List_1<String>();
+}
+
+class SubHandler extends Handler {
+	override public function get_Guid():String return "sub";
+}
+
+class P {
+	static function main() {
+		Sys.println(UseProps.Read(new SubHandler()));
+	}
+}
+===
+[compile]
+P.hx:13: lines 13-15 : dotnet: overriding the accessor of a non-virtual .NET interface property is not supported yet
+P.hx:19: characters 29-45 : dotnet: SubHandler (left out: overriding the accessor of a non-virtual .NET interface property) is not supported yet
+# C# reading a Haxe class's implementation of a .NET interface property through the interface (M4Lib's PropReader.Describe):
+# each value comes from the Haxe getter, which counts its calls.
+--- netlib-iface-property-from-csharp @gencs @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.List_1;
+
+class Handler implements IHandler {
+	public var Guid(get, never):String;
+	public var Prompt(get, never):String;
+	public var guidCalls = 0;
+	public var promptCalls = 0;
+	public function new() {}
+	public function get_Guid():String {
+		guidCalls++;
+		return "g" + guidCalls;
+	}
+	public function get_Prompt():String {
+		promptCalls++;
+		return "p" + promptCalls;
+	}
+	public function Plugins():List_1<String> return new List_1<String>();
+}
+
+class P {
+	static function main() {
+		var h = new Handler();
+		Sys.println(PropReader.Describe(h));
+		Sys.println(PropReader.Describe(h));
+		Sys.println(h.Guid);
+		Sys.println(h.guidCalls + " " + h.promptCalls);
+	}
+}
+===
+[run]
+g1|p1
+g2|p2
+g3
+3 2
+# A setter override (an override property with only the setter), a final class's properties (final virtual accessors),
+# set calls' values (the argument) directly, through Dynamic, by reflection and through a closure.
+--- netlib-iface-property-setter-override @gencs @netlib=M4Lib
+import m4.*;
+
+class Counter implements ICounter {
+	public var Count(get, set):Int;
+	public var Label(get, never):String;
+	var n = 0;
+	public function new() {}
+	public function get_Count() return n;
+	public function set_Count(v:Int) { n = v * 3; return n; }
+	public function get_Label() return "ctr";
+}
+
+class Sub extends Counter {
+	override public function set_Count(v:Int) { super.set_Count(v + 1); return 99; }
+}
+
+final class Sealed implements ICounter {
+	public var Count(get, set):Int;
+	public var Label(get, never):String;
+	public function new() {}
+	public function get_Count() return 1;
+	public function set_Count(v:Int) return v;
+	public function get_Label() return "s";
+}
+
+class P {
+	static function main() {
+		var s = new Sub();
+		var x = (s.Count = 4);
+		Sys.println(x + " " + s.Count);
+		Sys.println(UseProps.Bump(s));
+		Sys.println(UseProps.Shape(cs.Lib.getNativeType(s)));
+		var c:Counter = s;
+		Sys.println((c.Count = 2) + " " + c.get_Count());
+		var q = new Sealed();
+		Sys.println(UseProps.Bump(q) + " " + (q.Count = 7));
+		var d:Dynamic = s;
+		d.Count = 1;
+		Sys.println(d.Count + " " + Reflect.callMethod(s, Reflect.field(s, "set_Count"), [5]));
+		var f = s.set_Count;
+		Sys.println(f(6) + " " + s.Count);
+	}
+}
+===
+[run]
+4 15
+ctr=51
+prop Count set
+2 9
+s=1 7
+6 5
+6 21
+# gencs's InterfaceProps makes a var a property only in a class that lists the .NET interface itself (gencs's C# fails with CS0535
+# otherwise): not through a Haxe interface extending it, nor for a var a superclass declares.
+--- netlib-iface-property-not-listed-is-an-error @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.List_1;
+
+interface IMine extends IHandler {}
+
+class Handler implements IMine {
+	public var Guid(get, never):String;
+	public var Prompt(get, never):String;
+	public function new() {}
+	public function get_Guid():String return "g";
+	public function get_Prompt():String return "p";
+	public function Plugins():List_1<String> return new List_1<String>();
+}
+
+class Base {
+	public var Guid(get, never):String;
+	public var Prompt(get, never):String;
+	public function new() {}
+	public function get_Guid():String return "g";
+	public function get_Prompt():String return "p";
+}
+
+class Derived extends Base implements IHandler {
+	public function Plugins():List_1<String> return new List_1<String>();
+}
+
+class P {
+	static function main() {
+		Sys.println(UseProps.Read(new Handler()));
+		Sys.println(UseProps.Read(new Derived()));
+	}
+}
+===
+[compile]
+P.hx:8: characters 2-39 : dotnet: .NET interface properties implemented by a variable whose class does not list their interface itself (m4.IHandler.Prompt) are not supported yet
+P.hx:17: characters 2-39 : dotnet: .NET interface properties implemented by a variable whose class does not list their interface itself (m4.IHandler.Prompt) are not supported yet
+P.hx:29: characters 29-42 : dotnet: Handler (left out: .NET interface properties implemented by a variable whose class does not list their interface itself (m4.IHandler.Prompt)) is not supported yet
+P.hx:30: characters 29-42 : dotnet: Derived (left out: .NET interface properties implemented by a variable whose class does not list their interface itself (m4.IHandler.Prompt)) is not supported yet
+# A physical var (@:isVar) implementing a .NET interface property: gencs writes a field, and its C# fails with CS0535.
+--- netlib-iface-property-physical-is-an-error @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.List_1;
+
+class Handler implements IHandler {
+	@:isVar public var Guid(get, never):String = "g";
+	public var Prompt(get, never):String;
+	public function new() {}
+	public function get_Guid():String return Guid;
+	public function get_Prompt():String return "p";
+	public function Plugins():List_1<String> return new List_1<String>();
+}
+
+class P {
+	static function main() {
+		Sys.println(UseProps.Read(new Handler()));
+	}
+}
+===
+[compile]
+P.hx:5: characters 10-51 : dotnet: physical variables implementing a .NET interface property (m4.IHandler.Guid) are not supported yet
+P.hx:15: characters 29-42 : dotnet: Handler (left out: physical variables implementing a .NET interface property (m4.IHandler.Guid)) is not supported yet
+# A property of another type than the interface's (Int for IEnumerator's object Current): gencs's C# fails with CS0738.
+--- iface-property-type-is-an-error
+import cs.system.collections.IEnumerator;
+
+class Countdown implements IEnumerator {
+	public var Current(get, never):Int;
+	var n:Int;
+	public function new(n) this.n = n + 1;
+	public function get_Current():Int return n;
+	public function MoveNext():Bool return --n > 0;
+	public function Reset():Void {}
+}
+
+class P {
+	static function main() {
+		var e:IEnumerator = new Countdown(3);
+		Sys.println(e.MoveNext());
+	}
+}
+===
+[compile]
+P.hx:4: characters 2-37 : dotnet: variables of another type than the .NET interface property they implement (cs.system.collections.IEnumerator.Current) are not supported yet
+P.hx:14: characters 23-39 : dotnet: Countdown (left out: variables of another type than the .NET interface property they implement (cs.system.collections.IEnumerator.Current)) is not supported yet
+# Compound assignments and increments of a Haxe property (the value of a postfix increment is the old value), and a struct's
+# properties read by C#.
+--- netlib-iface-property-compound-and-struct @gencs @netlib=M4Lib
+import m4.*;
+import cs.system.collections.generic.List_1;
+
+class Counter implements ICounter {
+	public var Count(get, set):Int;
+	public var Label(get, never):String;
+	var n = 0;
+	public function new() {}
+	public function get_Count() return n;
+	public function set_Count(v:Int) { n = v * 2; return n; }
+	public function get_Label() return "ctr";
+}
+
+@:struct class SH implements IHandler {
+	public var Guid(get, never):String;
+	public var Prompt(get, never):String;
+	public function new() {}
+	public function get_Guid():String return "sg";
+	public function get_Prompt():String return "sp";
+	public function Plugins():List_1<String> return new List_1<String>();
+}
+
+class P {
+	static function main() {
+		var c = new Counter();
+		c.Count += 3;
+		Sys.println(c.Count);
+		c.Count++;
+		Sys.println(c.Count);
+		var y = c.Count++;
+		Sys.println(y + " " + c.Count);
+		Sys.println(UseProps.Read(new SH()));
+	}
+}
+===
+[run]
+6
+14
+14 30
+sg/sp/0
