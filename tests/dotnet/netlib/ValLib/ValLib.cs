@@ -129,4 +129,21 @@ namespace ValLib
         public string Go(object o) { return "Go(object)"; }
         protected string Go(string s) { return "Go(string)"; }
     }
+
+    public static class HxArg
+    {
+        public static string Foo(object o) { return "Foo(object)"; }
+        public static string Foo(Exception e) { return "Foo(Exception)"; }
+        public static string Bar(Exception e) { return "Bar(Exception)"; }
+        public static string Bar(ArgumentException e) { return "Bar(ArgumentException)"; }
+        public static string Baz(object o) { return "Baz(object)"; }
+        public static string Baz(IDisposable d) { return "Baz(IDisposable)"; }
+        public static string Only<T>(T t) where T : IComparable { return "Only(" + t + ")"; }
+    }
+
+    public class Gen<T>
+    {
+        public string Foo(T t) { return "Foo(T)"; }
+        public string Foo(int i) { return "Foo(int)"; }
+    }
 }

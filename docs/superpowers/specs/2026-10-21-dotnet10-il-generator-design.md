@@ -531,17 +531,28 @@ and `List` copy, and two threads casting one array at once.
        source, an array to a generic interface or another array, a `params` array's expanded form, a
        generic candidate with a type argument the declared types do not give or with any constraint,
        and a protected member called from a class that does not derive from its type. A call that such
-       a candidate may also take is refused ("more than one .NET overload of T.m may accept (…)"), as
+       a candidate may also take is refused ("more than one .NET overload of T.m may accept (…)", or
+       "hxc cannot tell whether the .NET method T.m accepts (…)" when it is the only candidate), as
        `String.Concat(a:NativeArray<Int>)` is (`netlib-extern-unknown-candidate-refused`; C# binds
        `Concat<int>(IEnumerable<int>)`).
      - **Link by link.** The chain is walked from the most derived type, and an override is a candidate
        only where its method was first declared. In a link, the one exact match binds, else the one
        applicable method when nothing else may apply; a link passes to the next only when nothing in it
        applies or may apply. So a derived `Foo(object)` beats a base's exact `Foo(string)`, as in C#.
-     - **Argument types.** At a call, the arguments' own types (what gencs's C# sees; a Dynamic one counts
-       as declared) must bind the same method as the declared types, or the call is refused ("the .NET
-       overload of T.m depends on the argument types (…); declare it with @:overload"). An `@:overload`
-       extern is exempt: gencs casts its arguments to the declared types.
+     - **Argument types.** At a call, the arguments' own types (what gencs's C# sees) must bind the same
+       method as the declared types, or the call is refused ("the .NET overload of T.m depends on the
+       argument types (…); declare it with @:overload"). An `@:overload` extern is exempt: gencs casts
+       its arguments to the declared types. An argument's own type counts as declared when it is
+       Dynamic or has no signature, or when it is a `haxe.lang.Null<T>` and the declared type is not
+       one (gencs unwraps or wraps it). A Haxe-compiled class is its nearest extern .NET superclass,
+       found along its Haxe superclass chain (`haxe.Exception` is `System.Exception`), else `object`;
+       but when a class on that chain implements an extern .NET interface, directly or through Haxe
+       interfaces extending one, it stays itself, which may convert to .NET types and so makes the
+       call refused (`netlib-extern-haxe-class-implementing-net-interface-refused`). Both bindings
+       take the call's type arguments for the class's and the method's type parameters, so
+       `List<int>.Add(T)` takes an int; where that makes two candidates take exactly the arguments
+       (`Gen<int>`'s `Foo(T)` and `Foo(int)`), the call is refused, where C# prefers the parameter that
+       is not a type parameter.
    - gencs renames a method type parameter that shadows another (`sh<T,T1>`) where hxc emits
      `sh<T,T>`. Only reflection on generic-parameter names can see it.
    - An `@:overload` override that changes only the return type is refused. gencs compiles it as a C#

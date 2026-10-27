@@ -15281,3 +15281,129 @@ class P {
 ===
 [compile]
 P.hx:6: characters 9-23 : dotnet: the optional value-type argument b of an extern method is passed as haxe.lang.Null<int>, which the .NET method does not accept
+# Ruling H: a Haxe class is its nearest extern .NET superclass in the arguments' own types, here System.Exception through
+# haxe.Exception. gencs's C# passes the MyEx as it is, which C# binds to Foo(Exception); the declared Dynamic binds
+# Foo(object), so ruling F refuses. hxc bound Foo(object) before ruling H.
+--- netlib-extern-haxe-exception-argument-refused @netlib
+@:native("ValLib.HxArg") extern class HxArg {
+	static function Foo(o:Dynamic):String;
+}
+class MyEx extends haxe.Exception {}
+class P {
+	static function main() {
+		trace(HxArg.Foo(new MyEx("m")));
+	}
+}
+===
+[compile]
+P.hx:7: characters 9-33 : dotnet: the .NET overload of ValLib.HxArg.Foo depends on the argument types (System.Exception); declare it with @:overload
+# Ruling H with a Haxe subclass of a .NET class: gencs's C# binds Bar(ArgumentException); the declared System.Exception
+# binds Bar(Exception), so ruling F refuses. hxc bound Bar(Exception) before ruling H.
+--- netlib-extern-haxe-subclass-argument-refused @netlib
+@:native("ValLib.HxArg") extern class HxArg {
+	static function Bar(e:cs.system.Exception):String;
+}
+class MyArg extends cs.system.ArgumentException {
+	public function new() super("a");
+}
+class P {
+	static function main() {
+		trace(HxArg.Bar(new MyArg()));
+	}
+}
+===
+[compile]
+P.hx:9: characters 9-31 : dotnet: the .NET overload of ValLib.HxArg.Bar depends on the argument types (System.ArgumentException); declare it with @:overload
+# Ruling H: a Haxe class implementing a .NET interface stays itself, which may convert to IDisposable (ruling E), so
+# the arguments' own types bind nothing for certain and ruling F refuses. C# binds Baz(IDisposable); hxc bound
+# Baz(object) before ruling H.
+--- netlib-extern-haxe-class-implementing-net-interface-refused @netlib
+@:native("ValLib.HxArg") extern class HxArg {
+	static function Baz(o:Any):String;
+}
+class MyDisp implements cs.system.IDisposable {
+	public function new() {}
+	public function Dispose():Void {}
+}
+class P {
+	static function main() {
+		trace(HxArg.Baz(new MyDisp()));
+	}
+}
+===
+[compile]
+P.hx:10: characters 9-32 : dotnet: the .NET overload of ValLib.HxArg.Baz depends on the argument types (MyDisp); declare it with @:overload
+# Ruling H: where the declared type is the Haxe class's nearest .NET superclass, both bindings agree and the call
+# binds as C# does.
+--- netlib-extern-haxe-class-arguments @gencs @netlib
+@:native("ValLib.HxArg") extern class HxArg {
+	static function Bar(e:cs.system.ArgumentException):String;
+}
+class MyArg extends cs.system.ArgumentException {
+	public function new() super("a");
+}
+class P {
+	static function main() {
+		trace(HxArg.Bar(new MyArg()));
+	}
+}
+===
+# Ruling I: a generic class's members bind with the call's type arguments, so Add(T) and Contains(T) of a List<int>
+# take an int.
+--- netlib-extern-generic-class-instantiated @gencs
+@:native("System.Collections.Generic.List`1") extern class L<T> {
+	function new():Void;
+	function Add(x:T):Void;
+	function Contains(x:T):Bool;
+}
+class P {
+	static function main() {
+		var l = new L<Int>();
+		l.Add(1);
+		trace(l.Contains(1));
+		trace(l.Contains(2));
+	}
+}
+===
+# Ruling I: a generic extern method binds with the call's type arguments, so IndexOf<T>(T[], T) takes an int[] and an
+# int.
+--- netlib-extern-generic-method-instantiated @gencs
+@:native("System.Array") extern class Arr {
+	static function IndexOf<T>(a:cs.NativeArray<T>, v:T):Int;
+}
+class P {
+	static function main() {
+		var a = new cs.NativeArray<Int>(2);
+		a[1] = 7;
+		trace(Arr.IndexOf(a, 7));
+	}
+}
+===
+# Ruling I: with the call's type arguments, Gen<int>'s Foo(T) and Foo(int) both take exactly an int. C# picks Foo(int),
+# whose parameter is not a type parameter; hxc does not rank them and refuses.
+--- netlib-extern-generic-parameter-and-int-refused @netlib
+@:native("ValLib.Gen`1") extern class Gen<T> {
+	function new():Void;
+	function Foo(x:T):String;
+}
+class P {
+	static function main() {
+		trace(new Gen<Int>().Foo(1));
+	}
+}
+===
+[compile]
+P.hx:7: characters 9-30 : dotnet: more than one .NET overload of ValLib.Gen.Foo accepts (int)
+# The only candidate is a constrained generic method, which may apply (ruling E): the call is refused.
+--- netlib-extern-single-unknown-candidate-refused @netlib
+@:native("ValLib.HxArg") extern class HxArg {
+	static function Only(x:Int):String;
+}
+class P {
+	static function main() {
+		trace(HxArg.Only(1));
+	}
+}
+===
+[compile]
+P.hx:6: characters 9-22 : dotnet: hxc cannot tell whether the .NET method ValLib.HxArg.Only accepts (int)

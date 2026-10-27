@@ -950,21 +950,23 @@ class TexprCalls {
 	function externCall(ret:Ret, obj:TExpr, fa:TFieldAccess, c:TClass, cf:TClassField, args:Array<TExpr>, calleeType:T):Void {
 		var isStatic = fa.match(FStatic(_, _));
 		var isSuper = !isStatic && strip(obj).expr.match(TConst(TSuper));
-		var m = g.externs.method(c, cf, false, externCallSite(args));
-		// A generic method's type arguments: those the declared types give when the extern method has no
-		// type parameters (ExternMembers.method), else inferred from the call as for a Haxe method.
-		var margs:Array<IlSigNorm> = m.typeArgs != null ? m.typeArgs : [];
-		// Matching skips methods of another generic arity, so this fires only after a matching bug.
-		if (m.typeArgs == null && cf.params.length != m.genericCount || m.typeArgs != null && m.typeArgs.length != m.genericCount)
-			throw Unsupported.bug("a .NET method with another generic arity (internal: overload matching)");
-		if (m.typeArgs == null && m.genericCount > 0) {
+		var inst = instantiation(c, fa);
+		// The extern method's type arguments, inferred from the call as for a Haxe method.
+		var own:Array<IlSigNorm> = [];
+		if (cf.params.length > 0) {
 			var declared = switch (fa) {
 				case FInstance(_, params, _): TypeFunctions.applyParams(c.params, params, cf.type);
 				case _: cf.type;
 			}
-			margs = [for (t in DotnetTypes.inferParams(cf.params, declared, calleeType, false)) g.types.nativeArg(t)];
+			own = [for (t in DotnetTypes.inferParams(cf.params, declared, calleeType, false)) g.types.nativeArg(t)];
 		}
-		var inst = instantiation(c, fa);
+		var m = g.externs.method(c, cf, false, externCallSite(args, inst, own));
+		// A generic method's type arguments: those the declared types give when the extern method has no
+		// type parameters (ExternMembers.method), else the extern method's own.
+		var margs:Array<IlSigNorm> = m.typeArgs != null ? m.typeArgs : own;
+		// Matching skips methods of another generic arity, so this fires only after a matching bug.
+		if (m.typeArgs == null && cf.params.length != m.genericCount || m.typeArgs != null && m.typeArgs.length != m.genericCount)
+			throw Unsupported.bug("a .NET method with another generic arity (internal: overload matching)");
 		var parent = ExternMembers.subst(m.parent, inst);
 		var parentArgs = switch (parent) {
 			case LClass(_, l) | LValueType(_, l): l;
@@ -994,8 +996,9 @@ class TexprCalls {
 		var r = OverloadResolution.maybeResolveConstructorOverload(c, params, args);
 		if (r == null) throw "internal error: no constructor of " + Globals.sTypePath(c.path) + " fits";
 		if (r.c != c) throw new Unsupported("inherited .NET constructors", true);
-		var m = g.externs.method(c, r.cf, false, externCallSite(args));
-		var parent = ExternMembers.subst(m.parent, g.types.classArgs(c, params));
+		var classArgs = g.types.classArgs(c, params);
+		var m = g.externs.method(c, r.cf, false, externCallSite(args, classArgs, []));
+		var parent = ExternMembers.subst(m.parent, classArgs);
 		var parentArgs = switch (parent) {
 			case LClass(_, l) | LValueType(_, l): l;
 			case _: [];
@@ -1009,12 +1012,15 @@ class TexprCalls {
 	}
 
 	// A call site of an extern method with the arguments `args`, as ExternMembers.method takes it: each
-	// argument's own type, as gencs's C# sees it, unless it is Dynamic.
-	function externCallSite(args:Array<TExpr>):ExternCall {
+	// argument's own type, as gencs's C# sees it, unless it is Dynamic, and the type arguments of the
+	// extern class and method.
+	function externCallSite(args:Array<TExpr>, classArgs:Array<IlSigNorm>, methodArgs:Array<IlSigNorm>):ExternCall {
 		return {
 			args: args,
 			argTypes: [for (a in args) TexprDynamic.isDynamic(a.type) ? null : try tl.sig(a.type) catch (_:Unsupported) null],
-			caller: tl.cls
+			caller: tl.cls,
+			classArgs: classArgs,
+			methodArgs: methodArgs
 		};
 	}
 
