@@ -668,6 +668,25 @@ and `List` copy, and two threads casting one array at once.
        the argument as a set call's value. Not supported yet: a static one, which gencs makes a static
        property (`property-var-static-accessors-is-unsupported`), and one in a generic class, where
        gencs's C# for a hxgen class fails (CS0686).
+   - A Haxe function converted to a .NET delegate, the `cast __delegate__(f)` that a delegate abstract's
+     `new` and `@:from` leave, takes gencs's three shapes (ruling 9; `netlib-delegates`,
+     `netlib-delegates-methods-and-combine`, `thread-create`):
+     - A local function's closure class gets a public non-virtual `Delegate` method with the function's
+       own argument and return types, holding its body; its invoke method calls it. The delegate is made
+       from that method on the class's instance, the cached `__hx_current` when nothing is captured.
+     - A static method, or an instance method's closure, is a method group: `ldnull` or the receiver,
+       `ldftn` (`dup; ldvirtftn` for a virtual method), then the delegate's `.ctor(object, native int)`.
+       A handler made again from the same method is equal to the first, so it removes it.
+     - Any other function value (a local, a bound call, a closure the inliner put in a local) gets a
+       conversion wrapper: a closure class capturing the value, whose `Delegate` calls it.
+     - The delegate abstract's `+` and `-` are `Delegate.Combine` and `Delegate.Remove`, cast back.
+     - Error, as gencs's C# does not compile: a method whose parameter and return types do not convert
+       to those of the delegate's `Invoke` as C#'s method group conversion allows (the same type, or a
+       reference conversion from the `Invoke`'s parameter and to its return). That includes a delegate
+       going on as another instantiation of its type, as Haxe unifies `Func_2<Int, Bool>` with
+       `Func_2<Dynamic, Bool>` (CS0030, `delegate-type-mismatch`).
+     - Not supported yet as a method group: a .NET method, an overloaded method, a struct's method, and a
+       method reached through a `Dynamic` or companion-interface receiver.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
@@ -711,6 +730,8 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
 - A Haxe type parameter passed as such an argument infers `object`: `H<Int>.f(x:U)` calling `T1(x)` is
   `T1<object>` in hxc, where gencs's generic C# class gives `T1<int>`. This follows from milestone 3c's
   type-argument erasure, is carried, and is observable only through `typeof(T)`.
+- A delegate made from a static method is a new delegate each time (ruling 9). Roslyn caches it in a
+  `<>O` class, so only reference equality between two such delegates can tell.
 
 ## Left to the builder
 

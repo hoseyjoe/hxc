@@ -16995,3 +16995,133 @@ class P {
 P.hx:2: characters 13-47 : dotnet: static @:property variables with get or set accessors are not supported yet
 P.hx:9: characters 3-10 : dotnet: S (left out: static @:property variables with get or set accessors) is not supported yet
 P.hx:10: characters 15-18 : dotnet: S (left out: static @:property variables with get or set accessors) is not supported yet
+# Haxe functions as .NET delegates (M4Lib section 3), gencs's three shapes: lambdas without and with
+# captures (a closure class's Delegate method), a static method (a method group), an instance closure on
+# a receiver the inliner binds to a local and a local Function (conversion wrappers); List.Find with a
+# lambda, a generic method taking Func<T,R>, a Predicate var, `new Note(...)`, add_/remove_ of an event,
+# .Invoke, and a capturing lambda M4Lib keeps and calls twice from another thread after its frame returns.
+--- netlib-delegates @gencs @netlib=M4Lib + -D net-ver=40
+import m4.*;
+import cs.system.Func_2;
+import cs.system.Predicate_1;
+
+class P {
+	var tag:String;
+	function new(t) tag = t;
+	function isMine(s:String):Bool return s == tag;
+	static function isLong(s:String):Bool return s.length > 1;
+	static function keep(prefix:String) {
+		var count = 0;
+		Later.Keep((s) -> {
+			count++;
+			return prefix + s + count;
+		});
+	}
+	static function main() {
+		var c = new Client();
+		Sys.println(c.Run());
+		c.Validate = (sender, cert, errors) -> errors == 0;
+		Sys.println(c.Run());
+		var limit = 1;
+		c.Validate = (sender, cert, errors) -> errors < limit;
+		Sys.println(c.Run());
+		c.Filter = (s:String) -> s.length > 1;
+		Sys.println(c.RunFilter());
+		c.Filter = isLong;
+		Sys.println(c.RunFilter());
+		c.Filter = new P("a").isMine;
+		Sys.println(c.RunFilter());
+		var f = (s:String) -> s == "bb";
+		c.Filter = f;
+		Sys.println(c.RunFilter());
+		Sys.println(c.Filter.Invoke("bb"));
+		var names = Lists.Names();
+		Sys.println(names.Find((s) -> s.charAt(0) == "b"));
+		var want = "cy";
+		Sys.println(names.Find((s) -> s == want));
+		Sys.println(Gen.Apply((x:Int) -> x + 1, 3));
+		var p:Predicate_1<String> = (s) -> s.length == 3;
+		Sys.println(names.FindAll(p).Count);
+		c.Fire("before");
+		var n = new Note((s) -> Sys.println("noted " + s));
+		c.add_Noted(n);
+		c.Fire("x");
+		c.remove_Noted(n);
+		c.Fire("y");
+		var fn:Func_2<String, Bool> = c.Filter;
+		Sys.println(fn.Invoke("q"));
+		keep("p");
+		Sys.println(Later.CallTwice());
+	}
+}
+===
+# Method groups on `this` and on a local, a lambda capturing `this`, `d1 + d2` (Delegate.Combine),
+# `new Thread(() -> ...)`, and removing an event handler with a delegate made again from the same
+# method: .NET delegate equality compares target and method, so the method group must be a delegate over
+# onNote itself and the remove leaves no handler.
+--- netlib-delegates-methods-and-combine @gencs @netlib=M4Lib + -D net-ver=40
+import m4.*;
+class P {
+	var tag:String;
+	function new(t) tag = t;
+	function isMine(s:String):Bool return s == tag;
+	function onNote(s:String):Void Sys.println(tag + " noted " + s);
+	function run(c:Client) {
+		c.Filter = isMine;
+		Sys.println(c.RunFilter());
+		c.Filter = (s) -> s == tag;
+		Sys.println(c.RunFilter());
+		c.add_Noted(this.onNote);
+		c.remove_Noted(this.onNote);
+		c.Fire("x");
+	}
+	static function main() {
+		var c = new Client();
+		var me = new P("a");
+		c.Filter = me.isMine;
+		Sys.println(c.RunFilter());
+		me.run(c);
+		var d1 = new Note((s) -> Sys.println("one " + s));
+		var d2 = new Note((s) -> Sys.println("two " + s));
+		var both = d1 + d2;
+		both.Invoke("z");
+		var t = new cs.system.threading.Thread(() -> Sys.println("in thread"));
+		t.Start();
+		t.Join();
+	}
+}
+===
+# Haxe unifies Int->Bool with Func_2<Dynamic,Bool>; gencs writes `(Func<object,bool>)((Func<int,bool>)P.isInt)`,
+# which C# refuses (CS0030), so hxc refuses the conversion.
+--- delegate-type-mismatch + -D net-ver=40
+import cs.system.Func_2;
+
+class P {
+	static function isInt(x:Int):Bool return x > 0;
+	static function main() {
+		var f:Func_2<Dynamic, Bool> = isInt;
+		Sys.println(f.Invoke(1));
+	}
+}
+===
+[compile]
+P.hx:6: characters 33-38 : dotnet: a function of type (x : Int) -> Bool converted to the .NET delegate System.Func<object, bool>, whose Invoke takes (object) -> bool
+# hxcs's Thread.create does `new NativeThread(job)`, a local Function into ThreadStart (a conversion
+# wrapper); the thread sees the captured locals.
+--- thread-create @gencs
+import sys.thread.Thread;
+import sys.thread.Lock;
+
+class P {
+	static function main() {
+		var lock = new Lock();
+		var got = 0;
+		Thread.create(() -> {
+			got = 42;
+			lock.release();
+		});
+		lock.wait();
+		Sys.println(got);
+	}
+}
+===

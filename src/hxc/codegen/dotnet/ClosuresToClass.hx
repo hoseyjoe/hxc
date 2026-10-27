@@ -24,8 +24,9 @@ private typedef Captures = {vars:Array<TVar>, params:Array<TClass>};
 // Float, not an Int64 or a Null<T>) or `_o`, or of `__hx_invokeDynamic` for six arguments or more,
 // which first unpacks the arguments; the constructor calls `super(arity, type)`, type 1 for `_f`. The
 // function is replaced by `new <Class>(captured)`, or without captures and type parameters by the
-// class's cached `__hx_current`. The mapped expressions go to DotnetCtx.closureExprs and closureInits:
-// the typed AST is shared with the compilation server and never changed.
+// class's cached `__hx_current`. A function converted to a .NET delegate takes gencs's delegate branch
+// instead (`delegate`). The mapped expressions go to DotnetCtx.closureExprs and closureInits: the typed
+// AST is shared with the compilation server and never changed.
 
 @:access(hxc.codegen.dotnet.TexprDynamic)
 class ClosuresToClass {
@@ -45,6 +46,9 @@ class ClosuresToClass {
 	final pending = new Map<Int, {depth:Int, uses:Array<{e:TExpr, declared:T, nested:Bool}>}>();
 	// How many local functions enclose the code being mapped.
 	var depth = 0;
+	// The locals a conversion wrapper calls (`delegate`), which its class captures as gencs's
+	// mk_conversion_fun marks them captured.
+	final converted = new Map<Int, Bool>();
 
 	// The class whose code is being mapped, the field name its closures take, the closure classes it
 	// added (in the order they were made), and whether its type parameters are a split constructor's own
@@ -172,7 +176,88 @@ class ClosuresToClass {
 	}
 
 	static function hasFunction(e:TExpr):Bool {
-		return e.expr.match(TFunction(_)) || TexprTools.checkExpr(hasFunction, e);
+		return e.expr.match(TFunction(_)) || delegateCall(e) != null || TexprTools.checkExpr(hasFunction, e);
+	}
+
+	// The `__delegate__(f)` call of a conversion to a .NET delegate, `cast __delegate__(f)` as the delegate
+	// abstract's inlined `new` and `@:from` leave it (NetConverter.convertDelegate), or null.
+	public static function delegateCall(e:TExpr):Null<TExpr> {
+		var call = switch (e.expr) {
+			case TCast(inner, _): strip(inner);
+			case _: return null;
+		}
+		return call.expr.match(TCall({expr: TIdent("__delegate__")}, [_])) ? call : null;
+	}
+
+	static function strip(e:TExpr):TExpr {
+		return switch (e.expr) {
+			case TParenthesis(e1) | TMeta(_, e1): strip(e1);
+			case _: e;
+		}
+	}
+
+	// gencs's cleanup_delegate: the function a conversion converts, under parentheses, metadata and casts.
+	static function cleanupDelegate(e:TExpr):TExpr {
+		return switch (e.expr) {
+			case TParenthesis(e1) | TMeta(_, e1) | TCast(e1, _): cleanupDelegate(e1);
+			case _: e;
+		}
+	}
+
+	// A conversion `e` of the function `call`'s argument to a .NET delegate, as gencs's delegate branch maps
+	// it into `cast __delegate__(f)` again, with `f`:
+	// - for a static method or an instance method's closure, the field access itself: a method group,
+	//   which TexprCalls.delegate makes the delegate from;
+	// - for a local function, the `Delegate` method of its class (`closure`) on the class's instance;
+	// - for any other function value, a conversion wrapper's: a local function calling it, with the
+	//   arguments of its type, which captures the value (in a variable first, unless it is a local).
+	function delegate(e:TExpr, call:TExpr):TExpr {
+		var callee = switch (call.expr) {
+			case TCall(callee, [_]): callee;
+			case _: throw "internal error: not a __delegate__ call";
+		}
+		function replace(f:TExpr):TExpr {
+			return TypeFunctions.mk(TCast(TypeFunctions.mk(TCall(callee, [f]), e.type, call.pos), null), e.type, e.pos);
+		}
+		var clean = cleanupDelegate(switch (call.expr) {
+			case TCall(_, [del]): del;
+			case _: throw "internal error: not a __delegate__ call";
+		});
+		switch (clean.expr) {
+			case TField(ef, fa = FClosure(_, _) | FStatic(_, _)):
+				return replace(TypeFunctions.mk(TField(map(ef), fa), clean.type, clean.pos));
+			case TFunction(tf):
+				return replace(closure(clean, mapBody(tf), null, true).expr);
+			case _:
+		}
+		var sig = switch (TypeFunctions.follow(clean.type)) {
+			case TFun(s): s;
+			case _: return refused("this conversion of a value that is not a function to a .NET delegate", e);
+		}
+		var basic = g.ctx.basic;
+		var pos = clean.pos;
+		var block = [];
+		var target = switch (clean.expr) {
+			case TLocal(v):
+				converted.set(v.id, true);
+				clean;
+			case _:
+				var tmp = TypeFunctions.allocVar(VGenerated, "delegate_conv", clean.type, pos);
+				converted.set(tmp.id, true);
+				block.push(TypeFunctions.mk(TVarExpr(tmp, map(clean)), basic.tvoid, pos));
+				local(tmp, pos);
+		}
+		var args = [
+			for (i in 0...sig.args.length)
+				TypeFunctions.allocVar(VGenerated, sig.args[i].name == "" ? "arg" + i : sig.args[i].name, sig.args[i].t, pos)
+		];
+		var body = TypeFunctions.mk(TCall(target, [for (a in args) local(a, pos)]), sig.ret, pos);
+		if (!isVoid(sig.ret)) body = TypeFunctions.mk(TReturn(body), TypeFunctions.tDynamic, pos);
+		var tf = new TFunc([for (a in args) {v: a}], sig.ret, TypeFunctions.mk(TBlock([body]), body.type, pos));
+		var made = replace(closure(TypeFunctions.mk(TFunction(tf), clean.type, pos), mapBody(tf), null, true).expr);
+		if (block.length == 0) return made;
+		block.push(made);
+		return TypeFunctions.mk(TBlock(block), made.type, e.pos);
 	}
 
 	// Inner functions first, as gencs maps a function's body before the function. A local generic
@@ -180,8 +265,10 @@ class ClosuresToClass {
 	// tparam_anon_acc have it.
 	function map(e:TExpr):TExpr {
 		return switch (e.expr) {
+			case _ if (delegateCall(e) != null):
+				delegate(e, delegateCall(e));
 			case TFunction(tf):
-				closure(e, mapBody(tf), null).expr;
+				closure(e, mapBody(tf), null, false).expr;
 			case TLocal(v) if (pending.exists(v.id)):
 				pendingUse(v, v.type, e);
 			case TArray({expr: TLocal(v)}, _) if (pending.exists(v.id)):
@@ -231,7 +318,7 @@ class ClosuresToClass {
 		pending.set(v.id, {depth: depth + 1, uses: uses});
 		var body = mapBody(tf);
 		pending.remove(v.id);
-		var r = closure(f, body, v, (c, vars) -> for (u in uses) {
+		var r = closure(f, body, v, false, (c, vars) -> for (u in uses) {
 			// Its own body has its captured locals, which become its fields; a local function inside it
 			// would have to capture them as well.
 			u.e.expr = if (u.nested && vars.length > 0) {
@@ -292,8 +379,12 @@ class ClosuresToClass {
 	}
 
 	// The class of the function `fexpr`, whose body `tf` is mapped already, and what replaces it.
-	// `known` sees the class and its captured locals before its body becomes the invoke method's.
-	function closure(fexpr:TExpr, tf:TFunc, tvar:Null<TVar>, ?known:(c:TClass, vars:Array<TVar>) -> Void):{c:TClass, vars:Array<TVar>, expr:TExpr} {
+	// `known` sees the class and its captured locals before its body becomes the invoke method's. For a
+	// function converted to a .NET delegate (`isDelegate`), gencs's delegate branch: the body goes to a
+	// public non-virtual `Delegate` method with the function's own argument and return types, the invoke
+	// method calls it, and the function is replaced by that method's closure on the class's instance.
+	function closure(fexpr:TExpr, tf:TFunc, tvar:Null<TVar>, isDelegate:Bool,
+			?known:(c:TClass, vars:Array<TVar>) -> Void):{c:TClass, vars:Array<TVar>, expr:TExpr} {
 		var basic = g.ctx.basic;
 		var pos = tf.expr.pos;
 		var caps = captures(fexpr, tf);
@@ -327,9 +418,27 @@ class ClosuresToClass {
 					TexprTools.mapExpr(toField, e);
 			}
 		}
-		var invoke = invokeMethod(fexpr, new TFunc(tf.args, tf.type, toField(tf.expr)), pos);
+		var delegateCf = null;
+		var invoke = if (isDelegate) {
+			var dtype = TFun({args: [for (a in tf.args) {name: a.v.name, opt: a.c != null, t: a.v.type}], ret: tf.type});
+			delegateCf = newMethod("Delegate", dtype, pos);
+			TypeFunctions.addClassFieldFlag(delegateCf, CfFinal);
+			delegateCf.expr = TypeFunctions.mk(TFunction(new TFunc(tf.args, tf.type, toField(tf.expr))), dtype, fexpr.pos);
+			// this.Delegate(args), returned unless it is Void.
+			var ethis = TypeFunctions.mk(TConst(TThis), thisType, pos);
+			var callee = TypeFunctions.mk(TField(ethis, FInstance(c, thisParams, delegateCf)), dtype, pos);
+			var body = TypeFunctions.mk(TCall(callee, [for (a in tf.args) local(a.v, pos)]), tf.type, pos);
+			if (!isVoid(tf.type)) body = TypeFunctions.mk(TReturn(body), TypeFunctions.tDynamic, pos);
+			invokeMethod(fexpr, new TFunc(tf.args, tf.type, body), pos);
+		} else {
+			invokeMethod(fexpr, new TFunc(tf.args, tf.type, toField(tf.expr)), pos);
+		}
 		c.fields.set(invoke.cf.name, invoke.cf);
 		c.orderedFields.push(invoke.cf);
+		if (delegateCf != null) {
+			c.fields.set(delegateCf.name, delegateCf);
+			c.orderedFields.push(delegateCf);
+		}
 
 		// new(captured...) { super(arity, type); this.v = v; ... }
 		var ctorArgs = [for (v in caps.vars) TypeFunctions.allocVar(VGenerated, v.name, v.type, pos)];
@@ -363,6 +472,12 @@ class ClosuresToClass {
 			TypeFunctions.mk(TIf(isSet, current(), make), fexpr.type, fexpr.pos);
 		} else {
 			TypeFunctions.mk(TNew(c, [for (p in caps.params) TInst(p, [])], [for (v in caps.vars) local(v, fexpr.pos)]), fexpr.type, fexpr.pos);
+		}
+		if (delegateCf != null) {
+			// The instance's Delegate method, at the function's position, where a conversion is refused.
+			var params = [for (p in caps.params) TInst(p, [])];
+			var instance = TypeFunctions.mk(expr.expr, TInst(c, params), expr.pos);
+			expr = TypeFunctions.mk(TField(instance, FClosure({c: c, params: params}, delegateCf)), delegateCf.type, fexpr.pos);
 		}
 		return {c: c, vars: caps.vars, expr: expr};
 	}
@@ -424,7 +539,7 @@ class ClosuresToClass {
 						walk(ct.expr);
 					}
 				case TLocal(v) if (isGeneric(v)):
-				case TLocal(v) if (TypeFunctions.hasVarFlag(v, VCaptured)):
+				case TLocal(v) if (TypeFunctions.hasVarFlag(v, VCaptured) || converted.exists(v.id)):
 					if (!declared.exists(v.id) && !seen.exists(v.id)) {
 						check(v.type);
 						seen.set(v.id, true);

@@ -683,6 +683,11 @@ class TexprToIl {
 				texpr(ret, e1);
 			case TCast(_, _):
 				var c = collapseCast(e);
+				var delegateCall = ClosuresToClass.delegateCall(c);
+				if (delegateCall != null) {
+					calls.delegate(ret, c, delegateCall);
+					return;
+				}
 				switch (c.expr) {
 					case TCast(e1, md): castExpr(ret, c, e1, md != null);
 					case _: throw "internal error: not a cast";

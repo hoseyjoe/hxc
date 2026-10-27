@@ -13,6 +13,7 @@ import hxc.codegen.dotnet.IlCode;
 import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.IlMeta;
 import hxc.codegen.dotnet.TclassToIl.ClassPlan;
+import hxc.codegen.dotnet.TclassToIl.MethodAttrs;
 import hxc.codegen.dotnet.TclassToIl.MethodKind;
 import hxc.codegen.dotnet.TclassToIl.MethodPlan;
 import hxc.codegen.dotnet.TexprToIl.Place;
@@ -512,6 +513,17 @@ class TexprCalls {
 				pushArgs(args, m.args, argTypes(callee.type));
 				code.opToken(IlOps.CALL, m.token, args.length, m.ret.match(LVoid) ? 0 : 1);
 				tl.coerce(m.ret, ret);
+			case TField(_, FStatic(c, cf)) if (isExtern(c) && (cf.name == "op_Addition" || cf.name == "op_Subtraction") && args.length == 2
+				&& g.externs.isDelegate(c)):
+				// The delegate abstract's `+` and `-` (NetConverter.convertIlClass declares these, which no delegate
+				// type has): C#'s `d1 + d2` and `d1 - d2`, Delegate.Combine and Delegate.Remove cast back.
+				var d = tl.sig(e.type);
+				pushArgs(args, [d, d]);
+				var name = cf.name == "op_Addition" ? "Combine" : "Remove";
+				code.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(systemDelegate), name, g.sigs.method(false, systemDelegate, [systemDelegate, systemDelegate], 0)),
+					2, 1);
+				code.opToken(IlOps.CASTCLASS, g.typeTokenOf(d), 1, 1);
+				tl.coerce(d, ret);
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c)):
 				externCall(ret, obj, fa, c, cf, args, callee.type);
 			case TConst(TSuper):
@@ -748,6 +760,89 @@ class TexprCalls {
 			case TFunction(_): false;
 			case _: TexprTools.checkExpr(needsEmptyStack, e);
 		}
+	}
+
+	static final systemDelegate:IlSigNorm = LClass({ns: ["System"], nested: [], name: "Delegate"}, []);
+
+	// `cast __delegate__(f)`, the conversion `e` of a Haxe function to the .NET delegate type D, as
+	// ClosuresToClass.delegate leaves it: `f` is a method group, a static method or an instance method on
+	// its receiver (a closure class's Delegate method among them), which gencs's C# writes as `(D)(o.m)`.
+	// Roslyn's delegate creation: the receiver (null for a static method), the method's address
+	// (ldvirtftn on a dup of the receiver for a virtual method), then D's constructor. No delegate is
+	// cached, where Roslyn caches one made from a static method (ruling 9). As C#'s method group
+	// conversion, the method takes the types of D's Invoke, a parameter of a reference type also one
+	// the Invoke's type converts to, and returns its return type or a reference type converting to it;
+	// gencs's C# does not compile otherwise (CS0030, CS0123), and hxc refuses it.
+	function delegate(ret:Ret, e:TExpr, call:TExpr):Void {
+		var del = switch (call.expr) {
+			case TCall(_, [del]): strip(del);
+			case _: throw "internal error: not a __delegate__ call";
+		}
+		var d = tl.sig(e.type);
+		var invoke = g.externs.delegateInvoke(d);
+		if (invoke == null) throw Unsupported.bug("a conversion to " + ExternMembers.sigS(d) + ", which is no .NET delegate type");
+		var targets = [{d: d, invoke: invoke}];
+		// The delegate going on as another delegate type that it does not convert to, as Haxe unifies
+		// Func_2<Int, Bool> with Func_2<Dynamic, Bool>: gencs's C# casts it there, which C# refuses (CS0030)
+		// unless the method converts to that type too, and which throws otherwise.
+		switch (ret) {
+			case RValue(t) if (t != null && !IlPaths.sigEq(t, d) && !g.externs.implicitlyConverts(d, t)):
+				var other = g.externs.delegateInvoke(t);
+				if (other != null) targets.unshift({d: t, invoke: other});
+			case _:
+		}
+		function check(args:Array<IlSigNorm>, r:IlSigNorm):Void {
+			for (target in targets) {
+				var invoke = target.invoke;
+				var ok = args.length == invoke.args.length && delegateConverts(r, invoke.ret);
+				for (i in 0...args.length) if (ok && !delegateConverts(invoke.args[i], args[i])) ok = false;
+				if (ok) continue;
+				var u = Unsupported.error("a function of type " + hxc.core.TPrinting.sTypeStr(del.type) + " converted to the .NET delegate "
+					+ ExternMembers.sigS(target.d) + ", whose Invoke takes (" + [for (a in invoke.args) ExternMembers.sigS(a)].join(", ") + ") -> "
+					+ ExternMembers.sigS(invoke.ret));
+				u.pos = del.pos;
+				throw u;
+			}
+		}
+		switch (del.expr) {
+			case TField(_, FStatic(c, cf)) if (!isExtern(c) && isMethod(cf) && !isOverloaded(cf)):
+				g.types.checkKept(TClassDecl(c));
+				var plan = g.ownerOf.get(cf);
+				if (plan == null || !g.methodTokens.exists(cf)) throw "internal error: no method " + Globals.sTypePath(c.path) + "." + cf.name;
+				var m = methodRef(plan, staticOwner(plan), [], cf, cf.type, del.type);
+				check(m.args, m.ret);
+				code.op(IlOps.LDNULL, 0, 1);
+				code.opToken(IlOps.LDFTN, m.token, 0, 1);
+			case TField(obj, fa = FClosure({c: c, params: params}, cf)) if (!isExtern(c) && !isStringClass(c) && isMethod(cf) && !isOverloaded(cf)
+				&& !tl.dyn.isDynamicReceiver(fa, obj) && (TypeFunctions.hasClassFlag(c, CInterface) || !tl.dyn.companionReceiver(obj))):
+				var m = haxeMethod(c, params, cf, [], del.type, true);
+				if (DotnetTypes.isValueType(m.owner)) throw new Unsupported("methods of structs as .NET delegates", true);
+				check(m.args, m.ret);
+				receiver(obj, m.owner);
+				var plan = g.methodPlans.get(cf);
+				if (plan != null && (plan.flags & MethodAttrs.VIRTUAL) != 0) {
+					code.op(IlOps.DUP, 1, 2);
+					code.opToken(IlOps.LDVIRTFTN, m.token, 1, 1);
+				} else {
+					code.opToken(IlOps.LDFTN, m.token, 0, 1);
+				}
+			case TField(_, FStatic(c, _) | FClosure({c: c}, _)) if (isExtern(c)):
+				throw new Unsupported(".NET methods as .NET delegates", true);
+			case _:
+				throw new Unsupported("this kind of method as a .NET delegate", false);
+		}
+		code.opToken(IlOps.NEWOBJ, g.mb.memberRef(g.typeTokenOf(d), ".ctor", g.sigs.method(true, LVoid, [LObject, LIntPtr], 0)), 2, 1);
+		tl.coerce(d, ret);
+	}
+
+	static function isOverloaded(cf:TClassField):Bool {
+		return cf.overloads.length > 0 || TypeFunctions.hasClassFieldFlag(cf, CfOverload);
+	}
+
+	// Whether a delegate's `from` passes as `to` in C#'s method group conversion: the same type, or
+	// reference types with an implicit reference conversion between them.
+	function delegateConverts(from:IlSigNorm, to:IlSigNorm):Bool {
+		return IlPaths.sigEq(from, to) || isReference(from) && isReference(to) && g.externs.implicitlyConverts(from, to);
 	}
 
 	// gencs's magic identifiers in untyped code, which hxcs's std uses: `__as__(e)` is C#'s `e as T`

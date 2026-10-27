@@ -133,6 +133,18 @@ namespace M4 {
 		public string RunFilter() => Filter == null ? "no filter" : "filter=" + Filter("a") + "," + Filter("bb");
 		public void Fire(string s) { if (Noted != null) Noted(s); else Console.WriteLine("nobody noted " + s); Changed?.Invoke(this, EventArgs.Empty); }
 	}
+	// Keeps a callback and calls it later, twice, from another thread.
+	public static class Later {
+		static Func<string, string> kept;
+		public static void Keep(Func<string, string> f) { kept = f; }
+		public static string CallTwice() {
+			string r = null;
+			var t = new System.Threading.Thread(() => r = kept("a") + "," + kept("b"));
+			t.Start();
+			t.Join();
+			return r;
+		}
+	}
 	public static class Lists {
 		public static List<string> Names() => new List<string> { "ann", "bob", "cy" };
 		public static int Sum(int[] a) { int s = 0; foreach (var x in a) s += x; return s; }

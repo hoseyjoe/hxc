@@ -130,6 +130,37 @@ class ExternMembers {
 		return isSystem(cls.csuper, "ValueType") && !DotnetTypes.isSystemEnum(cls.cpath) || isSystem(cls.csuper, "Enum");
 	}
 
+	// Whether the .NET class `c` stands for is a delegate type, one extending System.MulticastDelegate.
+	public function isDelegate(c:TClass):Bool {
+		var path = try types.externPath(c) catch (_:Unsupported) null;
+		return path != null && NetRefs.of(ctx).definer(path) != null && isSystem(rawClass(path).csuper, "MulticastDelegate");
+	}
+
+	// The parameter and return types of the Invoke of the .NET delegate type `d`, with `d`'s type arguments
+	// applied; null when `d` is not a delegate type with the `.ctor(object, native int)` that a delegate is
+	// made with.
+	public function delegateInvoke(d:IlSigNorm):Null<{args:Array<IlSigNorm>, ret:IlSigNorm}> {
+		var path, args;
+		switch (d) {
+			case LClass(p, l):
+				path = p;
+				args = l;
+			case _:
+				return null;
+		}
+		if (NetRefs.of(ctx).definer(path) == null) return null;
+		var cls = rawClass(path);
+		if (!isSystem(cls.csuper, "MulticastDelegate")) return null;
+		var ctor = false, invoke = null;
+		for (m in cls.cmethods) {
+			var isStatic = m.mflags.contract.indexOf(CMStatic) >= 0;
+			if (m.mname == ".ctor" && !isStatic && IlPaths.sigsEq([for (a in m.margs) a.sig.snorm], [LObject, LIntPtr])) ctor = true;
+			if (m.mname == "Invoke" && !isStatic && m.mtypes.length == 0) invoke = m;
+		}
+		if (!ctor || invoke == null) return null;
+		return {args: [for (a in invoke.margs) subst(a.sig.snorm, args)], ret: subst(invoke.mret.snorm, args)};
+	}
+
 	// Replaces the class type parameters of `s` with `args`.
 	public static function subst(s:IlSigNorm, args:Array<IlSigNorm>):IlSigNorm {
 		inline function all(l:Array<IlSigNorm>) return [for (a in l) subst(a, args)];
