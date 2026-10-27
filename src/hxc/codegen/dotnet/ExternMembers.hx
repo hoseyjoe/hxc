@@ -34,13 +34,17 @@ typedef ExternMethod = {
 // A call site of an extern method, for ExternMembers.method: its arguments, their own types (null where
 // a type is Dynamic or has no signature), the class whose code makes the call, and the type arguments of
 // the extern class and of the extern method there (ruling I; `methodArgs` is empty when the method has
-// none).
+// none). `receiver`: for an instance call whose receiver's static type is an extern class below the one
+// declaring the method, that class, where C# starts looking (ruling M), with its type arguments
+// `receiverArgs`; the binding's `parent` is then in terms of its type parameters.
 typedef ExternCall = {
 	args:Array<TExpr>,
 	argTypes:Array<Null<IlSigNorm>>,
 	caller:Null<TClass>,
 	classArgs:Array<IlSigNorm>,
-	methodArgs:Array<IlSigNorm>
+	methodArgs:Array<IlSigNorm>,
+	?receiver:TClass,
+	?receiverArgs:Array<IlSigNorm>
 };
 
 // The type arguments a call gives the extern class's and the extern method's type parameters.
@@ -71,9 +75,11 @@ private enum Resolution {
 class ExternMembers {
 	final ctx:Context;
 	final types:DotnetTypes;
-	// Ruling J: what each Haxe-compiled class among the current call's declared and argument types
-	// converts to, by its signature as `sigS` writes it (`method` fills it).
-	var compiledSupers = new Map<String, Array<IlSigNorm>>();
+	// Ruling J: what each Haxe-compiled type converts to (`conversionsOf`), by its signature as `sigS`
+	// writes it; null for one hxc cannot list.
+	final compiledConversionsCache = new Map<String, Null<Array<IlSigNorm>>>();
+	// The program's own classes and interfaces by their CLR path's IlPaths.key (`compiledClass`).
+	var compiledByPath:Null<Map<String, TClass>> = null;
 
 	public function new(ctx:Context, types:DotnetTypes) {
 		this.ctx = ctx;
@@ -190,11 +196,12 @@ class ExternMembers {
 	//   member's own signature), binds the method with exactly the declared signature, the first along
 	//   the class chain.
 	// - A hand-written extern's method binds as C# binds a call with the declared types, under the
-	//   restricted rule of ruling 1 as rulings E and G amend it (`resolve`). A call site passes `call`,
-	//   whose arguments' own types must bind the same method (ruling F) unless the extern method is an
-	//   @:overload one, whose arguments gencs casts to the declared types. Both bindings take the call's
-	//   type arguments for the class's and the method's type parameters (ruling I). Its return type must
-	//   convert from the method's too.
+	//   restricted rule of ruling 1 as rulings E and G amend it (`resolve`), walking from the receiver's
+	//   class when the call gives one (ruling M). A call site passes `call`, whose arguments' own types
+	//   must bind the same method (ruling F′) unless the extern method is an @:overload one, whose
+	//   arguments gencs casts to the declared types; a generic method's type arguments are then theirs.
+	//   Both bindings take the call's type arguments for the class's and the method's type parameters
+	//   (ruling I). Its return type must convert from the method's too.
 	public function method(c:TClass, cf:TClassField, exactOnly = false, ?call:ExternCall):ExternMethod {
 		var isCtor = cf.name == "new";
 		var isStatic = !isCtor && TypeFunctions.hasClassFieldFlag(cf, CfStatic);
@@ -219,94 +226,97 @@ class ExternMembers {
 			throw new Unsupported("the .NET method " + Globals.sTypePath(c.path) + "." + cf.name + " with these argument types", false);
 		}
 		var caller = call == null ? null : call.caller;
+		// The call's type arguments for the declared types (`c`'s and the method's), and for the methods'
+		// parameters (the receiver's class's when the walk starts there, ruling M).
 		var inst:Null<Inst> = call == null ? null : {cls: call.classArgs, meth: call.methodArgs};
-		compiledSupers = new Map();
-		for (i in 0...want.length) if (isCompiled(want[i])) {
-			var supers = types.withParams(c.params, cf.params, () -> compiledConversions(declared.args[i].t));
-			if (supers != null)
-				compiledSupers.set(sigS(instantiate(want[i], inst, true)), [for (t in supers) instantiate(t, inst, true)]);
-		}
-		if (call != null) for (i in 0...call.args.length) {
-			var s = i < call.argTypes.length ? call.argTypes[i] : null;
-			if (s == null || !isCompiled(s) || compiledSupers.exists(sigS(s))) continue;
-			var supers = compiledConversions(call.args[i].type);
-			if (supers != null) compiledSupers.set(sigS(s), supers);
+		var candInst = inst;
+		var start = c;
+		if (call != null && call.receiver != null && !isCtor && !isStatic) {
+			start = call.receiver;
+			links = chain(start);
+			candInst = {cls: call.receiverArgs, meth: call.methodArgs};
 		}
 		if (inst != null) want = [for (s in want) DotnetTypes.substitute(s, inst.cls, inst.meth)];
-		var what = isCtor ? "constructor of " + typeS(c) : "overload of " + typeS(c) + "." + name;
+		var what = isCtor ? "constructor of " + typeS(start) : "overload of " + typeS(start) + "." + name;
 		inline function list(l:Array<IlSigNorm>) return "(" + [for (s in l) sigS(s)].join(", ") + ")";
-		var found = switch (resolve(links, name, isStatic, want, cf.params.length, caller, inst)) {
+		var found = switch (resolve(links, name, isStatic, want, cf.params.length, caller, candInst)) {
 			case RBound(b):
 				b;
 			case RAmbiguous:
 				throw Unsupported.error("more than one .NET " + what + " accepts " + list(want));
 			case RUnknown(1):
-				throw Unsupported.error("hxc cannot tell whether the .NET " + (isCtor ? "constructor of " + typeS(c) : "method " + typeS(c) + "." + name)
-					+ " accepts " + list(want));
+				throw Unsupported.error("hxc cannot tell whether the .NET "
+					+ (isCtor ? "constructor of " + typeS(start) : "method " + typeS(start) + "." + name) + " accepts " + list(want));
 			case RUnknown(_):
 				throw Unsupported.error("more than one .NET " + what + " may accept " + list(want));
 			case RNone:
-				ruling4(links, name, isStatic, want, declared, cf.params.length, caller, call, inst);
+				ruling4(links, name, isStatic, want, declared, cf.params.length, caller, call, candInst);
 				throw Unsupported.error("no .NET " + what + " takes " + list(want));
 		}
 		if (call != null && !isOverloaded(c, cf, isStatic, isCtor)) {
+			// Ruling K: a Haxe-compiled argument keeps its own type, which converts as ruling J says.
 			var byArgs = [
 				for (i in 0...want.length) {
 					var s = i < call.argTypes.length ? call.argTypes[i] : null;
 					// gencs unwraps or wraps a haxe.lang.Null<T> where the declared type is not one.
-					// A Haxe-compiled class is its nearest .NET superclass (ruling H).
-					if (s == null || types.isNullOf(s) && !types.isNullOf(want[i])) want[i] else if (isCompiled(s)) asNet(call.args[i].type, s) else s;
+					if (s == null || types.isNullOf(s) && !types.isNullOf(want[i])) want[i] else s;
 				}
 			];
 			if (!IlPaths.sigsEq(byArgs, want)) {
-				var same = switch (resolve(links, name, isStatic, byArgs, cf.params.length, caller, inst)) {
-					case RBound(b): b.link == found.link && b.index == found.index && sameArgs(b.typeArgs, found.typeArgs);
-					case _: false;
+				// Ruling F′: both bind the same method; its type arguments are the arguments' own, as C# infers
+				// them, and `bound` checks the return with them.
+				switch (resolve(links, name, isStatic, byArgs, cf.params.length, caller, candInst)) {
+					case RBound(b) if (b.link == found.link && b.index == found.index):
+						found = b;
+					case _:
+						throw Unsupported.error("the .NET " + what + " depends on the argument types " + list(byArgs) + "; declare it with @:overload");
 				}
-				if (!same)
-					throw Unsupported.error("the .NET " + (isCtor ? "constructor of " + typeS(c) : "overload of " + typeS(c) + "." + name)
-						+ " depends on the argument types " + list(byArgs) + "; declare it with @:overload");
 			}
 		}
 		var link = links[found.link];
-		return bound(c, cf, link, link.cls.cmethods[found.index], isStatic, want.length, found.typeArgs, !isCtor, inst);
+		return bound(c, cf, link, link.cls.cmethods[found.index], isStatic, want.length, found.typeArgs, !isCtor, inst, candInst);
 	}
 
-	// Ruling H: a Haxe-compiled class `t` (of the signature `s`) as an argument's own type, as C# sees it:
-	// its nearest extern .NET superclass, else object. A class whose chain implements an extern .NET
-	// interface stays itself, which converts as ruling J says (`compiledConversions`).
-	function asNet(t:T, s:IlSigNorm):IlSigNorm {
-		var c:TClass, params:Array<T>;
-		switch (TypeFunctions.follow(t)) {
-			case TInst(c1, p1):
-				c = c1;
-				params = p1;
-			case _:
-				return s;
+	// The program's class or interface whose CLR path is `p`, or null.
+	function compiledClass(p:IlPath):Null<TClass> {
+		if (compiledByPath == null) {
+			compiledByPath = new Map();
+			for (mt in ctx.types) switch (mt) {
+				case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern) && !c.kind.match(KTypeParameter(_))):
+					var key = IlPaths.key(DotnetNames.typePath(mt));
+					if (!compiledByPath.exists(key)) compiledByPath.set(key, c);
+				case _:
+			}
 		}
-		while (true) {
-			if (TypeFunctions.hasClassFlag(c, CExtern)) return try types.toSig(TInst(c, params)) catch (_:Unsupported) s;
-			if (implementsNet(c)) return s;
-			var sup = c.superClass;
-			if (sup == null) return LObject;
-			var cparams = c.params, args = params;
-			params = [for (p in sup.params) TypeFunctions.applyParams(cparams, args, p)];
-			c = sup.c;
-		}
+		return compiledByPath.get(IlPaths.key(p));
 	}
 
-	// Ruling J: the types the Haxe-compiled class `t` converts to implicitly, but object: the classes of its
-	// Haxe superclass chain, itself included, and the interfaces they implement, directly or through
-	// Haxe interfaces; each extern one with its .NET supertypes. Null when one has no signature.
-	function compiledConversions(t:T):Null<Array<IlSigNorm>> {
-		var c:TClass, params:Array<T>;
-		switch (TypeFunctions.follow(t)) {
-			case TInst(c1, p1):
-				c = c1;
-				params = p1;
-			case _:
-				return null;
+	// Ruling J (as K amends it): the types the Haxe-compiled class or interface `s` converts to implicitly,
+	// but object, computed once per type: those `compiledConversions` lists for its class, with `s`'s type
+	// arguments for the class's type parameters. Null for a type hxc cannot list (no program class has its
+	// path, or its arguments are not one per type parameter).
+	function conversionsOf(s:IlSigNorm):Null<Array<IlSigNorm>> {
+		var key = sigS(s);
+		if (compiledConversionsCache.exists(key)) return compiledConversionsCache.get(key);
+		var r:Null<Array<IlSigNorm>> = switch (s) {
+			case LClass(p, args) | LValueType(p, args):
+				var c = compiledClass(p);
+				if (c == null || args.length != c.params.length) null else {
+					var own = types.withParams(c.params, [], () -> compiledConversions(c));
+					own == null ? null : [for (t in own) DotnetTypes.substitute(t, args, [])];
+				}
+			case _: null;
 		}
+		compiledConversionsCache.set(key, r);
+		return r;
+	}
+
+	// Ruling J: the types the Haxe-compiled class or interface `c0`, with its own type parameters, converts
+	// to implicitly, but object: the classes of its Haxe superclass chain, itself included, and the
+	// interfaces they implement, directly or through Haxe interfaces; each extern one with its .NET
+	// supertypes; System.ValueType for a @:struct class (ruling K). Null when one has no signature.
+	function compiledConversions(c0:TClass):Null<Array<IlSigNorm>> {
+		var c = c0, params = [for (p in c0.params) p.type];
 		var r = [], seen = new Map<String, Bool>();
 		function add(s:IlSigNorm):Void {
 			var todo = [norm(s)];
@@ -338,17 +348,8 @@ class ExternMembers {
 		} catch (_:Unsupported) {
 			return null;
 		}
+		if (TypeFunctions.hasMeta(":struct", c0.meta)) add(LClass({ns: ["System"], nested: [], name: "ValueType"}, []));
 		return r;
-	}
-
-	// Whether `c` implements an extern interface, directly or through the interfaces it implements.
-	static function implementsNet(c:TClass):Bool {
-		for (i in c.interfaces) if (TypeFunctions.hasClassFlag(i.c, CExtern) || implementsNet(i.c)) return true;
-		return false;
-	}
-
-	static function sameArgs(a:Null<Array<IlSigNorm>>, b:Null<Array<IlSigNorm>>):Bool {
-		return a == null ? b == null : b != null && IlPaths.sigsEq(a, b);
 	}
 
 	// Whether the extern method is one of @:overload ones, which gencs calls with its arguments cast to
@@ -599,12 +600,17 @@ class ExternMembers {
 		if (opaque(from) || opaque(to)) return ANo;
 		inline function span(s:IlSigNorm) return isSystemNamed(s, "Span`1") || isSystemNamed(s, "ReadOnlySpan`1");
 		if (isCompiled(from)) {
-			// Ruling J; unknown only where `method` found no conversions to look in.
+			// Rulings J and K; unknown where hxc cannot list the type's conversions, and for a variant
+			// generic interface or delegate it does not list (ruling L).
 			if (to.match(LObject)) return AYes;
-			var supers = compiledSupers.get(sigS(from));
+			if (DotnetTypes.isSystemNullable(to)) return switch (to) {
+				case LValueType(_, [a]) if (IlPaths.sigEq(from, a)): AYes;
+				case _: ANo;
+			}
+			var supers = conversionsOf(from);
 			if (supers == null) return AUnknown;
 			for (sup in supers) if (IlPaths.sigEq(sup, to)) return AYes;
-			return ANo;
+			return isVariant(to) ? AUnknown : ANo;
 		}
 		if (span(from) || span(to)) return AUnknown;
 		if (to.match(LObject)) return AYes;
@@ -712,17 +718,17 @@ class ExternMembers {
 	}
 
 	// The binding of `cf` to `m`, a method of `link`'s class, for a call that gives `given` arguments.
-	// `checkReturn`: the declared return type must convert from `m`'s, both with the call's type arguments
-	// `inst`.
+	// `checkReturn`: the declared return type, with the call's type arguments `inst`, must convert from
+	// `m`'s, with `candInst` (the receiver's class's, ruling M) and `typeArgs`.
 	function bound(c:TClass, cf:TClassField, link:{cls:IlClass, parent:IlSigNorm}, m:IlMethod, isStatic:Bool, given:Int,
-			typeArgs:Null<Array<IlSigNorm>>, checkReturn:Bool, ?inst:Inst):ExternMethod {
+			typeArgs:Null<Array<IlSigNorm>>, checkReturn:Bool, ?inst:Inst, ?candInst:Inst):ExternMethod {
 		var name = m.mname;
 		if (checkReturn) {
 			var declared = instantiate(types.withParams(c.params, cf.params, () -> switch (TypeFunctions.follow(cf.type)) {
 				case TFun(sig): types.toSig(sig.ret);
 				case _: throw "internal error: extern method " + cf.name + " has no function type";
 			}), inst, true);
-			var ret = instantiate(open(m.mret.snorm, linkArgs(link), isStatic), inst, m.mtypes.length == cf.params.length);
+			var ret = instantiate(open(m.mret.snorm, linkArgs(link), isStatic), candInst, m.mtypes.length == cf.params.length);
 			if (typeArgs != null) ret = DotnetTypes.substitute(ret, [], typeArgs);
 			if (!declared.match(LVoid) && !implicitlyConverts(ret, declared))
 				throw Unsupported.error(typeS(c) + "." + name + " returns " + sigS(ret) + ", which does not convert to the declared " + sigS(declared));

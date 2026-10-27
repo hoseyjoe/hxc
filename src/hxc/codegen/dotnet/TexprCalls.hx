@@ -960,14 +960,20 @@ class TexprCalls {
 			}
 			own = [for (t in DotnetTypes.inferParams(cf.params, declared, calleeType, false)) g.types.nativeArg(t)];
 		}
-		var m = g.externs.method(c, cf, false, externCallSite(args, inst, own));
-		// A generic method's type arguments: those the declared types give when the extern method has no
-		// type parameters (ExternMembers.method), else the extern method's own.
+		var site = externCallSite(args, inst, own);
+		var start = isStatic ? null : receiverClass(obj, c);
+		if (start != null) {
+			site.receiver = start.c;
+			site.receiverArgs = start.args;
+		}
+		var m = g.externs.method(c, cf, false, site);
+		// A generic method's type arguments: those the call's argument types give when the extern method has
+		// no type parameters (ExternMembers.method), else the extern method's own.
 		var margs:Array<IlSigNorm> = m.typeArgs != null ? m.typeArgs : own;
 		// Matching skips methods of another generic arity, so this fires only after a matching bug.
 		if (m.typeArgs == null && cf.params.length != m.genericCount || m.typeArgs != null && m.typeArgs.length != m.genericCount)
 			throw Unsupported.bug("a .NET method with another generic arity (internal: overload matching)");
-		var parent = ExternMembers.subst(m.parent, inst);
+		var parent = ExternMembers.subst(m.parent, start != null ? start.args : inst);
 		var parentArgs = switch (parent) {
 			case LClass(_, l) | LValueType(_, l): l;
 			case _: [];
@@ -989,6 +995,41 @@ class TexprCalls {
 		code.opToken(op, token, ilArgs.length + (isStatic ? 0 : 1), retSlot.match(LVoid) ? 0 : 1);
 		if (retSlot.match(LVoid) && needVal(ret)) throw new Unsupported("the value of a .NET setter call", false);
 		tl.coerce(retSlot, ret);
+	}
+
+	// Ruling M: where C# starts looking for an instance method `c` declares, when that is below `c`: the
+	// extern class of the receiver's static type, or its nearest extern superclass that has a .NET type,
+	// with its type arguments. Null where that is `c` itself or `c` is not among its superclasses (an
+	// interface's method, or a receiver of another kind of type).
+	function receiverClass(obj:TExpr, c:TClass):Null<{c:TClass, args:Array<IlSigNorm>}> {
+		var rc:TClass, params:Array<T>;
+		switch (TypeFunctions.follow(obj.type)) {
+			case TInst(c1, p1) if (!c1.kind.match(KTypeParameter(_))):
+				rc = c1;
+				params = p1;
+			case _:
+				return null;
+		}
+		inline function up():Bool {
+			var sup = rc.superClass;
+			if (sup != null) {
+				var cparams = rc.params, args = params;
+				params = [for (p in sup.params) TypeFunctions.applyParams(cparams, args, p)];
+				rc = sup.c;
+			}
+			return sup != null;
+		}
+		// The nearest extern class with a .NET type.
+		while (rc != c && !(TypeFunctions.hasClassFlag(rc, CExtern) && hasNetType(rc))) if (!up()) return null;
+		if (rc == c) return null;
+		var start = rc, startParams = params;
+		while (rc != c) if (!up()) return null;
+		return {c: start, args: g.types.classArgs(start, startParams)};
+	}
+
+	// Whether the extern class `c` names a .NET type a referenced assembly defines.
+	function hasNetType(c:TClass):Bool {
+		return try NetRefs.of(g.ctx).definer(g.types.externPath(c)) != null catch (_:Unsupported) false;
 	}
 
 	// A .NET constructor: its MemberRef, with the arguments pushed (`argc` of them).

@@ -152,4 +152,23 @@ namespace ValLib
         public string Foo(T t) { return "Foo(T)"; }
         public string Foo(int i) { return "Foo(int)"; }
     }
+
+    public interface ICo<out T> { T Get(); }
+    public interface IFoo { string Name(); }
+
+    public static class HxInfer
+    {
+        public static string T1<T>(T x) { return "T1<" + typeof(T).Name + ">"; }
+        public static string T2<T>(T x) { return "T2<" + typeof(T).Name + ">"; }
+        public static string T2(Exception e) { return "T2(Exception)"; }
+        public static T[] Arr1<T>(T x) { return new T[] { x }; }
+        public static string Co(ICo<object> c) { return "Co(ICo<object>)"; }
+        public static string Co(object o) { return "Co(object)"; }
+        public static string Vt(ValueType v) { return "Vt(ValueType)"; }
+        public static string Vt(object o) { return "Vt(object)"; }
+    }
+
+    public class FBase { public string F(object o) { return "FBase.F(object)"; } }
+    public class FDerived : FBase { public string F(IFoo f) { return "FDerived.F(IFoo " + f.Name() + ")"; } }
+    public class FooImpl : IFoo { public virtual string Name() { return "FooImpl"; } }
 }

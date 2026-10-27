@@ -15281,9 +15281,9 @@ class P {
 ===
 [compile]
 P.hx:6: characters 9-23 : dotnet: the optional value-type argument b of an extern method is passed as haxe.lang.Null<int>, which the .NET method does not accept
-# Ruling H: a Haxe class is its nearest extern .NET superclass in the arguments' own types, here System.Exception through
-# haxe.Exception. gencs's C# passes the MyEx as it is, which C# binds to Foo(Exception); the declared Dynamic binds
-# Foo(object), so ruling F refuses. hxc bound Foo(object) before ruling H.
+# Ruling K: a Haxe class keeps its own type in the arguments' own types, here MyEx, which converts to System.Exception
+# through haxe.Exception. gencs's C# passes the MyEx as it is, which C# binds to Foo(Exception); the declared Dynamic
+# binds Foo(object), so ruling F refuses. hxc bound Foo(object) before ruling H.
 --- netlib-extern-haxe-exception-argument-refused @netlib
 @:native("ValLib.HxArg") extern class HxArg {
 	static function Foo(o:Dynamic):String;
@@ -15296,9 +15296,10 @@ class P {
 }
 ===
 [compile]
-P.hx:7: characters 9-33 : dotnet: the .NET overload of ValLib.HxArg.Foo depends on the argument types (System.Exception); declare it with @:overload
-# Ruling H with a Haxe subclass of a .NET class: gencs's C# binds Bar(ArgumentException); the declared System.Exception
-# binds Bar(Exception), so ruling F refuses. hxc bound Bar(Exception) before ruling H.
+P.hx:7: characters 9-33 : dotnet: the .NET overload of ValLib.HxArg.Foo depends on the argument types (MyEx); declare it with @:overload
+# Ruling K with a Haxe subclass of a .NET class: MyArg converts to both Bar(Exception) and Bar(ArgumentException), so its
+# own type binds nothing under ruling 1, and ruling F refuses. gencs's C# binds Bar(ArgumentException); the declared
+# System.Exception binds Bar(Exception), which hxc bound before ruling H.
 --- netlib-extern-haxe-subclass-argument-refused @netlib
 @:native("ValLib.HxArg") extern class HxArg {
 	static function Bar(e:cs.system.Exception):String;
@@ -15313,7 +15314,7 @@ class P {
 }
 ===
 [compile]
-P.hx:9: characters 9-31 : dotnet: the .NET overload of ValLib.HxArg.Bar depends on the argument types (System.ArgumentException); declare it with @:overload
+P.hx:9: characters 9-31 : dotnet: the .NET overload of ValLib.HxArg.Bar depends on the argument types (MyArg); declare it with @:overload
 # Ruling J: a Haxe class implementing a .NET interface converts to it and to object, so both Baz(object) and
 # Baz(IDisposable) apply to the arguments' own types, which bind nothing, and ruling F refuses. C# binds
 # Baz(IDisposable); hxc bound Baz(object) before ruling H.
@@ -15333,9 +15334,10 @@ class P {
 ===
 [compile]
 P.hx:10: characters 9-32 : dotnet: the .NET overload of ValLib.HxArg.Baz depends on the argument types (MyDisp); declare it with @:overload
-# Ruling H: where the declared type is the Haxe class's nearest .NET superclass, both bindings agree and the call
-# binds as C# does.
---- netlib-extern-haxe-class-arguments @gencs @netlib
+# Ruling K: the declared ArgumentException binds Bar(ArgumentException) exactly, but MyArg, which keeps its own type,
+# converts to both Bar(ArgumentException) and Bar(Exception), so its own type binds nothing under ruling 1, and ruling
+# F refuses. C# (gencs) binds Bar(ArgumentException), the more specific; hxc bound it under ruling H.
+--- netlib-extern-haxe-class-arguments @netlib
 @:native("ValLib.HxArg") extern class HxArg {
 	static function Bar(e:cs.system.ArgumentException):String;
 }
@@ -15348,6 +15350,8 @@ class P {
 	}
 }
 ===
+[compile]
+P.hx:9: characters 9-31 : dotnet: the .NET overload of ValLib.HxArg.Bar depends on the argument types (MyArg); declare it with @:overload
 # Ruling J: a Haxe class implementing a .NET interface converts to that interface for certain, so the one overload
 # taking it binds.
 --- netlib-extern-haxe-class-implementing-net-interface @gencs @netlib
@@ -15426,3 +15430,178 @@ class P {
 ===
 [compile]
 P.hx:6: characters 9-22 : dotnet: hxc cannot tell whether the .NET method ValLib.HxArg.Only accepts (int)
+# Ruling K: a Haxe class or interface argument keeps its own type, so a generic method's type argument is that type, as
+# C# infers it (ruling F′: the declared Any binds T1<object>, the same method, and the arguments' own types give its type
+# arguments): a plain class, a Haxe interface, a subclass of a .NET class, a generic Haxe class (a TypeSpec of hxc's own
+# module) and a @:struct class (a value type of its own). hxc bound T1<object> before ruling K.
+--- netlib-extern-haxe-class-type-argument @gencs @netlib
+@:native("ValLib.HxInfer") extern class HxInfer {
+	static function T1(x:Any):String;
+}
+interface IPlain {}
+class MyPlain implements IPlain {
+	public function new() {}
+}
+class MyExc extends cs.system.Exception {
+	public function new() super("e");
+}
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+}
+@:struct class MySt {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+}
+class P {
+	static function main() {
+		trace(HxInfer.T1(new MyPlain()));
+		var v:IPlain = new MyPlain();
+		trace(HxInfer.T1(v));
+		trace(HxInfer.T1(new MyExc()));
+		trace(HxInfer.T1(new Box(1)));
+		trace(HxInfer.T1(new MySt(1)));
+		trace(HxInfer.T1(1));
+		trace(HxInfer.T1("s"));
+	}
+}
+===
+# Ruling F′: with the arguments' own type arguments, Arr1<MyPlain> returns a MyPlain[], which hxc does not know to
+# convert to the declared object[] (array covariance is not modelled), so the call is refused.
+--- netlib-extern-haxe-class-type-argument-return-refused @netlib
+@:native("ValLib.HxInfer") extern class HxInfer {
+	static function Arr1(x:Any):cs.NativeArray<Any>;
+}
+class MyPlain {
+	public function new() {}
+}
+class P {
+	static function main() {
+		trace(HxInfer.Arr1(new MyPlain()).Length);
+	}
+}
+===
+[compile]
+P.hx:9: characters 9-36 : dotnet: ValLib.HxInfer.Arr1 returns MyPlain[], which does not convert to the declared object[]
+# Ruling K: a MyExc argument converts to T2<MyExc>'s parameter and to T2(Exception)'s, so the arguments' own types bind
+# nothing under ruling 1 and ruling F refuses. C# (gencs) binds T2<MyExc>, whose parameter is the argument's own type;
+# hxc bound T2(Exception) before ruling K.
+--- netlib-extern-haxe-class-generic-or-base-refused @netlib
+@:native("ValLib.HxInfer") extern class HxInfer {
+	static function T2(e:cs.system.Exception):String;
+}
+class MyExc extends cs.system.Exception {
+	public function new() super("e");
+}
+class P {
+	static function main() {
+		trace(HxInfer.T2(new MyExc()));
+	}
+}
+===
+[compile]
+P.hx:9: characters 9-32 : dotnet: the .NET overload of ValLib.HxInfer.T2 depends on the argument types (MyExc); declare it with @:overload
+# Ruling K: a @:struct class converts to System.ValueType and to object, so Vt(ValueType) and Vt(object) both apply to
+# the argument's own type and ruling F refuses. C# (gencs) binds Vt(ValueType); hxc bound Vt(object) before ruling K.
+--- netlib-extern-haxe-struct-argument-refused @netlib
+@:native("ValLib.HxInfer") extern class HxInfer {
+	static function Vt(o:Dynamic):String;
+}
+@:struct class MySt {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+}
+class P {
+	static function main() {
+		var s = new MySt(1);
+		trace(HxInfer.Vt(s));
+	}
+}
+===
+[compile]
+P.hx:11: characters 9-22 : dotnet: the .NET overload of ValLib.HxInfer.Vt depends on the argument types (MySt); declare it with @:overload
+# Ruling L: MyCo implements ICo<string>, and whether it converts to ICo<object> depends on ICo's variance, which hxc
+# does not model, so Co(ICo<object>) may apply and the call is refused. C# (gencs) binds Co(ICo<object>); hxc bound
+# Co(object) before ruling L.
+--- netlib-extern-haxe-class-variant-interface-refused @netlib
+@:native("ValLib.HxInfer") extern class HxInfer {
+	static function Co(o:Dynamic):String;
+}
+@:native("ValLib.ICo`1") extern interface ICo<T> {
+	function Get():T;
+}
+class MyCo implements ICo<String> {
+	public function new() {}
+	public function Get():String return "s";
+}
+class P {
+	static function main() {
+		trace(HxInfer.Co(new MyCo()));
+	}
+}
+===
+[compile]
+P.hx:13: characters 9-31 : dotnet: the .NET overload of ValLib.HxInfer.Co depends on the argument types (MyCo); declare it with @:overload
+# Ruling M: the walk starts at the receiver's static type, the .NET FDerived of the extern FDerivedD, not at FBase, which
+# declares the Haxe field: FDerived.F(IFoo) binds, as in C#. Through an FBase receiver, FBase.F(object) binds, as in C#.
+# hxc bound FBase.F(object) for all three before ruling M.
+--- netlib-extern-receiver-type-starts-the-walk @gencs @netlib
+@:native("ValLib.IFoo") extern interface IFoo {
+	function Name():String;
+}
+@:native("ValLib.FooImpl") extern class FooImpl implements IFoo {
+	function new():Void;
+	function Name():String;
+}
+@:native("ValLib.FBase") extern class FBase {
+	function new():Void;
+	function F(o:IFoo):String;
+}
+@:native("ValLib.FDerived") extern class FDerivedD extends FBase {
+	function new():Void;
+}
+class MyFoo implements IFoo {
+	public function new() {}
+	public function Name():String return "MyFoo";
+}
+class P {
+	static function main() {
+		trace(new FDerivedD().F(new MyFoo()));
+		trace(new FDerivedD().F(new FooImpl()));
+		var b:FBase = new FDerivedD();
+		trace(b.F(new MyFoo()));
+	}
+}
+===
+# Ruling M with the extern field declared F(o:Dynamic): the walk starts at FDerived, where the declared object binds
+# FBase.F(object) and the arguments' own types bind FDerived.F(IFoo), so ruling F′ refuses. C# (gencs) binds
+# FDerived.F(IFoo) for both; hxc bound FBase.F(object) before ruling M.
+--- netlib-extern-receiver-type-argument-types-differ-refused @netlib
+@:native("ValLib.IFoo") extern interface IFoo {
+	function Name():String;
+}
+@:native("ValLib.FooImpl") extern class FooImpl implements IFoo {
+	function new():Void;
+	function Name():String;
+}
+@:native("ValLib.FBase") extern class FBase {
+	function new():Void;
+	function F(o:Dynamic):String;
+}
+@:native("ValLib.FDerived") extern class FDerivedD extends FBase {
+	function new():Void;
+}
+class MyFoo implements IFoo {
+	public function new() {}
+	public function Name():String return "MyFoo";
+}
+class P {
+	static function main() {
+		trace(new FDerivedD().F(new MyFoo()));
+		trace(new FDerivedD().F(new FooImpl()));
+	}
+}
+===
+[compile]
+P.hx:21: characters 9-39 : dotnet: the .NET overload of ValLib.FDerived.F depends on the argument types (MyFoo); declare it with @:overload
+P.hx:22: characters 9-41 : dotnet: the .NET overload of ValLib.FDerived.F depends on the argument types (ValLib.FooImpl); declare it with @:overload

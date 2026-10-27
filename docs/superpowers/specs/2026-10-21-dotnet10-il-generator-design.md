@@ -524,7 +524,7 @@ and `List` copy, and two threads casting one array at once.
      property type that does not convert implicitly, or a variable declared static over an instance
      member or the other way. A Haxe-optional value-type argument (`?b:Int`) stays refused, left out or
      passed, as gencs's C# fails there (CS1503). A converted `--net-lib` member still binds only its
-     exact signature. Three amendments keep hxc from picking an overload by accident:
+     exact signature. These amendments keep hxc from picking an overload by accident:
      - **Unknown applicability.** A candidate or conversion outside hxc's model of C# may apply: a
        variant generic interface or delegate target, `Span`/`ReadOnlySpan`, `decimal`,
        `nint`/`nuint`, `Nullable<B>` from another type, a type declaring `op_Implicit`, an array to
@@ -539,22 +539,34 @@ and `List` copy, and two threads casting one array at once.
        only where its method was first declared. In a link, the one exact match binds, else the one
        applicable method when nothing else may apply; a link passes to the next only when nothing in it
        applies or may apply. So a derived `Foo(object)` beats a base's exact `Foo(string)`, as in C#.
+       The walk starts at the receiver's static type: for an instance call, the .NET type of the
+       receiver expression's extern class (or of its nearest extern superclass that has one), not the
+       extern class declaring the Haxe field; for a static call, the class the call names. So
+       `new FDerivedD().F(x)` finds `FDerived.F(IFoo)` although the field is declared on the extern
+       `FBase` (`netlib-extern-receiver-type-starts-the-walk`).
      - **Argument types.** At a call, the arguments' own types (what gencs's C# sees) must bind the same
-       method as the declared types, or the call is refused ("the .NET overload of T.m depends on the
-       argument types (…); declare it with @:overload"). An `@:overload` extern is exempt: gencs casts
-       its arguments to the declared types. An argument's own type counts as declared when it is
-       Dynamic or has no signature, or when it is a `haxe.lang.Null<T>` and the declared type is not
-       one (gencs unwraps or wraps it). A Haxe-compiled class is its nearest extern .NET superclass,
-       found along its Haxe superclass chain (`haxe.Exception` is `System.Exception`), else `object`;
-       but when a class on that chain implements an extern .NET interface, directly or through Haxe
-       interfaces extending one, it stays itself. A Haxe class that stays itself, in either binding
-       (a declared parameter type can be one too), converts for certain to `object`, to the extern
-       classes on its superclass chain and the interfaces implemented along it, with their .NET
-       supertypes, and to nothing else; it is never unknown. As ruling 1 binds only the one applicable
-       method, a single overload taking the interface binds
+       method definition as the declared types, or the call is refused ("the .NET overload of T.m
+       depends on the argument types (…); declare it with @:overload"). An `@:overload` extern is
+       exempt: gencs casts its arguments to the declared types. An argument's own type counts as
+       declared when it is Dynamic or has no signature, or when it is a `haxe.lang.Null<T>` and the
+       declared type is not one (gencs unwraps or wraps it). A generic method's type arguments come from
+       the arguments' own types, as C# infers them (`T1(x:Any)` with a `MyPlain` is `T1<MyPlain>`, a
+       TypeDef or TypeSpec of the program's own module); where they differ from the declared ones, the
+       declared return type must still convert from the method's return with them, or the call is
+       refused with the return-mismatch error.
+     - **Haxe-compiled types.** A Haxe class or interface keeps its own type in either binding (a
+       declared parameter type can be one too): no identity match fires for it but against that very
+       type. It converts for certain to `object`, to the classes on its Haxe superclass chain and the
+       interfaces implemented along it, directly or through Haxe interfaces, the extern ones with their
+       .NET supertypes, and, for a `@:struct` class, to `System.ValueType`; a Haxe interface to its base
+       interfaces likewise. It converts to nothing else, except that a variant generic interface or
+       delegate not on that list may apply (unknown), as C#'s variance is not modelled. As ruling 1
+       binds only the one applicable method, a single overload taking the interface binds
        (`netlib-extern-haxe-class-implementing-net-interface`), and `Baz(object)` next to
-       `Baz(IDisposable)` is refused (`netlib-extern-haxe-class-implementing-net-interface-refused`).
-       Both bindings
+       `Baz(IDisposable)` is refused (`netlib-extern-haxe-class-implementing-net-interface-refused`),
+       as are `Bar(Exception)` next to `Bar(ArgumentException)` for a subclass of `ArgumentException`
+       and `Vt(ValueType)` next to `Vt(object)` for a `@:struct` class, where C# picks the more specific.
+     - **Instantiation.** Both bindings
        take the call's type arguments for the class's and the method's type parameters, so
        `List<int>.Add(T)` takes an int; where that makes two candidates take exactly the arguments
        (`Gen<int>`'s `Foo(T)` and `Foo(int)`), the call is refused, where C# prefers the parameter that
