@@ -140,7 +140,9 @@ only the assemblies passed, and a type defined only in one of them is "Type not 
   A `@:property` var is a CLR property too, so System.Text.Json and .NET reflection see it.
 - **Delegates:** a Haxe function, lambda or method converts to a .NET delegate as gencs converts it,
   and a delegate's `+` and `-` combine and remove. A handler made again from the same method removes
-  the first. `Thread.create` works.
+  the first. `Thread.create` works. A conversion whose types do not match the delegate's `Invoke`
+  (an `Int -> Bool` function as a `Func_2<Dynamic, Bool>`) is a compile error, as gencs's C# fails to
+  compile there (CS0030) or its cast throws at run time.
 
 Classes, interfaces, structs, generics, statics, operators, strings, arrays and native .NET
 exceptions work, including `try`/`catch`/`throw` of `cs.system.Exception` subclasses. Classes have
@@ -200,11 +202,14 @@ list is not complete; among others it has compound assignments to `Dynamic` arra
 expressions, casts between instantiations of a generic class that has no companion interface (a
 generic `@:struct`) and `Std.isOfType` or enum constructor arguments with one,
 inline C# (`untyped __cs__`, `cs.Syntax.code`, `@:classCode`, `@:functionCode`), `new IntPtr(n)` and
-methods called on an `IntPtr` property's value, and parts of .NET interop: attributes (`@:meta`,
-`@:strict`), nullability metadata, events defined in Haxe, a static `@:property` var with get or set
-accessors, a .NET method, an overloaded method or a struct's method as a delegate, and a .NET base
-class's non-virtual method or property implementing an interface for a Haxe subclass. The next steps
-for the .NET generator bring these.
+methods called on an `IntPtr` property's value, a static `@:property` var with get or set accessors,
+a .NET method, an overloaded method, a struct's method or a method reached through a `Dynamic`
+receiver as a delegate, and a .NET base class's non-virtual method or property implementing an
+interface method or property for a Haxe subclass (C# adds a forwarding stub there; a public virtual
+one works). Some interop is not written yet, with no error: attributes (`@:meta`, `@:strict`), events
+defined in Haxe (an `@:event` var's `add_` and `remove_` methods are compiled, but no event), and
+nullability metadata, so .NET reflection sees no attribute and no event. The next steps for the .NET
+generator bring these.
 `Array` has no `object this[int]` indexer yet (hxcs adds it with `@:classCode`), so C# code cannot index
 an `Array` and `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`.
 Embedded resources (`-resource` or `Context.addResource`) are not supported yet: with `-D dotnet` they

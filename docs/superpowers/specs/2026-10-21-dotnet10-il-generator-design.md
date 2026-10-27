@@ -525,203 +525,215 @@ and `List` copy, and two threads casting one array at once.
        out. Its nativepdf build has 4 (3c: 4), of the same kinds. The desktop app has 10 (3c: 12):
        9 `cs.Syntax.code` and its embedded resources, with or without the Avalonia `--net-lib`s. No
        standard-library method either app calls is stubbed.
+     - A hand-written extern method binds the .NET method C# would bind for a call with its declared
+       types, under a restricted rule: the exact signature first, else the one applicable overload
+       (implicit conversions: identity, upcasts, boxing, numeric widening but to `decimal`, `A` to
+       `Nullable<A>`; then an omitted tail of optional or `params` parameters, filled as Roslyn fills
+       them; a generic method's type arguments taken from the declared types, as for the server app's
+       `JsonSerializer.Serialize(obj:Any)`). Two applicable overloads are a compile error where C# would
+       pick the more specific one (`netlib-extern-ambiguous-is-an-error`), and so is a return, field or
+       property type that does not convert implicitly, or a variable declared static over an instance
+       member or the other way. A Haxe-optional value-type argument (`?b:Int`) stays refused, left out or
+       passed, as gencs's C# fails there (CS1503). A converted `--net-lib` member still binds only its
+       exact signature. These amendments keep hxc from picking an overload by accident:
+       - **Unknown applicability.** A candidate or conversion outside hxc's model of C# may apply: a
+         variant generic interface or delegate target, `Span`/`ReadOnlySpan`, `decimal`,
+         `nint`/`nuint`, `Nullable<B>` from another type, a type declaring `op_Implicit`, an array to
+         a generic interface or another array, a `params` array's expanded form, a generic candidate
+         with a type argument the declared types do not give or with any constraint, and a protected
+         member that ruling R makes inaccessible: the calling class must derive from its type, and the
+         receiver's static type must be the calling class or below it. C# then skips the member, which
+         hxc does not model. A call that such a candidate
+         may also take is refused ("more than one .NET overload of T.m may accept (…)", or "hxc cannot
+         tell whether the .NET method T.m accepts (…)" when it is the only candidate), as
+         `String.Concat(a:NativeArray<Int>)` is (`netlib-extern-unknown-candidate-refused`; C# binds
+         `Concat<int>(IEnumerable<int>)`).
+       - **Link by link.** The chain is walked from the most derived type, and an override is a candidate
+         only where its method was first declared. In a link, the one exact match binds, else the one
+         applicable method when nothing else may apply; a link passes to the next only when nothing in it
+         applies or may apply. So a derived `Foo(object)` beats a base's exact `Foo(string)`, as in C#.
+         The walk starts at the receiver's static type: for an instance call, the .NET type of the
+         receiver expression's extern class (or of its nearest extern superclass that has one), not the
+         extern class declaring the Haxe field; for a static call, the class the call names. So
+         `new FDerivedD().F(x)` finds `FDerived.F(IFoo)` although the field is declared on the extern
+         `FBase` (`netlib-extern-receiver-type-starts-the-walk`). Through an extern interface receiver
+         that extends the declaring extern interface, the call binds as declared, unless a .NET interface
+         between the receiver's .NET type (included) and the declaring one (excluded) declares a method,
+         property or event of the same name: C#'s interface member lookup may then bind it, which hxc does
+         not model, so the call is refused ("the .NET method T.m is also declared on I; hxc does not model
+         C#'s interface member lookup", `netlib-extern-interface-receiver-hidden-refused`,
+         `netlib-extern-interface-receiver-diamond-refused`). A type-parameter receiver counts as its one
+         constraint, as gencs casts it, when that is an extern class or interface with a .NET type or a
+         Haxe class below one (`netlib-extern-type-parameter-receiver`); with several constraints or none
+         of those, a hand-written extern's call is refused ("hxc cannot tell which .NET overload of T.m the
+         type parameter T's constraints select").
+       - **Argument types.** At a call, the arguments' own types (what gencs's C# sees) must bind the same
+         method definition as the declared types, or the call is refused ("the .NET overload of T.m
+         depends on the argument types (…); declare it with @:overload"). An `@:overload` extern is
+         exempt: gencs casts its arguments to the declared types. An argument's own type counts as
+         declared when it is Dynamic or has no signature, or when it is a `haxe.lang.Null<T>` and the
+         declared type is not one (gencs unwraps or wraps it, a basic-typed argument to a declared
+         `Null<T>` included: `T1(x:Null<Float>)` with an `Int` is ``T1<haxe.lang.Null`1>``), or when it is
+         a basic type (`Bool`, the
+         integers, `Char`, `Single`, `Float`) and the declared type is another one, as gencs casts it
+         (`T1(x:Float)` with an `Int` is `T1<double>`, and `N(int)`/`N(double)` binds `N(double)`;
+         `netlib-extern-basic-argument-cast`). A generic method's type arguments come from
+         the arguments' own types, as C# infers them (`T1(x:Any)` with a `MyPlain` is `T1<MyPlain>`, a
+         TypeDef or TypeSpec of the program's own module); where they differ from the declared ones, the
+         declared return type must still convert from the method's return with them, or the call is
+         refused with the return-mismatch error.
+       - **Haxe-compiled types.** A Haxe class or interface keeps its own type in either binding (a
+         declared parameter type can be one too): no identity match fires for it but against that very
+         type. It converts for certain to `object`, to the classes on its Haxe superclass chain and the
+         interfaces implemented along it, directly or through Haxe interfaces, the extern ones with their
+         .NET supertypes, and, for a `@:struct` class, to `System.ValueType`; a Haxe interface to its base
+         interfaces likewise. It converts to nothing else, except that a variant generic interface or
+         delegate not on that list may apply (unknown), as C#'s variance is not modelled. As ruling 1
+         binds only the one applicable method, a single overload taking the interface binds
+         (`netlib-extern-haxe-class-implementing-net-interface`), and `Baz(object)` next to
+         `Baz(IDisposable)` is refused (`netlib-extern-haxe-class-implementing-net-interface-refused`),
+         as are `Bar(Exception)` next to `Bar(ArgumentException)` for a subclass of `ArgumentException`
+         and `Vt(ValueType)` next to `Vt(object)` for a `@:struct` class, where C# picks the more specific.
+       - **Instantiation.** Both bindings
+         take the call's type arguments for the class's and the method's type parameters, so
+         `List<int>.Add(T)` takes an int; where that makes two candidates take exactly the arguments
+         (`Gen<int>`'s `Foo(T)` and `Foo(int)`), the call is refused, where C# prefers the parameter that
+         is not a type parameter.
+     - gencs renames a method type parameter that shadows another (`sh<T,T1>`) where hxc emits
+       `sh<T,T>`. Only reflection on generic-parameter names can see it.
+     - An `@:overload` override that changes only the return type is refused. gencs compiles it as a C#
+       covariant-return override, which needs `newslot`, a MethodImpl row and
+       `PreserveBaseOverridesAttribute`.
+     - `a[i]` on an extern class with a .NET indexer is a call of its `get_Item` or `set_Item`
+       (`netlib-indexers`). The indexer is the one C# picks for an `int` argument. Walking the class's
+       .NET chain from the receiver's class (a Haxe class's nearest extern superclass), it is in the
+       first class that declares an accessible one-parameter property named by its
+       `DefaultMemberAttribute`. Explicit interface implementations (named by the interface) and
+       overrides (which C# looks for where the base declared them) are left out
+       (`netlib-indexer-override`). There the indexer is the one whose parameter is `int`, else the one
+       `int` converts to implicitly. A class's own indexer hides the base's, as in C#
+       (`netlib-indexer-inherited`).
+       - A protected indexer is accessible only under ruling R: the calling class derives from the
+         declaring type, and the receiver's static type is the calling class or below it
+         (`netlib-indexer-protected`). Otherwise it may apply, which refuses the access, as C# picks
+         another indexer there (`netlib-indexer-protected-is-an-error`,
+         `netlib-indexer-protected-base-receiver-is-an-error`).
+       - Two applicable indexers, or one hxc cannot tell applies, are refused, where C# would pick the
+         better one (`netlib-indexer-ambiguous-is-an-error`). A store to a get-only indexer is refused
+         (`netlib-indexer-readonly-is-an-error`).
+       - Compound assignment, `++` and `--` read once and store once, on the receiver and index
+         evaluated once (`netlib-indexer-compound`). Through a .NET struct's indexer they are refused,
+         with a Dynamic operand too, where gencs evaluates the receiver once into a copy
+         (`netlib-indexer-struct-compound-is-an-error`).
+       - The element type the typer gives is Dynamic for a generic class, else that of the class's first
+         one-parameter property, which need not be the bound indexer. It must convert to and from the
+         bound indexer's type as the access needs, or the access is refused, where gencs's C# fails
+         (`netlib-indexer-element-mismatch-is-an-error`).
+       - The element of a converted extern is typed Dynamic: a read passes a struct or `Nullable`
+         element as an object, which Runtime converts (`netlib-indexer-nullable-elements`).
+       - The value of an assignment through an indexer or a .NET property is the value stored, kept
+         across the call, not what a setter returns (`netlib-property-store-value`).
+     - A Haxe class implements the properties of a .NET interface converted from a `--net-lib` as gencs
+       does (ruling 7; `iface-property-bcl`, `netlib-iface-properties`). gencs's InterfaceProps picks the
+       vars: one with a get or set accessor, named as such a var of an interface its class lists itself.
+       Each becomes a CLR property with a Property row: the Haxe `get_X` and `set_X` are private,
+       non-virtual `_get_X` and `_set_X`, and public `get_X` and `set_X` accessors (`void set_X(T)`) call
+       them. The accessors are `virtual newslot` when the class declares both and neither they, the var nor
+       the class is final, else `virtual final newslot` where they implement an interface method. An
+       override of an accessor makes an override property with only the accessors the class declares
+       (`netlib-iface-property-override`, `netlib-iface-property-setter-override`). Every Haxe use calls
+       the public accessor, reflection included, and the value of a set call is its argument
+       (`netlib-iface-property-set-only`). C# code reads the values the Haxe getters return
+       (`netlib-iface-property-from-csharp`). A property of the .NET base class implements the interface
+       property of a Haxe subclass that lists the interface when each accessor the interface declares is a
+       public virtual method of the base, with exactly the interface's signature
+       (`netlib-iface-property-base-virtual`).
+       - Errors, as gencs's C# does not compile: an override of an accessor of a property that is not
+         virtual, such as the getter of a get-only one, at the override (CS0506,
+         `netlib-iface-property-getonly-override`); a var whose class does not list the interface
+         itself, which a Haxe interface extending it or a superclass would give (CS0535,
+         `netlib-iface-property-not-listed-is-an-error`); a physical var (CS0535,
+         `netlib-iface-property-physical-is-an-error`); a var or an accessor of another type than the
+         interface property's (CS0738, `iface-property-type-is-an-error`); and a property of a
+         hand-written extern interface (CS0535).
+       - Not supported yet: a non-virtual property of the .NET base class implementing the interface
+         property, for which C# adds a forwarding stub (ruling S,
+         `netlib-iface-property-base-nonvirtual-is-unsupported`; the stub is milestone 4c's), properties
+         of generic classes, events, and overloaded, generic, dynamic or abstract accessors.
+       - An interface method (of a .NET or a Haxe interface) that a method of the .NET base class
+         implements is the same: the base method must be public and virtual with exactly the
+         interface method's signature (`netlib-iface-method-base-virtual`), and a non-virtual one
+         is refused ("an interface method (I.m) implemented by a non-virtual method of the .NET base
+         class B is not supported yet", `netlib-iface-method-base-nonvirtual-is-unsupported`), where
+         hxc used to write a type the CLR could not load.
+     - A physical `@:property` var is a CLR property, as gencs writes it a C# auto-property (ruling 8;
+       `property-meta-vars`, `property-json`): a private `<X>k__BackingField`, public non-virtual
+       `HideBySig | SpecialName` accessors `get_X` and `void set_X(T)` that read and write it, static for a
+       static var, and a Property row. Every Haxe access calls the accessors: the initializers, which run
+       in the constructor or the static constructor, compound assignment and `++`, Dynamic access,
+       reflection and a hxgen class's reflection members (`property-vars-access`, which also covers a
+       generic class and a struct). A member of a struct-typed one is reached through a copy of the
+       getter's value, as in C#. System.Text.Json and .NET reflection see the properties, and no field.
+       Roslyn's `CompilerGeneratedAttribute` on the backing field and the accessors is not written
+       (it is milestone 4b's).
+       - Error, as gencs's C# does not compile: a `get_X` or `set_X` the class declares beside the var
+         (CS0082, `property-var-accessor-clash-is-an-error`).
+       - A non-physical `@:property` var with a get or set accessor is a property as gencs's gen_prop
+         makes one, the same as a .NET interface property's implementation above (ruling T,
+         `property-var-accessors`): private `_get_X`/`_set_X` bodies, public accessors (`virtual newslot`
+         with both and nothing final), an override property for a subclass's override of an accessor, and
+         the argument as a set call's value. Not supported yet: a static one, which gencs makes a static
+         property (`property-var-static-accessors-is-unsupported`), and one in a generic class, where
+         gencs's C# for a hxgen class fails (CS0686).
+     - A Haxe function converted to a .NET delegate, the `cast __delegate__(f)` that a delegate abstract's
+       `new` and `@:from` leave, takes gencs's three shapes (ruling 9; `netlib-delegates`,
+       `netlib-delegates-methods-and-combine`, `thread-create`):
+       - A local function's closure class gets a public non-virtual `Delegate` method with the function's
+         own argument and return types, holding its body; its invoke method calls it. The delegate is made
+         from that method on the class's instance, the cached `__hx_current` when nothing is captured.
+       - A static method, or an instance method's closure, is a method group: `ldnull` or the receiver,
+         `ldftn` (`dup; ldvirtftn` for a virtual method), then the delegate's `.ctor(object, native int)`.
+         A handler made again from the same method is equal to the first, so it removes it.
+       - Any other function value (a local, a bound call, a closure the inliner put in a local) gets a
+         conversion wrapper: a closure class capturing the value, whose `Delegate` calls it.
+       - The delegate abstract's `+` and `-` are `Delegate.Combine` and `Delegate.Remove`, cast back.
+       - Error, as gencs's C# does not compile (CS0030) or its cast throws at run time: a method whose
+         parameter and return types do not convert to those of the delegate's `Invoke` as C#'s method
+         group conversion allows (the same type, or a reference conversion from the `Invoke`'s parameter
+         and to its return). That includes a delegate going on as another instantiation of its type, as
+         Haxe unifies `Func_2<Int, Bool>` with `Func_2<Dynamic, Bool>`. gencs casts the delegate to the
+         other instantiation. Its C# does not compile there (CS0030, `delegate-type-mismatch`), except
+         where the two type arguments are reference types of a variant delegate's parameter, such as
+         `Func_2<String, Bool>` to `Func_2<Dynamic, Bool>`: that compiles, and the cast throws
+         `InvalidCastException` at run time.
+       - A method group over a virtual method dispatches as C#'s does: through a subclass, base-class or
+         Haxe interface receiver it runs the override, two delegates over the same object and method are
+         equal, and `Method.DeclaringType` is the class declaring the method run
+         (`delegate-method-group-virtual-dispatch`). `-` and `-=` remove a delegate, and removing the last
+         gives `null` (`delegate-remove`).
+       - Not supported yet as a method group: a .NET method, an overloaded method, a struct's method, and a
+         method reached through a `Dynamic` or companion-interface receiver.
    - **4b:** the inline-C# subset (`__cs__`, `cs.Syntax.code`, `@:functionCode`, `@:classCode`),
      `Array`'s companion indexer, the remaining standard-library stub (`Socket.select`, which calls a
      method on an `IntPtr` property's value; `new IntPtr(n)` is refused too), and Roslyn's
      `CompilerGeneratedAttribute` on a `@:property` var's backing field and accessors.
    - **4c:** `@:nativeGen` details, attributes (`@:strict`, `@:meta`), nullability metadata for the AI
-     tool schemas, events defined in Haxe, manifest resources (`-resource`, `Context.addResource`,
-     `-D dotnet-embed`), milestone 4's exit below, and the carried items:
+     tool schemas, events defined in Haxe (`@:event` vars), manifest resources (`-resource`,
+     `Context.addResource`, `-D dotnet-embed`), milestone 4's exit below, and the carried items.
+     Attributes, nullability metadata and events are not written yet, with no error: hxc compiles the
+     class without them (an `@:event` var's `add_` and `remove_` methods are plain methods), where
+     gencs writes the attributes and a C# `event`, so .NET reflection sees no attribute and no event.
+     The carried items:
      - covariant-return `@:overload` overrides, and gencs's `T1` renaming of a shadowing method type
        parameter;
      - the forwarding stub C# adds where a .NET base class's non-virtual method or property
-       implements an interface member for a Haxe subclass (ruling S; refused until then);
+       implements an interface method or property for a Haxe subclass (ruling S; both are refused
+       until then);
      - static `@:property` vars with get or set accessors, which gencs makes static properties;
-     - .NET extern, overloaded and struct methods as delegate method groups;
+     - .NET extern, overloaded and struct methods as delegate method groups, and a method group
+       reached through a `Dynamic` or companion-interface receiver;
      - an argument typed as a Haxe class type parameter, which infers `object` where gencs gives the
        instantiation's type (listed in *Interop divergences from gencs*).
-   - A hand-written extern method binds the .NET method C# would bind for a call with its declared
-     types, under a restricted rule: the exact signature first, else the one applicable overload
-     (implicit conversions: identity, upcasts, boxing, numeric widening but to `decimal`, `A` to
-     `Nullable<A>`; then an omitted tail of optional or `params` parameters, filled as Roslyn fills
-     them; a generic method's type arguments taken from the declared types, as for the server app's
-     `JsonSerializer.Serialize(obj:Any)`). Two applicable overloads are a compile error where C# would
-     pick the more specific one (`netlib-extern-ambiguous-is-an-error`), and so is a return, field or
-     property type that does not convert implicitly, or a variable declared static over an instance
-     member or the other way. A Haxe-optional value-type argument (`?b:Int`) stays refused, left out or
-     passed, as gencs's C# fails there (CS1503). A converted `--net-lib` member still binds only its
-     exact signature. These amendments keep hxc from picking an overload by accident:
-     - **Unknown applicability.** A candidate or conversion outside hxc's model of C# may apply: a
-       variant generic interface or delegate target, `Span`/`ReadOnlySpan`, `decimal`,
-       `nint`/`nuint`, `Nullable<B>` from another type, a type declaring `op_Implicit`, an array to
-       a generic interface or another array, a `params` array's expanded form, a generic candidate
-       with a type argument the declared types do not give or with any constraint, and a protected
-       member that ruling R makes inaccessible: the calling class must derive from its type, and the
-       receiver's static type must be the calling class or below it. C# then skips the member, which
-       hxc does not model. A call that such a candidate
-       may also take is refused ("more than one .NET overload of T.m may accept (…)", or "hxc cannot
-       tell whether the .NET method T.m accepts (…)" when it is the only candidate), as
-       `String.Concat(a:NativeArray<Int>)` is (`netlib-extern-unknown-candidate-refused`; C# binds
-       `Concat<int>(IEnumerable<int>)`).
-     - **Link by link.** The chain is walked from the most derived type, and an override is a candidate
-       only where its method was first declared. In a link, the one exact match binds, else the one
-       applicable method when nothing else may apply; a link passes to the next only when nothing in it
-       applies or may apply. So a derived `Foo(object)` beats a base's exact `Foo(string)`, as in C#.
-       The walk starts at the receiver's static type: for an instance call, the .NET type of the
-       receiver expression's extern class (or of its nearest extern superclass that has one), not the
-       extern class declaring the Haxe field; for a static call, the class the call names. So
-       `new FDerivedD().F(x)` finds `FDerived.F(IFoo)` although the field is declared on the extern
-       `FBase` (`netlib-extern-receiver-type-starts-the-walk`). Through an extern interface receiver
-       that extends the declaring extern interface, the call binds as declared, unless a .NET interface
-       between the receiver's .NET type (included) and the declaring one (excluded) declares a method,
-       property or event of the same name: C#'s interface member lookup may then bind it, which hxc does
-       not model, so the call is refused ("the .NET method T.m is also declared on I; hxc does not model
-       C#'s interface member lookup", `netlib-extern-interface-receiver-hidden-refused`,
-       `netlib-extern-interface-receiver-diamond-refused`). A type-parameter receiver counts as its one
-       constraint, as gencs casts it, when that is an extern class or interface with a .NET type or a
-       Haxe class below one (`netlib-extern-type-parameter-receiver`); with several constraints or none
-       of those, a hand-written extern's call is refused ("hxc cannot tell which .NET overload of T.m the
-       type parameter T's constraints select").
-     - **Argument types.** At a call, the arguments' own types (what gencs's C# sees) must bind the same
-       method definition as the declared types, or the call is refused ("the .NET overload of T.m
-       depends on the argument types (…); declare it with @:overload"). An `@:overload` extern is
-       exempt: gencs casts its arguments to the declared types. An argument's own type counts as
-       declared when it is Dynamic or has no signature, or when it is a `haxe.lang.Null<T>` and the
-       declared type is not one (gencs unwraps or wraps it, a basic-typed argument to a declared
-       `Null<T>` included: `T1(x:Null<Float>)` with an `Int` is ``T1<haxe.lang.Null`1>``), or when it is
-       a basic type (`Bool`, the
-       integers, `Char`, `Single`, `Float`) and the declared type is another one, as gencs casts it
-       (`T1(x:Float)` with an `Int` is `T1<double>`, and `N(int)`/`N(double)` binds `N(double)`;
-       `netlib-extern-basic-argument-cast`). A generic method's type arguments come from
-       the arguments' own types, as C# infers them (`T1(x:Any)` with a `MyPlain` is `T1<MyPlain>`, a
-       TypeDef or TypeSpec of the program's own module); where they differ from the declared ones, the
-       declared return type must still convert from the method's return with them, or the call is
-       refused with the return-mismatch error.
-     - **Haxe-compiled types.** A Haxe class or interface keeps its own type in either binding (a
-       declared parameter type can be one too): no identity match fires for it but against that very
-       type. It converts for certain to `object`, to the classes on its Haxe superclass chain and the
-       interfaces implemented along it, directly or through Haxe interfaces, the extern ones with their
-       .NET supertypes, and, for a `@:struct` class, to `System.ValueType`; a Haxe interface to its base
-       interfaces likewise. It converts to nothing else, except that a variant generic interface or
-       delegate not on that list may apply (unknown), as C#'s variance is not modelled. As ruling 1
-       binds only the one applicable method, a single overload taking the interface binds
-       (`netlib-extern-haxe-class-implementing-net-interface`), and `Baz(object)` next to
-       `Baz(IDisposable)` is refused (`netlib-extern-haxe-class-implementing-net-interface-refused`),
-       as are `Bar(Exception)` next to `Bar(ArgumentException)` for a subclass of `ArgumentException`
-       and `Vt(ValueType)` next to `Vt(object)` for a `@:struct` class, where C# picks the more specific.
-     - **Instantiation.** Both bindings
-       take the call's type arguments for the class's and the method's type parameters, so
-       `List<int>.Add(T)` takes an int; where that makes two candidates take exactly the arguments
-       (`Gen<int>`'s `Foo(T)` and `Foo(int)`), the call is refused, where C# prefers the parameter that
-       is not a type parameter.
-   - gencs renames a method type parameter that shadows another (`sh<T,T1>`) where hxc emits
-     `sh<T,T>`. Only reflection on generic-parameter names can see it.
-   - An `@:overload` override that changes only the return type is refused. gencs compiles it as a C#
-     covariant-return override, which needs `newslot`, a MethodImpl row and
-     `PreserveBaseOverridesAttribute`.
-   - `a[i]` on an extern class with a .NET indexer is a call of its `get_Item` or `set_Item`
-     (`netlib-indexers`). The indexer is the one C# picks for an `int` argument. Walking the class's
-     .NET chain from the receiver's class (a Haxe class's nearest extern superclass), it is in the
-     first class that declares an accessible one-parameter property named by its
-     `DefaultMemberAttribute`. Explicit interface implementations (named by the interface) and
-     overrides (which C# looks for where the base declared them) are left out
-     (`netlib-indexer-override`). There the indexer is the one whose parameter is `int`, else the one
-     `int` converts to implicitly. A class's own indexer hides the base's, as in C#
-     (`netlib-indexer-inherited`).
-     - A protected indexer is accessible only under ruling R: the calling class derives from the
-       declaring type, and the receiver's static type is the calling class or below it
-       (`netlib-indexer-protected`). Otherwise it may apply, which refuses the access, as C# picks
-       another indexer there (`netlib-indexer-protected-is-an-error`,
-       `netlib-indexer-protected-base-receiver-is-an-error`).
-     - Two applicable indexers, or one hxc cannot tell applies, are refused, where C# would pick the
-       better one (`netlib-indexer-ambiguous-is-an-error`). A store to a get-only indexer is refused
-       (`netlib-indexer-readonly-is-an-error`).
-     - Compound assignment, `++` and `--` read once and store once, on the receiver and index
-       evaluated once (`netlib-indexer-compound`). Through a .NET struct's indexer they are refused,
-       with a Dynamic operand too, where gencs evaluates the receiver once into a copy
-       (`netlib-indexer-struct-compound-is-an-error`).
-     - The element type the typer gives is Dynamic for a generic class, else that of the class's first
-       one-parameter property, which need not be the bound indexer. It must convert to and from the
-       bound indexer's type as the access needs, or the access is refused, where gencs's C# fails
-       (`netlib-indexer-element-mismatch-is-an-error`).
-     - The element of a converted extern is typed Dynamic: a read passes a struct or `Nullable`
-       element as an object, which Runtime converts (`netlib-indexer-nullable-elements`).
-     - The value of an assignment through an indexer or a .NET property is the value stored, kept
-       across the call, not what a setter returns (`netlib-property-store-value`).
-   - A Haxe class implements the properties of a .NET interface converted from a `--net-lib` as gencs
-     does (ruling 7; `iface-property-bcl`, `netlib-iface-properties`). gencs's InterfaceProps picks the
-     vars: one with a get or set accessor, named as such a var of an interface its class lists itself.
-     Each becomes a CLR property with a Property row: the Haxe `get_X` and `set_X` are private,
-     non-virtual `_get_X` and `_set_X`, and public `get_X` and `set_X` accessors (`void set_X(T)`) call
-     them. The accessors are `virtual newslot` when the class declares both and neither they, the var nor
-     the class is final, else `virtual final newslot` where they implement an interface method. An
-     override of an accessor makes an override property with only the accessors the class declares
-     (`netlib-iface-property-override`, `netlib-iface-property-setter-override`). Every Haxe use calls
-     the public accessor, reflection included, and the value of a set call is its argument
-     (`netlib-iface-property-set-only`). C# code reads the values the Haxe getters return
-     (`netlib-iface-property-from-csharp`). A property of the .NET base class implements the interface
-     property of a Haxe subclass that lists the interface when each accessor the interface declares is a
-     public virtual method of the base, with exactly the interface's signature
-     (`netlib-iface-property-base-virtual`).
-     - Errors, as gencs's C# does not compile: an override of an accessor of a property that is not
-       virtual, such as the getter of a get-only one, at the override (CS0506,
-       `netlib-iface-property-getonly-override`); a var whose class does not list the interface
-       itself, which a Haxe interface extending it or a superclass would give (CS0535,
-       `netlib-iface-property-not-listed-is-an-error`); a physical var (CS0535,
-       `netlib-iface-property-physical-is-an-error`); a var or an accessor of another type than the
-       interface property's (CS0738, `iface-property-type-is-an-error`); and a property of a
-       hand-written extern interface (CS0535).
-     - Not supported yet: a non-virtual property of the .NET base class implementing the interface
-       property, for which C# adds a forwarding stub (ruling S,
-       `netlib-iface-property-base-nonvirtual-is-unsupported`; the stub is milestone 4c's), properties
-       of generic classes, events, and overloaded, generic, dynamic or abstract accessors.
-   - A physical `@:property` var is a CLR property, as gencs writes it a C# auto-property (ruling 8;
-     `property-meta-vars`, `property-json`): a private `<X>k__BackingField`, public non-virtual
-     `HideBySig | SpecialName` accessors `get_X` and `void set_X(T)` that read and write it, static for a
-     static var, and a Property row. Every Haxe access calls the accessors: the initializers, which run
-     in the constructor or the static constructor, compound assignment and `++`, Dynamic access,
-     reflection and a hxgen class's reflection members (`property-vars-access`, which also covers a
-     generic class and a struct). A member of a struct-typed one is reached through a copy of the
-     getter's value, as in C#. System.Text.Json and .NET reflection see the properties, and no field.
-     Roslyn's `CompilerGeneratedAttribute` on the backing field and the accessors is not written
-     (it is milestone 4b's).
-     - Error, as gencs's C# does not compile: a `get_X` or `set_X` the class declares beside the var
-       (CS0082, `property-var-accessor-clash-is-an-error`).
-     - A non-physical `@:property` var with a get or set accessor is a property as gencs's gen_prop
-       makes one, the same as a .NET interface property's implementation above (ruling T,
-       `property-var-accessors`): private `_get_X`/`_set_X` bodies, public accessors (`virtual newslot`
-       with both and nothing final), an override property for a subclass's override of an accessor, and
-       the argument as a set call's value. Not supported yet: a static one, which gencs makes a static
-       property (`property-var-static-accessors-is-unsupported`), and one in a generic class, where
-       gencs's C# for a hxgen class fails (CS0686).
-   - A Haxe function converted to a .NET delegate, the `cast __delegate__(f)` that a delegate abstract's
-     `new` and `@:from` leave, takes gencs's three shapes (ruling 9; `netlib-delegates`,
-     `netlib-delegates-methods-and-combine`, `thread-create`):
-     - A local function's closure class gets a public non-virtual `Delegate` method with the function's
-       own argument and return types, holding its body; its invoke method calls it. The delegate is made
-       from that method on the class's instance, the cached `__hx_current` when nothing is captured.
-     - A static method, or an instance method's closure, is a method group: `ldnull` or the receiver,
-       `ldftn` (`dup; ldvirtftn` for a virtual method), then the delegate's `.ctor(object, native int)`.
-       A handler made again from the same method is equal to the first, so it removes it.
-     - Any other function value (a local, a bound call, a closure the inliner put in a local) gets a
-       conversion wrapper: a closure class capturing the value, whose `Delegate` calls it.
-     - The delegate abstract's `+` and `-` are `Delegate.Combine` and `Delegate.Remove`, cast back.
-     - Error, as gencs's C# does not compile (CS0030) or its cast throws at run time: a method whose
-       parameter and return types do not convert to those of the delegate's `Invoke` as C#'s method
-       group conversion allows (the same type, or a reference conversion from the `Invoke`'s parameter
-       and to its return). That includes a delegate going on as another instantiation of its type, as
-       Haxe unifies `Func_2<Int, Bool>` with `Func_2<Dynamic, Bool>`. gencs casts the delegate to the
-       other instantiation. Its C# does not compile there (CS0030, `delegate-type-mismatch`), except
-       where the two type arguments are reference types of a variant delegate's parameter, such as
-       `Func_2<String, Bool>` to `Func_2<Dynamic, Bool>`: that compiles, and the cast throws
-       `InvalidCastException` at run time.
-     - A method group over a virtual method dispatches as C#'s does: through a subclass, base-class or
-       Haxe interface receiver it runs the override, two delegates over the same object and method are
-       equal, and `Method.DeclaringType` is the class declaring the method run
-       (`delegate-method-group-virtual-dispatch`). `-` and `-=` remove a delegate, and removing the last
-       gives `null` (`delegate-remove`).
-     - Not supported yet as a method group: a .NET method, an overloaded method, a struct's method, and a
-       method reached through a `Dynamic` or companion-interface receiver.
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
