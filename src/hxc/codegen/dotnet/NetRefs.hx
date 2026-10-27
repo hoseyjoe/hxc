@@ -82,8 +82,8 @@ class NetRefs {
 	}
 
 	// The reference-only library in `file`, cached unless `keep` is false. Null, with the reason in
-	// `unreadable`, when the file cannot be opened or is not a .NET assembly (a native DLL, a damaged file);
-	// anything else the reader throws is an hxc bug, and propagates.
+	// `unreadable`, when the file cannot be opened or the readers reject it (a native DLL, a damaged file:
+	// a PeErrorMessage, or one of the strings they throw); any other exception is an hxc bug, and propagates.
 	function read(file:String, keep = true):Null<NetLibrary> {
 		if (byFile.exists(file)) return byFile.get(file);
 		var why:Null<String> = null;
@@ -102,9 +102,8 @@ class NetRefs {
 			if (open >= 0 && close > open) m = m.substring(open + 2, close);
 			why = "is not a .NET assembly: " + m;
 		} catch (e:String) {
-			// the readers' errors for data that ends early or points past its end
-			if (e != "No more input" && e != "String.sub / Bytes.sub") throw e;
-			why = "is not a .NET assembly: it is truncated or damaged";
+			// the readers' other errors (bounds, assertions) all come from data they cannot make sense of
+			why = "could not be read: " + e;
 		}
 		if (why != null) {
 			unreadable.set(file, why);
