@@ -31,6 +31,19 @@ typedef ExternMethod = {
 	typeArgs:Null<Array<IlSigNorm>>
 }
 
+// The indexer C# picks for one int32 argument (`indexer`). `parent`: the .NET class declaring it, with the
+// type arguments of the receiver's class applied. `indexSig` and `valueSig`: the property's parameter and
+// type as the metadata declares them, in terms of `parent`'s type parameters, which a call site writes
+// them as and `subst` with `parent`'s arguments gives the types they stand for. An accessor is null where
+// the property has no public one.
+typedef ExternIndexer = {
+	parent:IlSigNorm,
+	getter:Null<String>,
+	setter:Null<String>,
+	indexSig:IlSigNorm,
+	valueSig:IlSigNorm
+}
+
 // A call site of an extern method, for ExternMembers.method: its arguments, their own types (null where
 // a type is Dynamic or has no signature), the class whose code makes the call, and the type arguments of
 // the extern class and of the extern method there (ruling I; `methodArgs` is empty when the method has
@@ -914,6 +927,87 @@ class ExternMembers {
 			}
 		}
 		throw new Unsupported("the unknown .NET field " + Globals.sTypePath(c.path) + "." + cf.name, false);
+	}
+
+	// The class's DefaultMemberAttribute name, which C# gives every class that declares an indexer, or null.
+	static function defaultMember(cls:IlClass):Null<String> {
+		for (a in cls.cattrs) {
+			var t = IlMetaTools.attrType(a);
+			if (t == null || t.name != "DefaultMemberAttribute" || !IlPaths.strsEq(t.ns, ["System", "Reflection"]) || a.value == null) continue;
+			switch (a.value.fixed) {
+				case [InstConstant(IString(b))]: return b.toString();
+				case _:
+			}
+		}
+		return null;
+	}
+
+	static function publicAccessor(a:Null<IlAccessor>):Null<String> {
+		return a != null && a.flags.access == FAPublic && a.flags.contract.indexOf(CMStatic) < 0 ? a.name : null;
+	}
+
+	// The indexer of `c`'s .NET class that C# picks for `x[i]` with an int32 `i` (values notes §3): walking
+	// the chain from `c`, the first class that declares a public one-parameter indexer (a property of its
+	// DefaultMemberAttribute's name, which leaves out the explicit interface implementations, named by the
+	// interface) that int32 converts to; there the one with an int32 parameter, else the one such. Null when
+	// no class has one. Refused when hxc cannot tell which applies, or when more than one does, rather than
+	// picking by chance (as `resolve` does for methods). `params`: `c`'s type arguments.
+	public function indexer(c:TClass, params:Array<T>):Null<ExternIndexer> {
+		var args = types.classArgs(c, params);
+		for (link in chain(c)) {
+			var name = defaultMember(link.cls);
+			if (name == null) continue;
+			var parentArgs = [for (a in linkArgs(link)) subst(a, args)];
+			var exact = [], yes = [], unknown = 0;
+			for (p in link.cls.cprops) {
+				if (p.pname != name) continue;
+				var sigs = switch (p.psig.snorm) {
+					case LMethod(_, ret, [idx]): {ret: ret, idx: idx};
+					case _: continue;
+				}
+				var getter = publicAccessor(p.pget), setter = publicAccessor(p.pset);
+				if (getter == null && setter == null) continue;
+				var param = subst(sigs.idx, parentArgs);
+				var found:ExternIndexer = {
+					parent: switch (link.parent) {
+						case LClass(path, _): LClass(path, parentArgs);
+						case LValueType(path, _): LValueType(path, parentArgs);
+						case s: s;
+					},
+					getter: getter,
+					setter: setter,
+					indexSig: sigs.idx,
+					valueSig: sigs.ret
+				};
+				switch (converts(LInt32, param)) {
+					case AYes:
+						yes.push(found);
+						if (IlPaths.sigEq(norm(param), LInt32)) exact.push(found);
+					case AUnknown:
+						unknown++;
+					case ANo:
+				}
+			}
+			var where = sigS(LClass(link.cls.cpath, []));
+			if (exact.length == 1) return exact[0];
+			if (yes.length == 1 && unknown == 0) return yes[0];
+			if (unknown > 0) throw Unsupported.error("hxc cannot tell which .NET indexer of " + where + " an int argument selects");
+			if (yes.length > 1) throw Unsupported.error("more than one .NET indexer of " + where + " accepts an int argument");
+		}
+		return null;
+	}
+
+	// Refuses an access to an element of the type `value` (substituted) through the hand-written extern `c`'s
+	// indexer, as an element of the Haxe type `declared` that the extern's ArrayAccess says, when it does not
+	// convert as the access needs (ruling 1, as `checkVar` does for a variable).
+	public function checkIndexerElement(c:TClass, value:IlSigNorm, declared:IlSigNorm, reads:Bool, writes:Bool):Void {
+		if (!isHandWritten(c)) return;
+		if (reads && !implicitlyConverts(value, declared))
+			throw Unsupported.error("the .NET indexer of " + typeS(c) + " is of the type " + sigS(value) + ", which does not convert to the declared "
+				+ sigS(declared));
+		if (writes && !implicitlyConverts(declared, value))
+			throw Unsupported.error("the declared " + sigS(declared) + " does not convert to " + sigS(value) + ", the type of the .NET indexer of "
+				+ typeS(c));
 	}
 
 	// Refuses an access to `link`'s member of the type `sig` (static or not, `isStatic`) through the

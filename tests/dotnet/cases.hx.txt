@@ -15826,3 +15826,227 @@ class P {
 ===
 [compile]
 P.hx:21: characters 9-25 : dotnet: the .NET method ValLib.IDiaA.F is also declared on ValLib.IDiaB; hxc does not model C#'s interface member lookup
+# Task 6: .NET indexers. get_Item and set_Item through a[i], on the indexer C# picks for one int argument.
+--- netlib-indexers @gencs @netlib
+import cs.system.collections.generic.List_1;
+import cs.system.collections.generic.IList_1;
+import cs.system.collections.generic.Dictionary_2;
+class Mail { public var Address:String; public function new(a) Address = a; }
+class P {
+	static function main() {
+		var g = new vallib.Grid();
+		trace("grid", g[0], g[2]);
+		g[1] = "B";
+		trace("grid set", g[1], g.get_Item(1));
+		g.set_Item(2, "C");
+		trace("grid set_Item", g[2]);
+		var r = new vallib.RoGrid();
+		trace("ro", r[3]);
+		var ls = new List_1<String>();
+		ls.Add("x"); ls.Add("y");
+		trace("list", ls[0], ls[1], ls.get_Item(1));
+		ls[0] = "X";
+		trace("list set", ls[0]);
+		var il:IList_1<String> = ls;
+		trace("ilist", il.get_Item(0));
+		var lm = new List_1<Mail>();
+		lm.Add(new Mail("a@b"));
+		trace("mail", lm[0].Address, lm.Count == 1 ? lm[0].Address : "none");
+		var li = new List_1<Int>();
+		li.Add(4);
+		var x:Int = li[0];
+		trace("int list", li[0], x + 1, li[0] + 1);
+		var d = new Dictionary_2<Int, String>();
+		d.set_Item(3, "three");
+		trace("dict", d[3], d.get_Item(3));
+		var s = "abc";
+		var cells = new vallib.Cells();
+		trace("cells", cells.get_Item(2, 3));
+		cells.set_Item(1, 2, 9);
+	}
+}
+===
+[run]
+P.hx:8: grid, a, c
+P.hx:10: grid set, B, B
+P.hx:12: grid set_Item, C
+P.hx:14: ro, 1.5
+P.hx:17: list, x, y, y
+P.hx:19: list set, X
+P.hx:21: ilist, X
+P.hx:24: mail, a@b, a@b
+P.hx:28: int list, 4, 5, 5
+P.hx:31: dict, three, three
+P.hx:34: cells, 203
+set 1,2=9
+# Compound assignment, ++ and the value of an assignment through an indexer; a Dynamic element goes through get_Item and set_Item (ruling 6).
+--- netlib-indexer-compound @gencs @netlib
+import cs.system.collections.generic.List_1;
+class P {
+	static function main() {
+		var li = new List_1<Int>();
+		li.Add(4);
+		li[0] += 2;
+		trace("compound", li[0]);
+		li[0]++;
+		trace("inc", li[0]);
+		var ls = new List_1<String>();
+		ls.Add("a");
+		ls[0] += "b";
+		trace("str compound", ls[0]);
+		var v = (ls[0] = "z");
+		trace("assign value", v);
+		var g = new vallib.Grid();
+		g[0] += "!";
+		trace("grid compound", g[0]);
+		var ln = vallib.Nul.ListOf();
+		trace("nullable elem", ln[0], ln[1], ln[0] == null, ln[1] == null);
+	}
+}
+===
+[run]
+P.hx:7: compound, 6
+P.hx:9: inc, 7
+P.hx:13: str compound, ab
+P.hx:15: assign value, z
+P.hx:18: grid compound, a!
+P.hx:20: nullable elem, 1, null, false, true
+# A Dynamic value stored into a typed indexer: gencs's C# fails (CS0266), hxc converts.
+--- netlib-indexer-dynamic-write @netlib
+import cs.system.collections.generic.List_1;
+class P {
+	static function main() {
+		var li = new List_1<Int>();
+		li.Add(4);
+		var dyn:Dynamic = 10;
+		li[0] = dyn;
+		trace(li[0]);
+	}
+}
+===
+[run]
+P.hx:8: 10
+# An indexer inherited from a .NET base class, one a derived class hides with its own (C# picks the most derived class that has one),
+# a Haxe subclass, and the indexer of a .NET struct, called on the variable's address.
+--- netlib-indexer-inherited @gencs @netlib
+class MyGrid extends vallib.Grid {
+	public function new() super();
+}
+class P {
+	static function main() {
+		var s = new vallib.SubGrid();
+		s[0] = "S";
+		trace("sub", s[0], s[1]);
+		var h = new vallib.HiddenGrid();
+		trace("hidden", h[1]);
+		var g:vallib.Grid = h;
+		trace("through base", g[1]);
+		var m = new MyGrid();
+		m[1] = "M";
+		trace("haxe subclass", m[1], m[2]);
+		var sl:vallib.Slots = null;
+		sl[0] = 5;
+		var v = (sl[1] = 7);
+		trace("struct", sl[0], sl[1], v);
+	}
+}
+===
+[run]
+P.hx:8: sub, S, b
+P.hx:10: hidden, hidden1
+P.hx:12: through base, b
+P.hx:15: haxe subclass, M, c
+P.hx:19: struct, 5, 7, 7
+# Two indexers that both take an int argument: refused, as hxc does not rank them (C# picks long).
+--- netlib-indexer-ambiguous-is-an-error @netlib
+class P {
+	static function main() {
+		var w = new vallib.WideGrid();
+		trace(w[0]);
+	}
+}
+===
+[compile]
+P.hx:4: characters 9-13 : dotnet: more than one .NET indexer of ValLib.WideGrid accepts an int argument
+# A get-only indexer cannot be stored to, and a derived class's own (get-only) one hides the base's.
+--- netlib-indexer-readonly-is-an-error @netlib
+class P {
+	static function main() {
+		var r = new vallib.RoGrid();
+		r[0] = 1.0;
+		var h = new vallib.HiddenGrid();
+		h[0] = "x";
+		r[1] += 2.0;
+	}
+}
+===
+[compile]
+P.hx:4: characters 3-13 : dotnet: the .NET indexer of ValLib.RoGrid has no public setter
+P.hx:6: characters 3-13 : dotnet: the .NET indexer of ValLib.HiddenGrid has no public setter
+P.hx:7: characters 3-14 : dotnet: the .NET indexer of ValLib.RoGrid has no public setter
+# A Nullable element read as an Int and written as one, null included.
+--- netlib-indexer-nullable-elements @gencs @netlib
+class P {
+	static function main() {
+		var ln = vallib.Nul.ListOf();
+		var a:Int = ln[0];
+		var b:Int = ln[1];
+		trace("read", a, b);
+		ln[1] = 7;
+		trace("write", ln[1], ln[2]);
+		ln[0] = null;
+		trace("write null", ln[0] == null, ln[2]);
+		ln[2]++;
+		trace("inc", ln[2]);
+		trace(vallib.Nul.ShowList(ln));
+	}
+}
+===
+[run]
+P.hx:6: read, 1, 0
+P.hx:8: write, 7, 3
+P.hx:10: write null, true, 3
+P.hx:12: inc, 4
+P.hx:13: null;7;4;
+# The value of an assignment to a .NET property is the value stored (ruling 7). A hand-written extern variable bound to a
+# property is stored to directly.
+--- netlib-property-store-value @gencs @netlib
+import cs.system.Nullable_1;
+@:native("ValLib.Model") extern class HModel {
+	function new():Void;
+	var NProp:Nullable_1<Int>;
+}
+class P {
+	static function main() {
+		var h = new HModel();
+		var x = (h.NProp = new Nullable_1<Int>(5));
+		trace("value", x.Value, h.NProp.Value);
+		var y:Nullable_1<Int> = (h.NProp = null);
+		trace("null", y.HasValue, h.NProp.HasValue);
+		trace("argument", vallib.Nul.Show(h.NProp = new Nullable_1<Int>(6)), h.NProp.Value);
+	}
+}
+===
+[run]
+P.hx:10: value, 5, 5
+P.hx:12: null, false, false
+P.hx:13: argument, has 6, 6
+# A converted extern's property is stored through its set_ method, whose call gencs leaves in the C# when the value is used (CS0571);
+# hxc stores and takes the argument as the value.
+--- netlib-property-store-value-converted @netlib
+import cs.system.Nullable_1;
+class P {
+	static function main() {
+		var m = new vallib.Model();
+		var v = (m.NProp = new Nullable_1<Int>(7));
+		trace("value", v.Value, m.NProp.Value);
+		var w:Nullable_1<Int> = (m.NProp = null);
+		trace("null", w.HasValue, m.NProp.HasValue);
+		trace("argument", vallib.Nul.Show(m.NProp = new Nullable_1<Int>(3)), m.NProp.Value);
+	}
+}
+===
+[run]
+P.hx:6: value, 7, 7
+P.hx:8: null, false, false
+P.hx:9: argument, has 3, 3

@@ -250,7 +250,7 @@ class IlMetaTools {
 	}
 
 	// The namespace and name of a custom attribute's type, from its constructor.
-	static function attrType(a:MetaCustomAttribute):Null<{ns:Array<String>, name:String}> {
+	public static function attrType(a:MetaCustomAttribute):Null<{ns:Array<String>, name:String}> {
 		return switch (a.type) {
 			case Method(m) if (m.declaring != null): {ns: m.declaring.namespace, name: m.declaring.name};
 			case MemberRef(r): switch (r.cls) {

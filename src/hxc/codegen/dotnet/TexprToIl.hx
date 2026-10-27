@@ -1101,6 +1101,18 @@ class TexprToIl {
 		throw "internal error: " + Globals.sTypePath(en.path) + " has no constructor " + i;
 	}
 
+	// The end of an assignment whose value `s` is on the stack above what `store` consumes: C#'s value of an
+	// assignment is the value stored, not what a setter returns, so it is kept across `store` when `ret`
+	// needs it, as gencs's temporary does.
+	function storeKeeping(ret:Ret, s:IlSigNorm, store:Void->Void):Void {
+		var tmp = needVal(ret) ? ops.keepTop(s) : -1;
+		store();
+		if (tmp >= 0) {
+			code.ldloc(tmp);
+			coerce(s, ret);
+		}
+	}
+
 	function assign(ret:Ret, lhs:TExpr, rhs:TExpr):Void {
 		switch (lhs.expr) {
 			case TLocal(v) if (refTarget(anySlot(v)) != null):
@@ -1139,12 +1151,15 @@ class TexprToIl {
 			case TArray(e1, e2) if (isNativeArray(e1.type)):
 				var elem = calls.pushArrayAndIndex(e1, e2);
 				texpr(RValue(elem), rhs);
-				var tmp = needVal(ret) ? ops.keepTop(elem) : -1;
-				code.stelem(elem, () -> g.typeTokenOf(elem));
-				if (tmp >= 0) {
-					code.ldloc(tmp);
-					coerce(elem, ret);
-				}
+				storeKeeping(ret, elem, () -> code.stelem(elem, () -> g.typeTokenOf(elem)));
+			case TArray(e1, e2) if (calls.isNetIndexer(e1)):
+				// set_Item(index, value), the value converted to the setter's parameter type.
+				var ix = calls.netIndexer(e1, lhs.type, false, true);
+				var set = ix.setToken();
+				calls.receiver(e1, ix.parent, true);
+				nullOperand(RValue(ix.index), e2, false);
+				texpr(RValue(ix.value), rhs);
+				storeKeeping(ret, ix.value, () -> code.opToken(ix.isStruct ? IlOps.CALL : IlOps.CALLVIRT, set, 3, 0));
 			case TArray(e1, e2) if (arrayOf(e1.type) != null):
 				var m = calls.arrayAccessor(e1.type, "__set");
 				calls.receiver(e1, m.owner);
@@ -1168,13 +1183,10 @@ class TexprToIl {
 				var f = calls.instanceField(c, cparams, cf);
 				calls.receiver(obj, f.owner, true);
 				texprStore(f.sig, lhs.type, rhs);
-				var tmp = needVal(ret) ? ops.keepTop(f.sig) : -1;
-				volatilePrefix(cf);
-				code.opToken(IlOps.STFLD, f.token, 2, 0);
-				if (tmp >= 0) {
-					code.ldloc(tmp);
-					coerce(f.sig, ret);
-				}
+				storeKeeping(ret, f.sig, () -> {
+					volatilePrefix(cf);
+					code.opToken(IlOps.STFLD, f.token, 2, 0);
+				});
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c)):
 				var isStatic = fa.match(FStatic(_, _));
 				var inst = calls.instantiation(c, fa);
@@ -1190,11 +1202,11 @@ class TexprToIl {
 						code.opToken(isStatic ? IlOps.STSFLD : IlOps.STFLD, token, isStatic ? 1 : 2, 0);
 					case XProperty(open, _, setter) if (setter != null):
 						var s = ExternMembers.subst(open, inst);
-						if (needVal(ret)) throw new Unsupported("the value of an assignment to a .NET property", false);
 						if (!isStatic) calls.receiver(obj, parent);
 						texpr(RValue(s), rhs);
 						var token = g.mb.memberRef(g.typeTokenOf(parent), setter, g.sigs.method(!isStatic, LVoid, [open], 0));
-						code.opToken(isStatic || DotnetTypes.isValueType(parent) ? IlOps.CALL : IlOps.CALLVIRT, token, isStatic ? 1 : 2, 0);
+						var op = isStatic || DotnetTypes.isValueType(parent) ? IlOps.CALL : IlOps.CALLVIRT;
+						storeKeeping(ret, s, () -> code.opToken(op, token, isStatic ? 1 : 2, 0));
 					case _:
 						throw new Unsupported("assignments to a read-only .NET member", true);
 				}
@@ -1264,6 +1276,41 @@ class TexprToIl {
 						code.stloc(v);
 						dyn.localFieldCall(arr, "__set", e1.pos, [idx, v]);
 						code.op(IlOps.POP, 1, 0);
+					}
+				};
+			case TArray(e1, e2) if (!isNativeArray(e1.type) && calls.isNetIndexer(e1)):
+				// get_Item and set_Item on the receiver and index stored once.
+				var ix = calls.netIndexer(e1, e.type, true, true);
+				if (ix.isStruct) throw new Unsupported("read-modify-write through an indexer of a .NET struct", false);
+				var get = ix.getToken(), set = ix.setToken();
+				var recv = -1, idx = -1;
+				function reload() {
+					code.ldloc(recv);
+					code.ldloc(idx);
+				}
+				// A Dynamic element that is a struct or Nullable is read and stored as an object, as gencs's
+				// Runtime does, which converts it to the type of the operation.
+				var boxed = TexprDynamic.isDynamic(e.type) && ix.value.match(LValueType(_, _));
+				return {
+					sig: boxed ? LObject : ix.value,
+					receiver: true,
+					prepare: () -> {
+						texpr(RValue(ix.parent), e1);
+						recv = code.addLocal(ix.parent);
+						code.stloc(recv);
+						nullOperand(RValue(ix.index), e2, false);
+						idx = code.addLocal(ix.index);
+						code.stloc(idx);
+						reload();
+					},
+					load: () -> {
+						reload();
+						code.opToken(IlOps.CALLVIRT, get, 2, 1);
+						if (boxed) convert(ix.value, LObject);
+					},
+					store: () -> {
+						if (boxed) convert(LObject, ix.value);
+						code.opToken(IlOps.CALLVIRT, set, 3, 0);
 					}
 				};
 			case TArray(e1, e2) if (isNativeArray(e1.type) || arrayOf(e1.type) != null):

@@ -30,6 +30,19 @@ import hxc.codegen.dotnet.TexprToIl.staticOwner;
 import hxc.codegen.dotnet.TexprToIl.strip;
 import hxc.codegen.dotnet.TexprOps.stringKind;
 
+// A .NET indexer an `e1[i]` goes through (TexprCalls.netIndexer): the class declaring it with its type
+// arguments applied, the types of its index and element there, and the tokens of its accessors, which
+// refuse a missing one. `isStruct`: its class is a value type, whose accessors are called, not
+// callvirted, on the receiver's address.
+typedef NetIndexer = {
+	parent:IlSigNorm,
+	index:IlSigNorm,
+	value:IlSigNorm,
+	isStruct:Bool,
+	getToken:Void->Int,
+	setToken:Void->Int
+}
+
 // The member access of TexprToIl: receivers, fields, constants, calls, constructors, arrays and casts.
 // Shares its state through the TexprToIl that owns it.
 @:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprDynamic)
@@ -995,13 +1008,21 @@ class TexprCalls {
 				throw "internal error: not a method signature";
 		}
 		if (isSuper) code.ldarg(0) else if (!isStatic) receiver(obj, parent);
-		pushExternArgs(args, [for (a in ilArgs) DotnetTypes.substitute(a, parentArgs, margs)], m.omitted);
+		var slots = [for (a in ilArgs) DotnetTypes.substitute(a, parentArgs, margs)];
+		pushExternArgs(args, slots, m.omitted);
 		var token = g.mb.memberRef(g.typeTokenOf(parent), m.name, g.sigs.methodSig(m.sig, m.genericCount));
 		if (margs.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec(margs));
 		var retSlot = DotnetTypes.substitute(ilRet, parentArgs, margs);
 		var op = isStatic || isSuper || DotnetTypes.isValueType(parent) ? IlOps.CALL : IlOps.CALLVIRT;
-		code.opToken(op, token, ilArgs.length + (isStatic ? 0 : 1), retSlot.match(LVoid) ? 0 : 1);
-		if (retSlot.match(LVoid) && needVal(ret)) throw new Unsupported("the value of a .NET setter call", false);
+		// The value of `x.P = v`, which the typer makes a call of set_P, is v, as C#'s: what the setter stored.
+		var stored = retSlot.match(LVoid) && needVal(ret) && cf.name.substr(0, 4) == "set_" && args.length == 1 && slots.length == 1;
+		if (retSlot.match(LVoid) && needVal(ret) && !stored) throw new Unsupported("the value of a .NET setter call", false);
+		function call() code.opToken(op, token, ilArgs.length + (isStatic ? 0 : 1), retSlot.match(LVoid) ? 0 : 1);
+		if (stored) {
+			tl.storeKeeping(ret, slots[0], call);
+			return;
+		}
+		call();
 		tl.coerce(retSlot, ret);
 	}
 
@@ -1394,8 +1415,65 @@ class TexprCalls {
 		return vectorElement(vec);
 	}
 
-	// a[i]: ldelem on a native array, Array's __get on an Array, and on a Dynamic or an Array<Dynamic>
-	// gencs's Runtime.callField(a, "__get", hash, new object[]{i}).
+	// The extern class with a .NET type that `e1[i]` is an indexer of, with its type arguments: the class of
+	// `e1`'s type, or the nearest superclass of a Haxe class that is one. Null for any other array access.
+	function indexerClass(e1:TExpr):Null<{c:TClass, params:Array<T>}> {
+		var rc:TClass, params:Array<T>;
+		switch (TypeFunctions.follow(e1.type)) {
+			case TInst(c, p) if (!c.kind.match(KTypeParameter(_))):
+				rc = c;
+				params = p;
+			case _:
+				return null;
+		}
+		while (!(isExtern(rc) && hasNetType(rc))) {
+			var sup = rc.superClass;
+			if (sup == null) return null;
+			var cparams = rc.params, args = params;
+			params = [for (p in sup.params) TypeFunctions.applyParams(cparams, args, p)];
+			rc = sup.c;
+		}
+		return {c: rc, params: params};
+	}
+
+	// Whether `e1[i]` is a .NET class's indexer (values notes §3): get_Item and set_Item.
+	function isNetIndexer(e1:TExpr):Bool {
+		var r = indexerClass(e1);
+		return r != null && g.externs.indexer(r.c, r.params) != null;
+	}
+
+	// The indexer of `e1`'s class, for an access to an element of the Haxe type `element` that `reads` or
+	// `writes`.
+	function netIndexer(e1:TExpr, element:T, reads:Bool, writes:Bool):NetIndexer {
+		var r = indexerClass(e1);
+		var ix = r == null ? null : g.externs.indexer(r.c, r.params);
+		if (ix == null) throw "internal error: not a .NET indexer";
+		var args = switch (ix.parent) {
+			case LClass(_, l) | LValueType(_, l): l;
+			case _: [];
+		}
+		var index = ExternMembers.subst(ix.indexSig, args), value = ExternMembers.subst(ix.valueSig, args);
+		// A converted extern's element is Dynamic or the property's type; a hand-written one's is as it declares it.
+		if (!TexprDynamic.isDynamic(element)) g.externs.checkIndexerElement(r.c, value, tl.sig(element), reads, writes);
+		var what = ExternMembers.sigS(ix.parent);
+		return {
+			parent: ix.parent,
+			index: index,
+			value: value,
+			isStruct: DotnetTypes.isValueType(ix.parent),
+			getToken: () -> {
+				if (ix.getter == null) throw Unsupported.error("the .NET indexer of " + what + " has no public getter");
+				return g.mb.memberRef(g.typeTokenOf(ix.parent), ix.getter, g.sigs.method(true, ix.valueSig, [ix.indexSig], 0));
+			},
+			setToken: () -> {
+				if (ix.setter == null) throw Unsupported.error("the .NET indexer of " + what + " has no public setter");
+				return g.mb.memberRef(g.typeTokenOf(ix.parent), ix.setter, g.sigs.method(true, LVoid, [ix.indexSig, ix.valueSig], 0));
+			}
+		};
+	}
+
+	// a[i]: ldelem on a native array, Array's __get on an Array, get_Item on a .NET class's indexer, and on a
+	// Dynamic or an Array<Dynamic> gencs's Runtime.callField(a, "__get", hash, new object[]{i}).
 	function arrayRead(ret:Ret, e:TExpr, e1:TExpr, e2:TExpr):Void {
 		if (tl.sig(e1.type).match(LString)) {
 			// s[i] on a String is C#'s indexer, a Char16.
@@ -1419,6 +1497,24 @@ class TexprCalls {
 		}
 		if (isDynamicArrayAccess(e1)) {
 			tl.dyn.fieldCall(ret, e, e1, "__get", [e2]);
+			return;
+		}
+		if (isNetIndexer(e1)) {
+			var ix = netIndexer(e1, e.type, true, false);
+			var get = ix.getToken();
+			receiver(e1, ix.parent);
+			tl.nullOperand(RValue(ix.index), e2, false);
+			code.opToken(ix.isStruct ? IlOps.CALL : IlOps.CALLVIRT, get, 2, 1);
+			// A converted extern's element is Dynamic: gencs reads a struct or Nullable element as an object, which
+			// Runtime converts to what is wanted.
+			var viaObject = switch (ret) {
+				case RValue(to) if (to != null && TexprDynamic.isDynamic(e.type) && ix.value.match(LValueType(_, _))):
+					!IlPaths.sigEq(to, ix.value);
+				case _:
+					false;
+			}
+			if (viaObject) tl.coerce(ix.value, RValue(LObject));
+			tl.coerce(viaObject ? LObject : ix.value, ret);
 			return;
 		}
 		if (arrayOf(e1.type) == null) throw new Unsupported("array access", false);

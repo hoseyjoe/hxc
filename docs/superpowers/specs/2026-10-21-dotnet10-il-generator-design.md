@@ -591,6 +591,21 @@ and `List` copy, and two threads casting one array at once.
    - An `@:overload` override that changes only the return type is refused. gencs compiles it as a C#
      covariant-return override, which needs `newslot`, a MethodImpl row and
      `PreserveBaseOverridesAttribute`.
+   - `a[i]` on an extern class with a .NET indexer is a call of its `get_Item` or `set_Item`
+     (`netlib-indexers`). The indexer is the one C# picks for an `int` argument: walking the class's
+     .NET chain from the receiver's class (a Haxe class's nearest extern superclass), the first class
+     that declares a public one-parameter property named by its `DefaultMemberAttribute` (explicit
+     interface implementations, named by the interface, are left out), and there the one whose
+     parameter is `int`, else the one `int` converts to implicitly. A class's own indexer hides the
+     base's, as in C# (`netlib-indexer-inherited`). Two such indexers, or one hxc cannot tell applies,
+     are refused, where C# would pick the better one (`netlib-indexer-ambiguous-is-an-error`); a store
+     to a get-only indexer is refused (`netlib-indexer-readonly-is-an-error`). Compound assignment,
+     `++` and `--` read once and store once, on the receiver and index evaluated once
+     (`netlib-indexer-compound`), except through a .NET struct's indexer, which is refused. The element
+     of a converted extern is typed Dynamic: a read passes a struct or `Nullable` element as an object,
+     which Runtime converts (`netlib-indexer-nullable-elements`). The value of an assignment through an
+     indexer or a .NET property is the value stored, kept across the call, not what a setter returns
+     (`netlib-property-store-value`).
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
@@ -620,6 +635,17 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   the boxed `default(T)`. gencs's C# binds `x.Equals(default(T))` to the struct's own `Equals(T)` when it
   declares one. The two differ only when that `Equals(T)` and `Equals(object)` disagree, which is not
   normally observable. Non-generic structs, .NET or Haxe, bind as C# does (`struct-own-equals-null`).
+- A `Dynamic` value stored into a typed .NET indexer converts in hxc (`netlib-indexer-dynamic-write`:
+  `li[0] = dyn` on a `List<int>` stores the value through `Runtime.toInt`). gencs's C# writes
+  `li[0] = dyn;` and does not compile: `CS0266: Cannot implicitly convert type 'object' to 'int'`.
+- Compound assignment, `++` and `--` on a `Dynamic` .NET indexer element (`li[0] += 2` on a
+  `List<int>`) call `get_Item` and `set_Item` directly in hxc (`netlib-indexer-compound`), where
+  gencs goes through `Runtime.callField(li, "__get")` and `"__set"`. The values are the same; only a
+  stack trace through the runtime's reflection would differ.
+- The value of an assignment to a property of a converted extern (`var v = (m.NProp = x)`) is the value
+  stored in hxc (`netlib-property-store-value-converted`). gencs leaves the typer's `set_NProp` call in
+  the C# when the value is used, and it does not compile: `CS1061: 'Model' does not contain a
+  definition for 'set_NProp'` (CS0571 for the accessor itself).
 - A generic .NET method's type argument inferred from a closure, an array literal or an anonymous
   object passed to a hand-written extern is hxc's representation class (`haxe.lang.Function`,
   `Array`, `object`), where gencs's C# infers the closure's own class, ``Array`1`` or

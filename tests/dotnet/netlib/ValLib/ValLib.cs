@@ -85,6 +85,22 @@ namespace ValLib
         public int this[int r, int c] { get { return r * 100 + c; } set { Console.WriteLine("set " + r + "," + c + "=" + value); } }
     }
 
+    public class SubGrid : Grid { }
+    public class HiddenGrid : Grid
+    {
+        public new string this[int i] { get { return "hidden" + i; } }
+    }
+    public class WideGrid
+    {
+        public string this[long i] { get { return "long" + i; } }
+        public string this[double d] { get { return "double" + d; } }
+    }
+    public struct Slots
+    {
+        int a, b;
+        public int this[int i] { get { return i == 0 ? a : b; } set { if (i == 0) a = value; else b = value; } }
+    }
+
     public static class Refs
     {
         public static bool TryParse(string s, out int v) { return int.TryParse(s, out v); }
