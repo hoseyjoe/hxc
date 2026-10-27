@@ -47,7 +47,8 @@ typedef NetIndexer = {
 
 // The member access of TexprToIl: receivers, fields, constants, calls, constructors, arrays and casts.
 // Shares its state through the TexprToIl that owns it.
-@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprDynamic)
+@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprDynamic,
+	hxc.codegen.dotnet.CsToIl)
 class TexprCalls {
 	final tl:TexprToIl;
 	final g:DotnetCtx;

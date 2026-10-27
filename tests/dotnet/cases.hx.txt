@@ -17659,6 +17659,7 @@ P.hx:9: characters 18-35 : dotnet: a rethrow (a bare `throw`, cs.Lib.rethrow) mu
 // it is used as, with no conversion.
 class P {
 	var fld:Int = 7;
+	static var sfld:String = "s";
 	public function new() {}
 	static function take(i:Int):Int return i * 2;
 	static function side():Int { Sys.println("side"); return 3; }
@@ -17670,6 +17671,8 @@ class P {
 		var a:Int = untyped __cs__("{0} + 1", fld);
 		var b:Int = cs.Syntax.code("{0} + 1", this.fld);
 		Sys.println(a + " " + b);
+		var c:String = cs.Syntax.code("{0}.ToUpper()", sfld);
+		Sys.println(c);
 	}
 	static function main() {
 		var i = 5;
@@ -17706,6 +17709,7 @@ side
 side
 12,12
 8 8
+S
 # Literals, operators, keyword-type casts and `is` in inline C#, with C#'s numeric promotion: an int with a
 # long computes in long, a uint with an int in long, a char in int; `/` of two ints is integer division;
 # comparisons of doubles and unsigned values are C#'s; && and || short-circuit.
@@ -18018,13 +18022,15 @@ class P {
 		var l:cs.StdTypes.Int64 = 3;
 		var n:Int = untyped __cs__("{0}", l);
 		var s:String = untyped __cs__("1 + 2");
-		Sys.println(n + s);
+		var v:Int = untyped __cs__("System.Console.WriteLine()");
+		Sys.println(n + s + v);
 	}
 }
 ===
 [compile]
 P.hx:4: characters 23-39 : dotnet: the inline C# expression is a long, which does not convert to Int implicitly (C# error CS0266); add a cast in the C# text
 P.hx:5: characters 26-41 : dotnet: the inline C# expression is an int, which does not convert to String implicitly (C# error CS0029)
+P.hx:6: characters 23-59 : dotnet: the inline C# expression has no value (C# error CS0029)
 # gencs's own errors, which hxc repeats word for word (Haxe raises them when gencs generates the class, so
 # only for code that survives DCE). gencs's positions: the `s` argument, and the {1} inside the string.
 --- inline-cs-code-not-constant-is-an-error
@@ -18083,3 +18089,223 @@ P.hx:12: characters 23-38 : dotnet: the inline C# constant expression divides by
 P.hx:13: characters 23-42 : dotnet: the inline C# constant 300 does not convert to byte (C# error CS0221)
 P.hx:14: characters 23-47 : dotnet: the inline C# constant expression overflows (C# error CS0220)
 P.hx:15: characters 23-42 : dotnet: the inline C# constant 10000000000 does not convert to int (C# error CS0221)
+# The desktop app's and haxeui's forms beyond the spec's first list: `is`, keyword/array types, chained
+# casts, comparisons and &&, int.MinValue, `new`, enum members, a property chain, a call on a cast, a call
+# on a struct a method returns (needs a temporary and ldloca), and ZLibStream (a type no --net-std of the
+# server app defines; hxc finds it through NetRefs, from the reference pack).
+--- inline-cs-forms @gencs
+// The other inline C# forms the desktop app and its libraries use: type tests (`is` with a dotted, keyword
+// and array type), casts to keyword and array types and chained casts, comparisons and && on a long against
+// int.MinValue/int.MaxValue with a placeholder used twice, `new` of a .NET class, enum members as arguments,
+// a static property chain, a cast receiver with a chained call, and a call on a struct a method returns.
+import haxe.io.Bytes;
+class P {
+	static function toHaxe(v:Dynamic):Dynamic {
+		if (cs.Syntax.code("{0} is System.DBNull", v))
+			return null;
+		if (cs.Syntax.code("{0} is long", v)) {
+			var l:cs.StdTypes.Int64 = cs.Syntax.code("(long){0}", v);
+			if (cs.Syntax.code("({0} >= int.MinValue && {0} <= int.MaxValue)", l))
+				return (cs.Syntax.code("(int){0}", l) : Int);
+			return (cs.Syntax.code("(double){0}", l) : Float);
+		}
+		if (cs.Syntax.code("{0} is byte[]", v))
+			return Bytes.ofData(cs.Syntax.code("(byte[]){0}", v));
+		return v;
+	}
+	static var client:Dynamic = null;
+	static function main() {
+		var boxedLong:Dynamic = cs.system.Convert.ToInt64(5);
+		var bigLong:Dynamic = cs.system.Convert.ToInt64(5000000000.0);
+		var bytes:Dynamic = Bytes.ofString("ab").getData();
+		Sys.println([toHaxe(cs.system.DBNull.Value), toHaxe(boxedLong), toHaxe(bigLong), (toHaxe(bytes) : Bytes).length, toHaxe("s")]);
+		var id:Int = cs.Syntax.code("(int)(long){0}", boxedLong);
+		Sys.println(id);
+		Sys.println(cs.Syntax.code("global::System.Globalization.CultureInfo.InvariantCulture.Name") == "");
+		var s = "Hello";
+		Sys.println(cs.Syntax.code("{0}.StartsWith({1}, global::System.StringComparison.Ordinal)", s, "He"));
+		Sys.println(cs.Syntax.code("{0}.EndsWith({1}, global::System.StringComparison.Ordinal)", "abc\u00AD", "abc"));
+		client = cs.Syntax.code("new System.Text.StringBuilder()");
+		var chained:String = cs.Syntax.code("((System.Text.StringBuilder){0}).Append({1}).ToString()", client, "chain");
+		Sys.println(chained);
+		var list = new cs.system.collections.generic.List_1<String>();
+		list.Add("done");
+		var moved:Bool = cs.Syntax.code("((System.Collections.Generic.List<string>){0}).GetEnumerator().MoveNext()", list);
+		Sys.println(moved);
+		var ms = new cs.system.io.MemoryStream();
+		var z:cs.system.io.Stream = untyped __cs__("new global::System.IO.Compression.ZLibStream({0}, global::System.IO.Compression.CompressionLevel.Optimal, true)", ms);
+		z.Write(Bytes.ofString("aaaaaaaaaa").getData(), 0, 10);
+		z.Dispose();
+		Sys.println(ms.ToArray().Length > 0);
+	}
+}
+===
+[run]
+[null,5,5000000000,2,s]
+5
+True
+True
+False
+chain
+True
+True
+# Constructs outside the subset. gencs's C# compiles and runs every one of these but the last (CS1061 for
+# `{0}?.Length` on an object; c/outside in the research folder shows their gencs output). hxc refuses each,
+# naming the replacement (proposed texts).
+--- inline-cs-outside-subset-is-an-error @netlib
+class P {
+	static function main() {
+		var cells = new vallib.Cells();
+		var i = 3;
+		var o:Dynamic = "str";
+		untyped __cs__("{0}[1, 2] = {1}", cells, 5);
+		Sys.println(cs.Syntax.code("new System.Func<int, int>(x => x + 1)(1)"));
+		Sys.println(cs.Syntax.code("typeof(string).Name"));
+		Sys.println(cs.Syntax.code("{0} as string", o));
+		Sys.println(cs.Syntax.code("{0} > 2 ? \"big\" : \"small\"", i));
+		untyped __cs__("System.Threading.Interlocked.Increment(ref i)");
+		untyped __cs__("int t = 1; t++");
+		untyped __cs__("throw new System.Exception(\"x\")");
+		Sys.println(cs.Syntax.code("System.Array.Empty<int>().Length"));
+		Sys.println(cs.Syntax.code("new int[]{1, 2, 3}.Length"));
+		Sys.println(cs.Syntax.code("\"<{0}>\"", 42));
+		Sys.println(cs.Syntax.code("default(int)"));
+		Sys.println(cs.Syntax.code("{0}?.Length", o));
+	}
+}
+===
+[compile]
+P.hx:6: characters 11-46 : dotnet: assignment is not part of the inline C# subset; write it in Haxe (a .NET indexer's setter is x.set_Item(a, b, value))
+P.hx:7: characters 15-73 : dotnet: a lambda is not part of the inline C# subset; write a Haxe function, which converts to the .NET delegate type
+P.hx:8: characters 15-52 : dotnet: typeof is not part of the inline C# subset; use cs.Lib.toNativeType(T)
+P.hx:9: characters 15-49 : dotnet: `as` is not part of the inline C# subset; use Std.downcast(e, T)
+P.hx:10: characters 15-65 : dotnet: ?: is not part of the inline C# subset; use Haxe's if expression
+P.hx:11: characters 11-66 : dotnet: ref and out arguments are not part of the inline C# subset; call the method from Haxe with a cs.Ref<T> or cs.Out<T> argument
+P.hx:12: characters 11-35 : dotnet: inline C# must be one expression or a bare `throw`; write statements in Haxe
+P.hx:13: characters 11-54 : dotnet: `throw` with a value is not part of the inline C# subset; use Haxe's throw (a bare `throw` or cs.Lib.rethrow(e) rethrows)
+P.hx:14: characters 15-65 : dotnet: explicit type arguments are not part of the inline C# subset; call the method from Haxe
+P.hx:15: characters 15-58 : dotnet: array creation is not part of the inline C# subset; use new cs.NativeArray<T>(n)
+P.hx:16: characters 15-46 : dotnet: a placeholder inside a C# string literal is not part of the inline C# subset; build the string in Haxe
+P.hx:17: characters 15-45 : dotnet: default(T) is not part of the inline C# subset; write it in Haxe
+P.hx:18: characters 15-47 : dotnet: ?. is not part of the inline C# subset; write it in Haxe
+# gencs: CS0103 for `missing`, CS0117 for P.onlyFromCs (DCE removed it: only the C# text names it), CS0234
+# for System.NoSuchType. Proposed texts; with the typer lifting unqualified members (NOTES section 6), only a
+# qualified name can meet a member DCE removed.
+--- inline-cs-unknown-name-is-an-error + -dce full
+class P {
+	static function onlyFromCs():Int return 99;
+	static function main() {
+		Sys.println(untyped __cs__("missing + 1"));
+		Sys.println(untyped __cs__("P.onlyFromCs()"));
+		Sys.println(untyped __cs__("System.NoSuchType.Value"));
+	}
+}
+===
+[compile]
+P.hx:4: characters 23-44 : dotnet: the inline C# name missing is no local, member or type here (C# error CS0103)
+P.hx:5: characters 23-47 : dotnet: the inline C# member P.onlyFromCs was removed by DCE, as only C# text uses it; add @:keep to it
+P.hx:6: characters 23-56 : dotnet: the inline C# name System.NoSuchType is no local, member or type here (C# error CS0234)
+# A Haxe function passed through a placeholder to a .NET delegate parameter: gencs's C# fails (CS1503, a
+# haxe.lang.Function is no delegate). hxc refuses with 4a's no-overload text rather than bind an object
+# overload or pass the closure object.
+--- inline-cs-function-to-delegate-is-an-error @netlib
+class P {
+	static function main() {
+		var list = new cs.system.collections.generic.List_1<Int>();
+		list.Add(1);
+		var f = (i:Int) -> Sys.println(i);
+		untyped __cs__("{0}.ForEach({1})", list, f);
+	}
+}
+===
+[compile]
+P.hx:6: characters 11-46 : dotnet: no .NET overload of System.Collections.Generic.List<int>.ForEach takes (haxe.lang.Function)
+# .NET and Haxe members in inline C# beyond the desktop app's forms: a Haxe class's static variable and method
+# and an instance's, a struct placeholder that a mutating call reaches through its variable, a struct a call
+# returns, `new` of a struct without arguments (its default), a string and an array indexed, a static call with
+# an int constant, ToString and GetHashCode bound where they are first declared, a virtual call through a
+# property's value, and casts between an enum and int.
+--- inline-cs-members @gencs
+class Counter {
+	public static var total:Int = 40;
+	public var n:Int = 0;
+	public function new() {}
+	public static function twice(x:Int):Int return x * 2;
+	public function bump(by:Int):Int {
+		n += by;
+		return n;
+	}
+}
+class P {
+	static function main() {
+		var c = new Counter();
+		Sys.println(untyped __cs__("{0}.bump(2) + {0}.n", c));
+		Sys.println(cs.Syntax.code("Counter.total + Counter.twice(1)"));
+		var list = new cs.system.collections.generic.List_1<Int>();
+		list.Add(5);
+		list.Add(6);
+		var en = list.GetEnumerator();
+		cs.Syntax.code("{0}.MoveNext()", en);
+		cs.Syntax.code("{0}.MoveNext()", en);
+		Sys.println(en.Current);
+		var d = new cs.system.DateTime(2020, 1, 2);
+		Sys.println(cs.Syntax.code("{0}.AddDays(1).Day", d));
+		Sys.println(cs.Syntax.code("new System.DateTime().Year"));
+		Sys.println(cs.Syntax.code("\"abc\"[1]"));
+		var arr = cs.Lib.nativeArray([10, 20, 30], false);
+		Sys.println(cs.Syntax.code("{0}[2] + {0}.Length", arr));
+		Sys.println(cs.Syntax.code("System.Math.Abs({0})", -7));
+		Sys.println(cs.Syntax.code("{0}.ToString()", 12));
+		Sys.println(cs.Syntax.code("{0}.GetHashCode() == {0}.GetHashCode()", "x"));
+		Sys.println(cs.Syntax.code("System.Text.Encoding.UTF8.GetByteCount({0})", "hé"));
+		Sys.println(cs.Syntax.code("System.String.Concat({0}, {1})", "a", "b"));
+		Sys.println(cs.Syntax.code("(int)System.StringComparison.Ordinal + 1"));
+		Sys.println(cs.Syntax.code("(System.StringComparison){0}", 5));
+	}
+}
+===
+[run]
+4
+42
+6
+3
+1
+b
+33
+7
+12
+True
+3
+ab
+5
+OrdinalIgnoreCase
+# Member lookups C# rejects or that hxc cannot bind as C# would, refused: an instance member through its type
+# (CS0120), a static one through a value (CS0176), unknown members (CS1061, CS0117), a namespace as a type
+# (CS0118), a method group, an overload C# picks by betterness, which hxc does not model, and `new` of an
+# abstract class (CS0144), and a user-defined conversion, which hxc does not apply.
+--- inline-cs-member-errors-is-an-error
+class P {
+	static function main() {
+		var s = "x";
+		Sys.println(untyped __cs__("System.String.Length"));
+		Sys.println(untyped __cs__("{0}.Empty", s));
+		Sys.println(untyped __cs__("{0}.NoSuch", s));
+		Sys.println(untyped __cs__("System.Math.NoSuch(1)"));
+		Sys.println(untyped __cs__("(System.Text)null"));
+		Sys.println(untyped __cs__("{0}.Trim", s));
+		Sys.println(untyped __cs__("System.Math.Max(1, 2L)"));
+		Sys.println(untyped __cs__("new System.IO.Stream()"));
+		Sys.println(untyped __cs__("(System.Numerics.BigInteger){0}", 5));
+	}
+}
+===
+[compile]
+P.hx:4: characters 23-53 : dotnet: the .NET member string.Length is an instance member, which inline C# reaches through its type (C# error CS0120)
+P.hx:5: characters 23-45 : dotnet: the .NET member string.Empty is a static member, which inline C# reaches through a value (C# error CS0176)
+P.hx:6: characters 23-46 : dotnet: the inline C# name string.NoSuch is no local, member or type here (C# error CS1061)
+P.hx:7: characters 23-54 : dotnet: the inline C# name System.Math.NoSuch is no local, member or type here (C# error CS0117)
+P.hx:8: characters 23-50 : dotnet: the inline C# name System.Text is a namespace, not a type (C# error CS0118)
+P.hx:9: characters 23-44 : dotnet: a method group is not part of the inline C# subset; call the method, or write a Haxe function
+P.hx:10: characters 23-55 : dotnet: more than one .NET overload of System.Math.Max may accept (int, long)
+P.hx:11: characters 23-55 : dotnet: the .NET type System.IO.Stream is abstract or an interface, which `new` cannot create (C# error CS0144)
+P.hx:12: characters 23-67 : dotnet: hxc cannot apply the .NET conversion System.Numerics.BigInteger.op_Implicit in inline C#; convert in Haxe

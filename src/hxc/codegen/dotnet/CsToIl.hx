@@ -1,23 +1,29 @@
 package hxc.codegen.dotnet;
 
 import hxc.ast.Position;
+import hxc.core.Globals;
 import hxc.core.Type;
+import hxc.core.TypeFunctions;
 import hxc.codegen.dotnet.CsSyntax;
 import hxc.codegen.dotnet.DotnetTypes;
+import hxc.codegen.dotnet.ExternMembers;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.codegen.dotnet.IlCode;
 import hxc.codegen.dotnet.IlData;
+import hxc.codegen.dotnet.IlMeta;
 import hxc.codegen.dotnet.TexprToIl.Ret;
 import hxc.codegen.dotnet.TexprToIl.isTypeParam;
 import hxc.codegen.dotnet.TexprToIl.isReference;
 import hxc.codegen.dotnet.TexprToIl.strip;
 
 // What a name in inline C# is: a type (a static receiver or a cast target), a namespace, or a value it has
-// already pushed.
+// already pushed (as its address, for a member access on a value type).
 enum CsValue {
 	VType(t:IlSigNorm);
 	VNamespace(path:Array<String>);
 	VPushed(t:IlSigNorm);
+	// The address of a value of the value type `t`, pushed: a member access's receiver.
+	VAddress(t:IlSigNorm);
 }
 
 // A constant of an integer or real type, as C# checks them at compile time: an integer's value in `i` (a
@@ -77,6 +83,11 @@ class CsToIl {
 			lower(ret, e, text, isUntyped);
 		} catch (x:Dynamic) {
 			restore();
+			// What the lookup refuses (ExternMembers, NetRefs) is reported at the call.
+			if (Std.isOfType(x, Unsupported)) {
+				var u:Unsupported = x;
+				if (u.pos == null) u.pos = pos;
+			}
 			throw x;
 		}
 		restore();
@@ -149,6 +160,7 @@ class CsToIl {
 			return;
 		}
 		if (!g.externs.implicitlyConverts(cs, target)) {
+			userConversionError(cs, target, false);
 			var explicit = explicitlyConverts(cs, target);
 			error("the inline C# expression is " + article(csName(cs)) + ", which does not convert to " + hxc.core.TPrinting.sTypeStr(haxeType)
 				+ " implicitly (C# error " + (explicit ? "CS0266); add a cast in the C# text" : "CS0029)"));
@@ -167,6 +179,8 @@ class CsToIl {
 	// implicit one, CS0030 in a cast): between numbers, boxing, unboxing and between references.
 	function explicitlyConverts(from:IlSigNorm, to:IlSigNorm):Bool {
 		if (IlPaths.sigEq(from, to) || isNumber(from) && isNumber(to)) return true;
+		var fromEnum = enumUnderlying(from), toEnum = enumUnderlying(to);
+		if ((fromEnum != null || toEnum != null) && isNumber(fromEnum != null ? fromEnum : from) && isNumber(toEnum != null ? toEnum : to)) return true;
 		return boxes(from, to) || unboxes(from, to) || referenceConverts(from, to);
 	}
 
@@ -209,25 +223,23 @@ class CsToIl {
 		return g.externs.isInterface(from) || g.externs.isInterface(to);
 	}
 
-	// ---- names
+	// ---- names (csexpr §6.2)
 
-	// What a name in the C# text is. Keyword types for now; any other name is unknown.
+	// What a name in the C# text is: a type or namespace, as C# looks the name up, else the value of a member
+	// of a type or of a value, a call, an indexer or `new`, pushed. A simple name that is neither is unknown
+	// (the typer lifts the Haxe names the text uses into placeholders).
 	function resolveName(x:CsExpr):CsValue {
+		var tn = typeOrNamespace(x);
+		if (tn != null) return tn;
 		return switch (x.def) {
-			case CKeywordType(name):
-				VType(keywordType(name));
-			case CIdent(name) | CGlobal(name):
-				unknownName(name, "CS0103");
-			case CThis:
-				unknownName("this", "CS0103");
-			case CMember(e1, _) | CCall(e1, _) | CIndex(e1, _):
-				resolveName(e1);
-				throw new Unsupported("member access, calls and indexers in inline C#", true);
-			case CNew(t, _):
-				resolveType(t);
-				throw new Unsupported("`new` in inline C#", false);
-			case _:
-				VPushed(value(x));
+			case CIdent(name): unknownName(name, "CS0103");
+			case CGlobal(name): unknownName("global::" + name, "CS0400");
+			case CThis: unknownName("this", "CS0103");
+			case CMember(e1, name): VPushed(memberGet(e1, name));
+			case CCall(callee, args): VPushed(call(callee, args));
+			case CIndex(e1, args): VPushed(index(e1, args));
+			case CNew(t, args): VPushed(newObject(t, args));
+			case _: VPushed(value(x));
 		}
 	}
 
@@ -235,13 +247,458 @@ class CsToIl {
 		return error("the inline C# name " + name + " is no local, member or type here (C# error " + csError + ")");
 	}
 
-	// A type the C# text names, as a cast or `is` target.
-	function resolveType(t:CsType):IlSigNorm {
-		return switch (t) {
-			case CTKeyword(name): keywordType(name);
-			case CTArray(t1): LVector(resolveType(t1));
-			case CTNamed(_, segments, _): unknownName(segments.join("."), "CS0246");
+	// The type or namespace `x` names, with nothing pushed, or null when it names neither (the head of a
+	// member access names a type; what follows is a member). A name a namespace does not have is the
+	// unknown-name error.
+	function typeOrNamespace(x:CsExpr):Null<CsValue> {
+		switch (x.def) {
+			case CKeywordType(name):
+				return VType(keywordType(name));
+			case CIdent(name):
+				return simpleName(name, []);
+			case CGlobal(name):
+				return lookupIn(VNamespace([]), name, []);
+			case CMember(e1, name):
+				var head = typeOrNamespace(e1);
+				return switch (head) {
+					case VNamespace(path):
+						var r = lookupIn(head, name, []);
+						if (r == null) unknownName(path.concat([name]).join("."), "CS0234");
+						r;
+					case VType(_): lookupIn(head, name, []);
+					case _: null;
+				}
+			case _:
+				return null;
 		}
+	}
+
+	// The namespace of the class whose code the text is in, where C# starts looking a simple name up.
+	function classNamespace():Array<String> {
+		return tl.cls == null ? [] : DotnetNames.typePath(TClassDecl(tl.cls)).ns;
+	}
+
+	// A simple name, with the type arguments `args`, as C# looks it up: a type or namespace of that name in
+	// the class's namespace, then in each enclosing one, then in the global namespace.
+	function simpleName(name:String, args:Array<IlSigNorm>):Null<CsValue> {
+		var ns = classNamespace();
+		var k = ns.length;
+		while (k >= 0) {
+			var r = lookupIn(VNamespace(ns.slice(0, k)), name, args);
+			if (r != null) return r;
+			k--;
+		}
+		return null;
+	}
+
+	// The type (with the type arguments `args`) or, without type arguments, the namespace named `name` in the
+	// namespace `scope`, or the type nested in the type `scope`; null when there is none.
+	function lookupIn(scope:CsValue, name:String, args:Array<IlSigNorm>):Null<CsValue> {
+		var clrName = args.length > 0 ? name + "`" + args.length : name;
+		switch (scope) {
+			case VNamespace(ns):
+				var inner = ns.concat([name]);
+				if (args.length == 0 && g.externs.namespaceExists(inner)) return VNamespace(inner);
+				var t = typeAt({ns: ns, nested: [], name: clrName}, args);
+				return t == null ? null : VType(t);
+			case VType(LClass(p, outer) | LValueType(p, outer)) if (programClass(LClass(p, outer)) == null):
+				// A nested type takes the enclosing type's type arguments first.
+				var t = typeAt({ns: p.ns, nested: p.nested.concat([p.name]), name: clrName}, outer.concat(args));
+				return t == null ? null : VType(t);
+			case _:
+				return null;
+		}
+	}
+
+	// The type whose CLR path is `path`, with the type arguments `args`: a class of the program, or a public
+	// type of an assembly NetRefs finds (a loaded library, an assembly one references, the reference pack).
+	function typeAt(path:IlPath, args:Array<IlSigNorm>):Null<IlSigNorm> {
+		var c = path.nested.length == 0 ? g.externs.compiledClass(path) : null;
+		if (c != null) {
+			if (args.length > 0) throw new Unsupported("generic Haxe classes named in inline C#", true);
+			return tl.sig(TInst(c, []));
+		}
+		var defined = try NetRefs.of(g.ctx).definer(path) != null catch (_:Unsupported) false;
+		if (!defined || !g.externs.isVisibleType(path)) return null;
+		return g.externs.csType(path, args);
+	}
+
+	// A type the C# text names, as a cast, `is` or `new` target.
+	function resolveType(t:CsType):IlSigNorm {
+		switch (t) {
+			case CTKeyword(name):
+				return keywordType(name);
+			case CTArray(t1):
+				return LVector(resolveType(t1));
+			case CTNamed(global, segments, targs):
+				var args = [for (a in targs) resolveType(a)];
+				var last = segments.length - 1;
+				var headArgs = last == 0 ? args : [];
+				var r = global ? lookupIn(VNamespace([]), segments[0], headArgs) : simpleName(segments[0], headArgs);
+				if (r == null) unknownName((global ? "global::" : "") + segments[0], global ? "CS0400" : "CS0246");
+				for (i in 1...segments.length) {
+					var next = lookupIn(r, segments[i], i == last ? args : []);
+					if (next == null) unknownName(segments.slice(0, i + 1).join("."), r.match(VNamespace(_)) ? "CS0234" : "CS0426");
+					r = next;
+				}
+				return switch (r) {
+					case VType(s): s;
+					case _: error("the inline C# name " + segments.join(".") + " is a namespace, not a type (C# error CS0118)");
+				}
+		}
+	}
+
+	// ---- members (csexpr §6.2, §6.3)
+
+	// The program's class a type is, or null for a .NET type.
+	function programClass(s:Null<IlSigNorm>):Null<TClass> {
+		return switch (s) {
+			case LClass(p, _) | LValueType(p, _): g.externs.compiledClass(p);
+			case _: null;
+		}
+	}
+
+	// The receiver of a member access `e1.m`: a type or a namespace, or the value of `e1` pushed. A value of a
+	// value type goes as its address (VAddress), as C# reaches a member through a variable: the variable's own
+	// for a placeholder whose argument is one, else a temporary's (a call's result, say).
+	function receiver(e1:CsExpr):CsValue {
+		var tn = typeOrNamespace(e1);
+		if (tn != null) return tn;
+		switch (e1.def) {
+			case CPlaceholder(n) if (n < args.length):
+				var a = args[n];
+				var t = tl.sig(a.type);
+				if (DotnetTypes.isValueType(t) && !tl.isHaxeNull(t) && tl.calls.pushAddress(a, false)) return VAddress(t);
+			case _:
+		}
+		return switch (resolveName(e1)) {
+			case VPushed(t) if (t != null && DotnetTypes.isValueType(t)):
+				var tmp = il.addLocal(t);
+				il.stloc(tmp);
+				il.ldloca(tmp);
+				VAddress(t);
+			case r: r;
+		}
+	}
+
+	// The type a member access's receiver `r` gives the lookup, and whether it is static (a type).
+	function receiverType(r:CsValue, name:String):{t:IlSigNorm, isStatic:Bool} {
+		return switch (r) {
+			case VType(t): {t: t, isStatic: true};
+			case VPushed(null): error("the inline C# null has no member " + name + " (C# error CS0023)");
+			case VPushed(t) | VAddress(t):
+				if (t.match(LVoid)) error("the inline C# expression has no value (C# error CS0029)");
+				if (isTypeParam(t)) throw new Unsupported("members of a type parameter in inline C#", true);
+				{t: t, isStatic: false};
+			case VNamespace(path): unknownName(path.concat([name]).join("."), "CS0234");
+		}
+	}
+
+	// Before an instance member of `parent` is reached through `r`: a value type's address becomes the boxed
+	// value when the member is a reference type's (Object's, ValueType's or Enum's), as 4a's extern calls box it.
+	// True when the member is a value type's, which is called rather than called virtually.
+	function boxReceiverFor(r:CsValue, parent:IlSigNorm):Bool {
+		var onValue = DotnetTypes.isValueType(parent);
+		switch (r) {
+			case VAddress(t) if (!onValue):
+				il.opToken(IlOps.LDOBJ, g.typeTokenOf(t), 1, 1);
+				il.opToken(IlOps.BOX, g.typeTokenOf(t), 1, 1);
+			case _:
+		}
+		return onValue;
+	}
+
+	static function parentArgs(parent:IlSigNorm):Array<IlSigNorm> {
+		return switch (parent) {
+			case LClass(_, l) | LValueType(_, l): l;
+			case _: [];
+		}
+	}
+
+	// Unsupported errors of the extern lookup at the call's position.
+	function atPos<T>(f:Void->T):T {
+		try {
+			return f();
+		} catch (u:Unsupported) {
+			if (u.pos == null) u.pos = pos;
+			throw u;
+		}
+	}
+
+	// `e1.name` as a value: a field, a literal (an enum member, `int.MinValue`) as its constant, or a property
+	// through its getter.
+	function memberGet(e1:CsExpr, name:String):IlSigNorm {
+		var r = receiver(e1);
+		var rt = receiverType(r, name);
+		var c = programClass(rt.t);
+		if (c != null) return programField(c, name, rt.isStatic, r);
+		var b = atPos(() -> g.externs.memberCs(rt.t, name, rt.isStatic));
+		if (b == null) {
+			if (atPos(() -> g.externs.hasMethodCs(rt.t, name)))
+				error("a method group is not part of the inline C# subset; call the method, or write a Haxe function");
+			return unknownName(csName(rt.t) + "." + name, rt.isStatic ? "CS0117" : "CS1061");
+		}
+		var parent = b.parent;
+		switch (b.member) {
+			case XConstant(k, declared):
+				var s = tl.calls.constant(k, declared);
+				// An enum's literal is of the enum type; a null one, of its declared type.
+				return s == null || !(isNumber(declared) || declared.match(LBool | LChar | LString)) ? declared : s;
+			case XField(open, _):
+				var token = g.mb.memberRef(g.typeTokenOf(parent), name, g.sigs.field(open));
+				if (rt.isStatic) {
+					il.opToken(IlOps.LDSFLD, token, 0, 1);
+				} else {
+					boxReceiverFor(r, parent);
+					il.opToken(IlOps.LDFLD, token, 1, 1);
+				}
+				return ExternMembers.subst(open, parentArgs(parent));
+			case XProperty(open, getter, _):
+				var token = g.mb.memberRef(g.typeTokenOf(parent), getter, g.sigs.method(!rt.isStatic, open, [], 0));
+				if (rt.isStatic) il.opToken(IlOps.CALL, token, 0, 1) else il.opToken(boxReceiverFor(r, parent) ? IlOps.CALL : IlOps.CALLVIRT, token, 1, 1);
+				return ExternMembers.subst(open, parentArgs(parent));
+		}
+	}
+
+	// The arguments of a call, pushed in order: each one's type (null for the null literal) and its kind, by
+	// which C# also converts an int constant or the null literal (4a's ruling X).
+	function pushArgs(args:Array<CsExpr>):Array<{t:Null<IlSigNorm>, kind:ArgKind}> {
+		return [
+			for (a in args) {
+				var c = constant(a);
+				var t = value(a);
+				if (t != null && t.match(LVoid)) error("the inline C# expression has no value (C# error CS0029)");
+				{t: t, kind: t == null ? KNull : c != null && c.t.match(LInt32) ? KIntConst(c.i.low) : KPlain};
+			}
+		];
+	}
+
+	// The .NET method `name` that a call with the arguments `pushed` binds on the receiver type `t`.
+	function bind(t:IlSigNorm, name:String, isStatic:Bool, pushed:Array<{t:Null<IlSigNorm>, kind:ArgKind}>):Null<CsMethod> {
+		return atPos(() -> g.externs.bindCs(t, name, isStatic, [for (p in pushed) p.t == null ? LObject : p.t], [for (p in pushed) p.kind], pos));
+	}
+
+	static function sameSig(a:IlSigNorm, b:IlSigNorm):Bool {
+		inline function norm(s:IlSigNorm) return switch (s) {
+			case LClass(p, []) | LValueType(p, []):
+				var prim = DotnetTypes.primitive(p);
+				prim != null ? prim : s;
+			case _: s;
+		}
+		return IlPaths.sigEq(norm(a), norm(b));
+	}
+
+	// Converts the arguments `pushed`, on the stack, to the parameter types `params` with C#'s implicit
+	// conversions (which the binding checked): from the first that needs code on, they go through
+	// temporaries. `fixReceiver`, which then runs with only the receiver on the stack, changes it as the member
+	// needs (`boxReceiverFor`).
+	function convertArgs(pushed:Array<{t:Null<IlSigNorm>, kind:ArgKind}>, params:Array<IlSigNorm>, ?fixReceiver:Void->Void):Void {
+		var n = pushed.length;
+		function needs(i:Int):Bool {
+			var from = pushed[i].t, to = params[i];
+			if (from == null) return DotnetTypes.isValueType(to);
+			return !sameSig(from, to) && !(isReference(from) && isReference(to));
+		}
+		var k = n;
+		for (i in 0...n) if (needs(i)) {
+			k = i;
+			break;
+		}
+		if (fixReceiver != null) k = 0;
+		if (k == n && fixReceiver == null) return;
+		var temps = [for (_ in 0...n) -1];
+		var i = n - 1;
+		while (i >= k) {
+			temps[i] = il.addLocal(pushed[i].t == null ? LObject : pushed[i].t);
+			il.stloc(temps[i]);
+			i--;
+		}
+		if (fixReceiver != null) fixReceiver();
+		for (i in k...n) {
+			var from = pushed[i].t, to = params[i];
+			if (from == null && DotnetTypes.isValueType(to)) {
+				// The null literal to a Nullable<T>: its default.
+				tl.pushDefault(to);
+				continue;
+			}
+			il.ldloc(temps[i]);
+			if (from == null || !needs(i)) continue;
+			if (DotnetTypes.isSystemNullable(to)) tl.convert(from, to) else explicitCast(from, to);
+		}
+	}
+
+	// A call `callee(args)`: a method of a .NET type or value bound as C# binds it, or a Haxe class's.
+	function call(callee:CsExpr, args:Array<CsExpr>):IlSigNorm {
+		var e1:CsExpr, name:String;
+		switch (callee.def) {
+			case CMember(recv, n):
+				e1 = recv;
+				name = n;
+			case CIdent(_) | CGlobal(_) | CThis | CKeywordType(_):
+				return switch (resolveName(callee)) {
+					case VType(t): error("the inline C# type " + csName(t) + " is no method");
+					case _: error("the inline C# namespace is no method");
+				}
+			case _:
+				throw new Unsupported("calls of a value (a delegate) in inline C#", true);
+		}
+		var r = receiver(e1);
+		var rt = receiverType(r, name);
+		var c = programClass(rt.t);
+		if (c != null) return programCall(c, name, rt.isStatic, r, args);
+		var pushed = pushArgs(args);
+		var m = bind(rt.t, name, rt.isStatic, pushed);
+		if (m == null) {
+			if (atPos(() -> g.externs.memberCs(rt.t, name, rt.isStatic)) != null)
+				throw new Unsupported("calls of a .NET field or property's value (a delegate) in inline C#", true);
+			return unknownName(csName(rt.t) + "." + name, rt.isStatic ? "CS0117" : "CS1061");
+		}
+		return emitCall(m, r, rt.isStatic, pushed);
+	}
+
+	// The bound .NET method `m` called (`isNew`: constructed) with the arguments `pushed`, after the receiver
+	// `r` (a type for a static method or `new`).
+	function emitCall(m:CsMethod, r:CsValue, isStatic:Bool, pushed:Array<{t:Null<IlSigNorm>, kind:ArgKind}>, isNew = false):IlSigNorm {
+		var onValue = DotnetTypes.isValueType(m.parent);
+		var fix = switch (r) {
+			case VAddress(_) if (!isStatic && !isNew && !onValue): () -> boxReceiverFor(r, m.parent);
+			case _: null;
+		}
+		convertArgs(pushed, m.params, fix);
+		for (j in 0...m.omitted.length) tl.calls.pushDefault(m.omitted[j], m.params[pushed.length + j]);
+		var token = g.mb.memberRef(g.typeTokenOf(m.parent), m.name, g.sigs.methodSig(m.sig, m.genericCount));
+		if (m.typeArgs != null && m.typeArgs.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec(m.typeArgs));
+		if (isNew) {
+			il.opToken(IlOps.NEWOBJ, token, m.params.length, 1);
+			return switch (r) {
+				case VType(t): t;
+				case _: throw "internal error: `new` without a type";
+			}
+		}
+		var op = isStatic || onValue ? IlOps.CALL : IlOps.CALLVIRT;
+		il.opToken(op, token, m.params.length + (isStatic ? 0 : 1), m.ret.match(LVoid) ? 0 : 1);
+		return m.ret;
+	}
+
+	// `new T(args)`: the .NET constructor bound as a call; a struct's `new T()` without one is its default.
+	function newObject(t:CsType, args:Array<CsExpr>):IlSigNorm {
+		var s = resolveType(t);
+		if (programClass(s) != null) throw new Unsupported("`new` of a Haxe class in inline C#", false);
+		if (DotnetTypes.isValueType(s) && args.length == 0 && !atPos(() -> g.externs.hasParameterlessCtor(s))) {
+			tl.pushDefault(s);
+			return s;
+		}
+		var pushed = pushArgs(args);
+		var m = bind(s, ".ctor", false, pushed);
+		if (m == null) error("no .NET constructor of " + csName(s) + " takes these arguments (C# error CS1729)");
+		return emitCall(m, VType(s), false, pushed, true);
+	}
+
+	// `e1[args]`: an array's element (one int index), or the getter of the .NET indexer, bound as a call.
+	function index(e1:CsExpr, args:Array<CsExpr>):IlSigNorm {
+		var r = receiver(e1);
+		var rt = receiverType(r, "[]");
+		if (rt.isStatic) error("the inline C# type " + csName(rt.t) + " cannot be indexed (C# error CS0119)");
+		switch (rt.t) {
+			case LVector(elem):
+				if (args.length != 1) error("an inline C# array takes one index (C# error CS0022)");
+				var it = value(args[0]);
+				if (it == null || !it.match(LInt8 | LUInt8 | LInt16 | LUInt16 | LChar | LInt32))
+					throw new Unsupported("array indexes of other types than int in inline C#", true);
+				il.ldelem(elem, () -> g.typeTokenOf(elem));
+				return elem;
+			case _:
+		}
+		if (programClass(rt.t) != null) throw new Unsupported("indexers of Haxe classes in inline C#", true);
+		var getter = atPos(() -> g.externs.indexerGetterCs(rt.t));
+		var noIndexer = "the inline C# expression is " + article(csName(rt.t)) + ", which has no indexer (C# error CS0021)";
+		if (getter == null) error(noIndexer);
+		var pushed = pushArgs(args);
+		var m = bind(rt.t, getter, false, pushed);
+		if (m == null) error(noIndexer);
+		return emitCall(m, r, false, pushed);
+	}
+
+	// ---- members of the program's classes
+
+	// The field named `name` of `c` or of a superclass (static ones with `isStatic`), and the class declaring it.
+	static function findField(c:TClass, name:String, isStatic:Bool):Null<{owner:TClass, cf:TClassField}> {
+		var cur = c;
+		while (cur != null) {
+			var cf = isStatic ? cur.statics.get(name) : cur.fields.get(name);
+			if (cf != null) return {owner: cur, cf: cf};
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		return null;
+	}
+
+	// A member of `c` C# text names that `c` does not have: one DCE removed (ruling 7), else unknown.
+	function missingMember(c:TClass, name:String, isStatic:Bool):Dynamic {
+		var cur = c;
+		while (cur != null) {
+			if (g.ctx.dceRemovedFields.exists(Globals.sTypePath(cur.path) + "." + name))
+				error("the inline C# member " + Globals.sTypePath(cur.path) + "." + name + " was removed by DCE, as only C# text uses it; add @:keep to it");
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		return unknownName(Globals.sTypePath(c.path) + "." + name, isStatic ? "CS0117" : "CS1061");
+	}
+
+	// `c.name` (`isStatic`) or `x.name` for an `x` of `c`'s type, pushed as `r`: a variable of the program's
+	// class, as gencs writes it a C# field.
+	function programField(c:TClass, name:String, isStatic:Bool, r:CsValue):IlSigNorm {
+		var f = findField(c, name, isStatic);
+		if (f == null) return missingMember(c, name, isStatic);
+		var cf = f.cf;
+		if (cf.kind.match(Method(_))) error("a method group is not part of the inline C# subset; call the method, or write a Haxe function");
+		if (g.varProperties.exists(cf)) throw new Unsupported("@:property variables of Haxe classes in inline C#", true);
+		// A Haxe property with accessors is no C# member.
+		if (!TypeFunctions.isPhysicalVarField(cf)) return unknownName(Globals.sTypePath(c.path) + "." + name, isStatic ? "CS0117" : "CS1061");
+		if (isStatic) {
+			var e:TExpr = {expr: TField({expr: TTypeExpr(TClassDecl(f.owner)), type: cf.type, pos: pos}, FStatic(f.owner, cf)), type: cf.type, pos: pos};
+			var s = tl.sig(cf.type);
+			tl.texpr(RValue(s), e);
+			return s;
+		}
+		if (f.owner.params.length > 0 || c.params.length > 0) throw new Unsupported("members of generic Haxe classes in inline C#", true);
+		var fld = tl.calls.instanceField(f.owner, [], cf);
+		boxReceiverFor(r, fld.owner);
+		il.opToken(IlOps.LDFLD, fld.token, 1, 1);
+		return fld.sig;
+	}
+
+	// `c.name(args)` (`isStatic`) or `x.name(args)` for an `x` of `c`'s type, pushed as `r`: a method of the
+	// program's class, with C#'s implicit conversions of the arguments to its parameters (CS1503 otherwise).
+	function programCall(c:TClass, name:String, isStatic:Bool, r:CsValue, args:Array<CsExpr>):IlSigNorm {
+		var f = findField(c, name, isStatic);
+		if (f == null) return missingMember(c, name, isStatic);
+		var cf = f.cf;
+		if (!cf.kind.match(Method(_)) || cf.kind.match(Method(MethDynamic)))
+			throw new Unsupported("calls of a Haxe variable's value in inline C#", true);
+		if (cf.overloads.length > 0 || cf.params.length > 0 || f.owner.params.length > 0 || c.params.length > 0)
+			throw new Unsupported("calls of overloaded or generic Haxe methods in inline C#", true);
+		g.types.checkKept(TClassDecl(f.owner));
+		var plan = g.ownerOf.get(cf);
+		if (plan == null || !g.methodTokens.exists(cf)) throw new Unsupported("calls of this Haxe method in inline C#", false);
+		var owner = isStatic ? TexprToIl.staticOwner(plan) : DotnetCtx.instanceOf(plan, []);
+		var m = tl.calls.methodRef(plan, owner, [], cf, cf.type, cf.type);
+		var pushed = pushArgs(args);
+		var what = Globals.sTypePath(f.owner.path) + "." + name;
+		if (pushed.length != m.args.length) error("the Haxe method " + what + " takes " + m.args.length + " arguments (C# error CS1501)");
+		for (i in 0...pushed.length) {
+			var p = pushed[i], to = m.args[i];
+			var ok = p.t == null ? isReference(to) || DotnetTypes.isSystemNullable(to) : g.externs.implicitlyConverts(p.t, to);
+			if (!ok)
+				error("the inline C# argument " + (i + 1) + " of " + what + " is " + article(csName(p.t)) + ", which does not convert to " + csName(to)
+					+ " (C# error CS1503)");
+		}
+		var onValue = DotnetTypes.isValueType(owner);
+		var fix = switch (r) {
+			case VAddress(_) if (!isStatic && !onValue): () -> boxReceiverFor(r, owner);
+			case _: null;
+		}
+		convertArgs(pushed, m.args, fix);
+		il.opToken(isStatic || onValue ? IlOps.CALL : IlOps.CALLVIRT, m.token, m.args.length + (isStatic ? 0 : 1), m.ret.match(LVoid) ? 0 : 1);
+		return m.ret;
 	}
 
 	static function keywordType(name:String):IlSigNorm {
@@ -331,7 +788,8 @@ class CsToIl {
 				switch (resolveName(x)) {
 					case VPushed(t): t;
 					case VType(t): error("the inline C# type " + csName(t) + " is no value");
-					case VNamespace(path): unknownName(path.join("."), "CS0103");
+					case VNamespace(path): error("the inline C# namespace " + path.join(".") + " is no value (C# error CS0118)");
+					case VAddress(_): throw "internal error: an address as a value";
 				}
 		}
 	}
@@ -795,6 +1253,25 @@ class CsToIl {
 				}
 			case CUnop("-", e1):
 				return negateConstant(e1);
+			case CMember(e1, name):
+				// A literal of a .NET type, `int.MinValue`.
+				var t = switch (typeOrNamespace(e1)) {
+					case VType(t) if (programClass(t) == null): t;
+					case _: return null;
+				}
+				var b = atPos(() -> g.externs.memberCs(t, name, true));
+				if (b == null) return null;
+				return switch (b.member) {
+					case XConstant(IInt(v), s = LInt32 | LUInt32): {t: s, i: haxe.Int64.make(s.match(LUInt32) ? 0 : v >> 31, v), f: 0.0};
+					case XConstant(IInt64(_, v), s = LInt64 | LUInt64): {t: s, i: v, f: 0.0};
+					case XConstant(IByte(v) | IShort(v), s = LInt8 | LUInt8 | LInt16 | LUInt16):
+						var signed = s.match(LInt8 | LInt16), bits = s.match(LInt8 | LUInt8) ? 24 : 16;
+						{t: s, i: signed ? (v << bits) >> bits : v, f: 0.0};
+					case XConstant(IChar(v), LChar): {t: LChar, i: v, f: 0.0};
+					case XConstant(IFloat32(v), LFloat32): {t: LFloat32, i: 0, f: v};
+					case XConstant(IFloat64(v), LFloat64): {t: LFloat64, i: 0, f: v};
+					case _: null;
+				}
 			case CBinop(op = "+" | "-" | "*" | "/" | "%", a, b):
 				var ca = constant(a), cb = constant(b);
 				if (ca == null || cb == null) return null;
@@ -1014,6 +1491,22 @@ class CsToIl {
 		return to;
 	}
 
+	// The underlying type of the .NET enum `s`, or null when it is none.
+	function enumUnderlying(s:Null<IlSigNorm>):Null<IlSigNorm> {
+		return switch (s) {
+			case LValueType(p, []) if (!isDecimal(s)): g.externs.enumUnderlying(p);
+			case _: null;
+		}
+	}
+
+	// Refuses a conversion between `from` and `to` that a user-defined conversion operator of either may make
+	// (`explicit`: op_Explicit too), which hxc does not apply (csexpr §7); decimal's are applied above.
+	function userConversionError(from:IlSigNorm, to:IlSigNorm, explicit:Bool):Void {
+		var op = g.externs.userConversion(from, explicit);
+		if (op == null) op = g.externs.userConversion(to, explicit);
+		if (op != null) error("hxc cannot apply the .NET conversion " + op + " in inline C#; convert in Haxe");
+	}
+
 	// A value type on the stack boxed, as C# converts it to object.
 	function box(s:Null<IlSigNorm>):Void {
 		if (s != null && (DotnetTypes.isValueType(s) || isTypeParam(s))) il.opToken(IlOps.BOX, g.typeTokenOf(s), 1, 1);
@@ -1029,6 +1522,15 @@ class CsToIl {
 		}
 		if (IlPaths.sigEq(from, to)) return;
 		if (from.match(LVoid)) error("the inline C# expression has no value (C# error CS0029)");
+		// An enum converts explicitly to and from the numbers (but decimal) and other enums, as its underlying type.
+		var fromEnum = enumUnderlying(from), toEnum = enumUnderlying(to);
+		if (fromEnum != null || toEnum != null) {
+			var f = fromEnum != null ? fromEnum : from, t = toEnum != null ? toEnum : to;
+			if (isNumber(f) && isNumber(t) && !isDecimal(f) && !isDecimal(t)) {
+				if (!IlPaths.sigEq(f, t)) numericCast(f, t);
+				return;
+			}
+		}
 		if (isDecimal(from) && isNumber(to)) {
 			decimalCall("op_Explicit", to, [decimal]);
 		} else if (isDecimal(to) && isNumber(from)) {
@@ -1043,6 +1545,7 @@ class CsToIl {
 		} else if (referenceConverts(from, to)) {
 			if (!to.match(LObject) && !g.isUpcast(from, to) && !g.externs.implicitlyConverts(from, to)) tl.castTo(to);
 		} else {
+			userConversionError(from, to, true);
 			error("the inline C# expression is " + article(csName(from)) + ", which does not convert to " + csName(to) + " (C# error CS0030)");
 		}
 	}

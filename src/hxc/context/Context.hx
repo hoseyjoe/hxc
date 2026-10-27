@@ -120,6 +120,9 @@ class Context {
 	public var netDottedMap:Map<String, hxc.codegen.dotnet.IlData.IlPath> = new Map();
 	// The assemblies read to lower references outside netLibs, and what was found there (NetRefs.of).
 	public var netRefs:Null<hxc.codegen.dotnet.NetRefs> = null;
+	// The fields DCE removed, by "<sTypePath>.<name>": the .NET backend names one in its error for inline C#
+	// that uses it, which DCE never reads.
+	public var dceRemovedFields:Map<String, Bool> = new Map();
 
 	public var displaySpec:Null<String>;
 

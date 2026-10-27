@@ -1075,6 +1075,7 @@ class Dce {
 							if (debug) printOut("[DCE] Removed field " + Context.sTypePath(c.path) + "." + cf.name);
 							checkProperty(cf, true);
 							c.statics.remove(cf.name);
+							com.dceRemovedFields.set(Context.sTypePath(c.path) + "." + cf.name, true);
 						}
 						return b;
 					});
@@ -1084,6 +1085,7 @@ class Dce {
 							if (debug) printOut("[DCE] Removed field " + Context.sTypePath(c.path) + "." + cf.name);
 							checkProperty(cf, false);
 							c.fields.remove(cf.name);
+							com.dceRemovedFields.set(Context.sTypePath(c.path) + "." + cf.name, true);
 						}
 						return b;
 					});

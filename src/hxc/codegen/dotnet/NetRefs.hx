@@ -29,6 +29,10 @@ class NetRefs {
 	var pack:Null<String> = null;
 	// the reference pack's top-level types (IlPaths.key) and the first file, by name, defining each
 	var packIndex:Null<Map<String, String>> = null;
+	// the namespaces of the reference pack's types and those enclosing them, dotted
+	final packNamespaces = new Map<String, Bool>();
+	// namespaceExists's answer set, made once
+	var namespaces:Null<Map<String, Bool>> = null;
 
 	public static function of(ctx:Context):NetRefs {
 		if (ctx.netRefs == null) ctx.netRefs = new NetRefs(ctx);
@@ -216,6 +220,39 @@ class NetRefs {
 		return null;
 	}
 
+	static function addNamespaces(to:Map<String, Bool>, p:IlPath):Void {
+		for (k in 1...p.ns.length + 1) to.set(p.ns.slice(0, k).join("."), true);
+	}
+
+	// Whether a type `definer` can find is in the namespace `ns` or in one inside it, as C#'s name lookup sees
+	// namespaces (inline C#, CsToIl): those of the loaded libraries, of the assemblies they reference
+	// (transitively, as `search` follows them) and of the reference pack.
+	public function namespaceExists(ns:Array<String>):Bool {
+		if (namespaces == null) {
+			namespaces = new Map();
+			var queue = [for (lib in ctx.netLibs) lib];
+			var queued = new Map<String, Bool>();
+			for (lib in ctx.netLibs) queued.set(lib.filePath, true);
+			var i = 0;
+			while (i < queue.length) {
+				var lib = queue[i++];
+				for (p in lib.topLevelTypes()) addNamespaces(namespaces, p);
+				if (ctx.netStdFiles.indexOf(lib.filePath) >= 0) continue;
+				var dir = dirOf(lib.filePath);
+				for (name in lib.assemblyRefs()) {
+					var dep = locate(name, dir);
+					if (dep != null && !queued.exists(dep.filePath)) {
+						queued.set(dep.filePath, true);
+						queue.push(dep);
+					}
+				}
+			}
+			indexPack();
+			for (k in packNamespaces.keys()) namespaces.set(k, true);
+		}
+		return namespaces.exists(ns.join("."));
+	}
+
 	// Reads every assembly of the reference pack once, keeping only which file defines each top-level
 	// type; files are read in name order, so the first definer is the same on every machine.
 	function indexPack():Map<String, String> {
@@ -231,6 +268,7 @@ class NetRefs {
 			for (p in lib.topLevelTypes()) {
 				var key = IlPaths.key(p);
 				if (!packIndex.exists(key)) packIndex.set(key, rp + "/" + f);
+				addNamespaces(packNamespaces, p);
 			}
 		}
 		return packIndex;
