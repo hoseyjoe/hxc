@@ -92,11 +92,11 @@ class IlOps {
 	public static inline var CGT_UN = 0xFE03;
 	public static inline var CLT = 0xFE04;
 	public static inline var CLT_UN = 0xFE05;
+	public static inline var LDFTN = 0xFE06;
+	public static inline var LDVIRTFTN = 0xFE07;
 	public static inline var LDARG = 0xFE09;
 	public static inline var LDARGA = 0xFE0A;
 	public static inline var STARG = 0xFE0B;
-	public static inline var LDFTN = 0xFE06;
-	public static inline var LDVIRTFTN = 0xFE07;
 	public static inline var LDLOC = 0xFE0C;
 	public static inline var LDLOCA = 0xFE0D;
 	public static inline var STLOC = 0xFE0E;

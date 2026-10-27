@@ -17125,3 +17125,74 @@ class P {
 	}
 }
 ===
+# Method groups over a virtual Haxe method (`dup; ldvirtftn`): through a subclass receiver that inherits an
+# override, through a Haxe interface receiver and through a base-class receiver, all dispatch to C.has; a
+# final method uses `ldftn`. Two delegates made from the same object and method are equal, and
+# Method.DeclaringType names the class that declares the method the delegate runs.
+--- delegate-method-group-virtual-dispatch @gencs + -D net-ver=40
+import cs.system.Func_2;
+import cs.system.Delegate;
+
+interface I {
+	function has(s:String):Bool;
+}
+
+class B implements I {
+	public function new() {}
+	public function has(s:String):Bool return s == "b";
+	public final function fin(s:String):Bool return s == "f";
+}
+
+class C extends B {
+	public function new() super();
+	override public function has(s:String):Bool return s == "c";
+}
+
+class D extends C {
+	public function new() super();
+}
+
+class P {
+	static function show(x:Func_2<String, Bool>, y:Func_2<String, Bool>) {
+		var a:Delegate = cast x;
+		var b:Delegate = cast y;
+		Sys.println(a.Method.DeclaringType.Name + "." + a.Method.Name + " eq=" + cs.system.Object._Equals(a, b));
+	}
+	static function main() {
+		var d = new D();
+		var f:Func_2<String, Bool> = d.has;
+		Sys.println(f.Invoke("c"));
+		var i:I = d;
+		var g:Func_2<String, Bool> = i.has;
+		Sys.println(g.Invoke("c"));
+		var h:Func_2<String, Bool> = d.fin;
+		Sys.println(h.Invoke("f"));
+		var b:B = d;
+		var k:Func_2<String, Bool> = b.has;
+		Sys.println(k.Invoke("c"));
+		show(f, k);
+		show(g, f);
+		show(h, h);
+	}
+}
+===
+# `-` and `-=` on delegates lower to Delegate.Remove: removing one of two leaves the other, removing the
+# last gives null, and `-=` stores the result back.
+--- delegate-remove @gencs + -D net-ver=40
+import cs.system.Action_1;
+
+class P {
+	static function main() {
+		var d1:Action_1<String> = (s) -> Sys.println("one " + s);
+		var d2:Action_1<String> = (s) -> Sys.println("two " + s);
+		var both = d1 + d2;
+		both.Invoke("a");
+		var less = both - d1;
+		less.Invoke("b");
+		var none = less - d2;
+		Sys.println(none == null);
+		both -= d2;
+		both.Invoke("c");
+	}
+}
+===
