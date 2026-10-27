@@ -21,6 +21,10 @@ namespace M4 {
 	public class BaseN { public string Name => "base"; }
 	public class BaseV { public virtual string Name => "basev"; }
 	public static class Names { public static string Read(INamed n) => n.Name; }
+	public interface IGreet { string Greet(string who); }
+	public class BaseGN { public string Greet(string who) => "basegn " + who; }
+	public class BaseGV { public virtual string Greet(string who) => "basegv " + who; }
+	public static class Greets { public static string Call(IGreet g) => g.Greet("x"); }
 	public static class UseProps {
 		public static string Read(IHandler h) => h.Guid + "/" + h.Prompt + "/" + h.Plugins().Count;
 		public static string Bump(ICounter c) { c.Count = c.Count + 1; return c.Label + "=" + c.Count; }

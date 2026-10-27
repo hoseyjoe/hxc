@@ -968,6 +968,12 @@ class ExternMembers {
 	// public virtual one: the first instance method of that name and signature decides it, as C# binds the
 	// inherited member there and needs no forwarding stub only when the CLR maps the interface method to it.
 	public function inheritsVirtual(c:TClass, classArgs:Array<IlSigNorm>, name:String, sig:IlSigNorm):Bool {
+		return inheritedMethod(c, classArgs, name, sig) == true;
+	}
+
+	// inheritsVirtual's walk: null when no instance method of that name and signature is found, else whether
+	// the first one found is public virtual.
+	public function inheritedMethod(c:TClass, classArgs:Array<IlSigNorm>, name:String, sig:IlSigNorm):Null<Bool> {
 		var want = switch (sig) {
 			case LMethod(_, r, l): {ret: r, args: l};
 			case _: throw "internal error: not a method signature";
@@ -982,7 +988,7 @@ class ExternMembers {
 				return m.mflags.access == FAPublic && m.mflags.contract.indexOf(CMVirtual) >= 0;
 			}
 		}
-		return false;
+		return null;
 	}
 
 	// The field or property of `c`'s .NET class that the extern variable `cf` stands for, which an access

@@ -755,7 +755,7 @@ class TclassToIl {
 						want = methodSig(g, i.c, i.params, f);
 						erased = !sameSig(want, haxeMethodSig(g, i.c, i.params, f));
 					}
-					var other = findImplementation(g, c, f.name, name, want, own);
+					var other = findImplementation(g, c, i.c, f.name, name, want, own);
 					if (other == null) continue;
 					if (isExternInterface || f.params.length > 0 || other.cf.params.length > 0 || im.overloads.length > 0)
 						throw new Unsupported("interface methods implemented with other types", true);
@@ -1145,10 +1145,10 @@ class TclassToIl {
 		}
 	}
 
-	// The method that implements an interface method with the CLR name `name` and signature `want`: null
-	// when one has that signature (a method of the class itself goes into `own`), else the method of that
-	// name with other types, which a bridge calls.
-	static function findImplementation(g:DotnetCtx, c:TClass, hxName:String, name:String, want:{args:Array<IlSigNorm>, ret:IlSigNorm},
+	// The method that implements the method of the interface `iface` with the CLR name `name` and signature
+	// `want`: null when one has that signature (a method of the class itself goes into `own`), else the method
+	// of that name with other types, which a bridge calls.
+	static function findImplementation(g:DotnetCtx, c:TClass, iface:TClass, hxName:String, name:String, want:{args:Array<IlSigNorm>, ret:IlSigNorm},
 			own:ObjectMap<TClassField, Bool>):Null<{cf:TClassField, owner:TClass, params:Array<T>}> {
 		var cur = c;
 		var params = TypeFunctions.extractParamTypes(c.params);
@@ -1156,8 +1156,19 @@ class TclassToIl {
 		while (cur != null) {
 			var cf = cur.fields.get(hxName);
 			if (cf != null) {
-				// The .NET base class's own method, which the CLR checks when it loads the type.
-				if (TypeFunctions.hasClassFlag(cur, CExtern)) return null;
+				// The .NET base class's own method, which the CLR checks when it loads the type: it maps the
+				// interface method to a public virtual method of exactly its signature. For a non-virtual one C#
+				// adds a forwarding stub, which hxc does not write yet (ruling S).
+				if (TypeFunctions.hasClassFlag(cur, CExtern)) {
+					var classArgs = [for (t in params) g.types.toSig(t)];
+					return switch (g.externs.inheritedMethod(cur, classArgs, name, LMethod([], want.ret, want.args))) {
+						case null: throw other;
+						case true: null;
+						case false:
+							throw new Unsupported("an interface method (" + DotnetTypes.haxePath(TClassDecl(iface)) + "." + hxName
+								+ ") implemented by a non-virtual method of the .NET base class " + DotnetTypes.haxePath(TClassDecl(cur)), false);
+					}
+				}
 				if (DotnetNames.fieldName(cur, cf.name) != name) throw other;
 				for (f in [cf].concat(cf.overloads)) {
 					// An override that took its slot's signature (OInline) has that one, which the interface may want.

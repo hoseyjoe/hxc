@@ -16688,6 +16688,43 @@ class P {
 basev
 basev
 basev
+# A .NET interface method implemented by a non-virtual method of the .NET base class: C# adds a forwarding
+# stub (a private virtual final newslot method and a MethodImpl row), which hxc does not write yet (ruling S),
+# so it is refused rather than leaving a type the CLR cannot load.
+--- netlib-iface-method-base-nonvirtual-is-unsupported @netlib=M4Lib
+import m4.*;
+
+class HG extends BaseGN implements IGreet {
+	public function new() super();
+}
+
+class P {
+	static function main() {
+		Sys.println(Greets.Call(new HG()));
+	}
+}
+===
+[compile]
+P.hx:3: lines 3-5 : dotnet: an interface method (m4.IGreet.Greet) implemented by a non-virtual method of the .NET base class m4.BaseGN is not supported yet
+P.hx:9: characters 27-35 : dotnet: HG (left out: an interface method (m4.IGreet.Greet) implemented by a non-virtual method of the .NET base class m4.BaseGN) is not supported yet
+# The same with a virtual base method, which the CLR maps the interface method to.
+--- netlib-iface-method-base-virtual @gencs @netlib=M4Lib
+import m4.*;
+
+class HV extends BaseGV implements IGreet {
+	public function new() super();
+}
+
+class P {
+	static function main() {
+		var h = new HV();
+		Sys.println(Greets.Call(h));
+		Sys.println(h.Greet("y"));
+		var g:IGreet = h;
+		Sys.println(g.Greet("z"));
+	}
+}
+===
 # A set-only property (M4Lib's IWriteOnly): the value of a store is the stored value (ruling 7), and reflection lists the setter.
 --- netlib-iface-property-set-only @gencs @netlib=M4Lib
 import m4.*;
