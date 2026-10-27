@@ -567,6 +567,14 @@ and `List` copy, and two threads casting one array at once.
          Haxe class below one (`netlib-extern-type-parameter-receiver`); with several constraints or none
          of those, a hand-written extern's call is refused ("hxc cannot tell which .NET overload of T.m the
          type parameter T's constraints select").
+       - **Fields and properties** are looked up the same way, from the receiver's static type (its extern
+         class's .NET type, or its one constraint's), for a read, a store and an address, so a derived
+         class's `new` member hides the base's (`netlib-extern-field-hidden-by-receiver`). The lookup takes
+         the public members and the protected ones ruling R allows; a protected one it does not allow is
+         refused ("hxc cannot tell whether the protected .NET member T.f is accessible here",
+         `netlib-extern-protected-field-refused`), as C# looks further up there, and a private or internal
+         one is passed over. A property is as accessible as its most accessible accessor, and an accessor
+         that is not accessible is left out.
        - **Argument types.** At a call, the arguments' own types (what gencs's C# sees) must bind the same
          method definition as the declared types, or the call is refused ("the .NET overload of T.m
          depends on the argument types (…); declare it with @:overload"). An `@:overload` extern is
@@ -582,6 +590,26 @@ and `List` copy, and two threads casting one array at once.
          TypeDef or TypeSpec of the program's own module); where they differ from the declared ones, the
          declared return type must still convert from the method's return with them, or the call is
          refused with the return-mismatch error.
+       - **Argument values.** C# also converts by an argument's value, and gencs writes integer literals
+         and `null` as they are; it casts an `@:overload` extern's arguments to the declared types, which
+         keeps an integer constant one, and writes a `null` into a value type as `default(T)`. In both
+         bindings, an integer constant (an `Int` literal or a fold of them) may also take a narrower
+         integral parameter it fits (`sbyte`, `byte`, `short`, `ushort`, `uint`, `ulong`), and a 0 an enum,
+         both unknown, while identity with `int` stays exact and a widening applies. A `null` literal, the
+         typer's padding of a left-out optional argument included, applies to every reference type, to
+         `Nullable<T>` and to a `params` array in its normal form, and is never an exact match, even
+         against `object`; it gives a generic method no type argument. So `B(5)` with `B(byte)` and
+         `B(object)`, `S(5)` with `S(short)` and `S(double)`, `E(0)` with `E(Hue)` and `E(object)`,
+         `N(null)` with `N(Thing)` and `N(object)`, `P(null)` with `P(params object[])` and `P(object)`, a
+         padded `O(1)` with `O(int, Thing)` and `O(int, object)`, and the same for a constructor are
+         refused, where C# picks the first of each by betterness, and the message adds "C# converts an
+         integer constant or null argument by its value; declare the parameter's exact type, or use
+         @:overload" (`netlib-extern-int-constant-to-byte-refused`, `…-to-short-refused`,
+         `netlib-extern-zero-to-enum-refused`, `netlib-extern-null-to-class-or-object-refused`,
+         `netlib-extern-null-to-params-or-object-refused`, `netlib-extern-padded-optional-null-refused`,
+         `netlib-extern-int-constant-constructor-refused`). `I(5)` with `I(int)`, `B(300)`, and a `null`
+         into the one reference candidate still bind (`netlib-extern-constant-and-null-arguments`). An
+         indexer's index is such an argument too (`netlib-indexer-zero-to-enum-refused`).
        - **Haxe-compiled types.** A Haxe class or interface keeps its own type in either binding (a
          declared parameter type can be one too): no identity match fires for it but against that very
          type. It converts for certain to `object`, to the classes on its Haxe superclass chain and the

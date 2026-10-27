@@ -124,11 +124,17 @@ the .NET SDK must be installed, not only the runtime; a pack that is needed and 
 error that names it. Those assemblies are used to write the output only: as in Haxe, Haxe code sees
 only the assemblies passed, and a type defined only in one of them is "Type not found".
 
-- **Calls** bind the .NET overload gencs's C# would bind, generic .NET methods included. A
-  hand-written extern (`@:native`) binds the overload C#'s compiler picks for its declared types, with
-  omitted optional and `params` arguments filled as C# fills them. Where two overloads apply, or hxc
-  cannot tell whether one does, the call is a compile error rather than a guess, even where C# would
-  pick the more specific one.
+- **Calls** bind the .NET overload gencs's C# would bind, generic .NET methods included, or are a
+  compile error. A hand-written extern (`@:native`) binds the overload C#'s compiler picks for its
+  declared types and for its arguments' own types, which must agree, with omitted optional and `params`
+  arguments filled as C# fills them. Its fields and properties are looked up from the receiver's type,
+  as C# looks them up, so a derived class's `new` member hides the base's. Where two overloads apply,
+  or hxc cannot tell whether one does, the call is a compile error rather than a guess, even where C#
+  would pick the more specific one. So is a call where C# picks the overload by an argument's value:
+  an integer constant, which C# also converts to a narrower integer type it fits and, if 0, to an enum
+  (`B(5)` with `B(byte)` and `B(object)`), or `null`, which C# converts to every reference type
+  (`N(null)` with `N(Thing)` and `N(object)`, or a left-out optional argument, which gencs passes as
+  `null`). Declare the parameter's exact type, or use `@:overload`.
 - **Value types:** `System.Nullable<T>` works, through `HasValue`, `Value`, `== null` and string
   concatenation. `null` passed or assigned where a .NET struct is expected is that struct's
   `default(T)`, as under gencs, so a `Nullable<DateTime>` built from a `null` `DateTime` has a value,
