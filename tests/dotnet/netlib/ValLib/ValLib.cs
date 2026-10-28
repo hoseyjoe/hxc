@@ -337,6 +337,13 @@ namespace ValLib
         // a null gives a generic method no type argument, so G<T>(T) does not apply: G(null) binds G(string)
         public static string G<T>(T x) { return "G<T>"; }
         public static string G(string s) { return "G(string)"; }
+        // T occurs only in the params array: C# infers it from a typed argument in the expanded form, so PG(null, "s")
+        // binds PG<string>(params string[]) over PG(object,object)
+        public static string PG(object a, object b) { return "PG(object,object)"; }
+        public static string PG<T>(params T[] a) { return "PG<" + typeof(T).Name + ">(params T[])"; }
+        // the same parameter types at the given position: C#'s tie-breaker (no default filled in) picks Q2(string)
+        public static string Q2(string s) { return "Q2(string)"; }
+        public static string Q2(string s, int x = 0) { return "Q2(string,int)"; }
     }
     public class NCtor
     {

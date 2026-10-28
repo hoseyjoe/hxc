@@ -736,16 +736,17 @@ class ExternMembers {
 	// is worse and one is better (the leftover parameters, omitted optionals and params, are not compared, as in
 	// C#). Positions where the two take the same type are neutral. hxc does not model C#'s betterness for a
 	// typed argument, so one whose parameters differ cannot be decided, nor can a conversion `converts` calls
-	// unknown. RNullAmbiguous where every comparison that matters is decided and no method is better than every
+	// unknown, nor two methods with the same types at every given position (C#'s tie-breakers). RNullAmbiguous where every comparison that matters is decided and no method is better than every
 	// other one (CS0121); RAmbiguous where one is undecidable, or the call has no null argument.
 	function betterForNull(yes:Array<Bound>, wantLength:Int, kinds:Null<Array<ArgKind>>):Resolution {
 		if (!hasNull(kinds) || Lambda.exists(yes, b -> b.params == null)) return RAmbiguous;
 		// Whether `c` is better than `o`: yes, no, or null where hxc cannot tell.
 		function beats(c:Array<IlSigNorm>, o:Array<IlSigNorm>):Null<Bool> {
-			var strict = false, unknown = false;
+			var strict = false, unknown = false, same = true;
 			for (i in 0...wantLength) {
 				var pc = norm(c[i]), po = norm(o[i]);
 				if (IlPaths.sigEq(pc, po)) continue;
+				same = false;
 				if (i >= kinds.length || !kinds[i].match(KNull)) {
 					unknown = true;
 					continue;
@@ -759,7 +760,9 @@ class ExternMembers {
 				if (oToC == AYes && cToO == ANo) return false;
 				if (cToO == AYes && oToC == ANo) strict = true;
 			}
-			return unknown ? null : strict;
+			// The same types at every given position: C#'s tie-breakers (fewer defaults, non-generic, normal form)
+			// decide, which hxc does not model.
+			return unknown || same ? null : strict;
 		}
 		var best = [], undecided = false;
 		for (c in yes) {
@@ -845,9 +848,12 @@ class ExternMembers {
 			if (typeParams != 0) return no;
 			// Ruling Z (d): C# infers a type parameter only from a typed argument (or a lambda or method group,
 			// which neither an extern call nor inline C# passes), so one that occurs only at null positions, or at
-			// none of the given ones, fails its inference and the method does not apply.
+			// none of the given ones, fails its inference and the method does not apply. An argument past the fixed
+			// parameters goes into the params array's element in the expanded form, so it counts against that
+			// parameter; a left-out parameter's default gives C# nothing to infer from.
+			inline function paramOf(i:Int):Null<IlSigNorm> return i < n ? got[i] : params ? got[n - 1] : null;
 			for (j in 0...m.mtypes.length)
-				if (!Lambda.exists([for (i in 0...want.length) i], i -> i < n && !kind(i).match(KNull) && mentionsMethodParam(got[i], j)))
+				if (!Lambda.exists([for (i in 0...want.length) i], i -> !kind(i).match(KNull) && paramOf(i) != null && mentionsMethodParam(paramOf(i), j)))
 					return no;
 			typeArgs = inferTypeArgs(m, got, [for (i in 0...want.length) kind(i).match(KNull) ? null : want[i]]);
 			if (typeArgs == null) {

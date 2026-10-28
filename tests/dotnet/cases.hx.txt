@@ -17434,6 +17434,26 @@ class P {
 [compile]
 P.hx:7: characters 9-25 : dotnet: more than one .NET overload of ValLib.ByNull.N3 accepts (object), and hxc cannot tell which one C# picks for a null argument; pass a variable of the parameter's type, or use @:overload
 P.hx:8: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.P2 accepts (string[]), and hxc cannot tell which one C# picks for a null argument; pass a variable of the parameter's type, or use @:overload
+# Ruling Z where C# decides by what hxc does not model, refused rather than guessed: PG(object,object) and
+# PG<T>(params T[]) with (null, "s"), where C# infers T = string from the typed argument in the expanded form and
+# binds PG<string>(params string[]) (hxc bound PG(object,object) silently while a null position hid the params
+# argument from the type inference); and Q2(string) with Q2(string, int x = 0), the same type at the given
+# position, where C#'s tie-breaker picks the one with no default filled in, Q2(string).
+--- netlib-extern-null-betterness-tie-or-expanded-refused @netlib
+@:native("ValLib.ByNull") extern class ByNull {
+	static function PG(a:Dynamic, b:String):String;
+	static function Q2(s:String):String;
+}
+class P {
+	static function main() {
+		trace(ByNull.PG(null, "s"));
+		trace(ByNull.Q2(null));
+	}
+}
+===
+[compile]
+P.hx:7: characters 9-29 : dotnet: more than one .NET overload of ValLib.ByNull.PG may accept (object, string) (C# converts a null argument to every reference type and Nullable<T>; pass a variable of the parameter's type, or use @:overload)
+P.hx:8: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.Q2 accepts (string), and hxc cannot tell which one C# picks for a null argument; pass a variable of the parameter's type, or use @:overload
 # A null into a declared Nullable<T> is no null literal in gencs's C#: gencs writes a null into a value type as
 # default(T), here `N4(default(global::System.Nullable<int>))`, so C# binds by the type int?, exactly. hxc took it
 # for a null literal, which applies to every reference type too, and refused all three before.
