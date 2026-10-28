@@ -754,8 +754,8 @@ and `List` copy, and two threads casting one array at once.
        reflection and a hxgen class's reflection members (`property-vars-access`, which also covers a
        generic class and a struct). A member of a struct-typed one is reached through a copy of the
        getter's value, as in C#. System.Text.Json and .NET reflection see the properties, and no field.
-       Roslyn's `CompilerGeneratedAttribute` on the backing field and the accessors is not written
-       (it is milestone 4b's).
+       The backing field and both accessors carry Roslyn's `CompilerGeneratedAttribute`
+       (`property-var-compiler-generated`).
        - Error, as gencs's C# does not compile: a `get_X` or `set_X` the class declares beside the var
          (CS0082, `property-var-accessor-clash-is-an-error`).
        - A non-physical `@:property` var with a get or set accessor is a property as gencs's gen_prop

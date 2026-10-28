@@ -40,6 +40,8 @@ class DotnetCtx {
 	public final records:Array<String> = [];
 	public var mainClass:Null<TClass> = null;
 	public var entryPoint = 0;
+	// The MemberRef of CompilerGeneratedAttribute's constructor, once a @:property var asks for it.
+	public var compilerGeneratedCtor = 0;
 	public var diagnostics = 0;
 	// gencommon's mk_temp counter, which numbers FixOverrides's `__temp_` parameters across the program.
 	public var tempCount = 0;
@@ -431,7 +433,7 @@ class GenerateDotnet {
 		// The identity of the file that defines the type, a reference-only one too.
 		mb.externScope = function(path:IlPath) {
 			var lib = NetRefs.of(ctx).definer(path);
-			if (lib == null) throw "internal error: no referenced assembly defines " + NetConverter.ilpathS(path);
+			if (lib == null) throw Unsupported.error(NetRefs.of(ctx).missing(path));
 			var id = identities.get(lib.filePath);
 			if (id == null) {
 				id = lib.identity();

@@ -16913,6 +16913,44 @@ class P {
 ===
 # A physical @:property var whose class also declares get_X or set_X: C# reserves those names for the property's
 # accessors (gencs's C#: CS0082).
+--- property-var-compiler-generated @gencs
+@:nativeGen
+class Model {
+	@:property public var name:String = "";
+	@:property public static var total:Int = 3;
+	public function new() {}
+}
+class Box<T> {
+	@:property public var item:T;
+	@:property public static var made:Int;
+	public function new(t:T) item = t;
+}
+class Plain {
+	@:property public var x:Float = 1.5;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var m = new Model();
+		var b = new Box<String>("s");
+		var p = new Plain();
+		var CG = cs.Lib.toNativeType(cs.system.runtime.compilerservices.CompilerGeneratedAttribute);
+		for (t in [cs.Lib.toNativeType(Model), cs.Lib.getNativeType(b).GetGenericTypeDefinition(), cs.Lib.toNativeType(Plain)]) {
+			var all:cs.system.reflection.BindingFlags = new cs.Flags(cs.system.reflection.BindingFlags.Public) | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.Instance | cs.system.reflection.BindingFlags.Static | cs.system.reflection.BindingFlags.DeclaredOnly;
+			var out = [];
+			for (f in t.GetFields(all)) if (f.IsDefined(CG, false)) out.push("field " + f.Name);
+			for (mm in t.GetMethods(all)) if (mm.IsDefined(CG, false)) out.push("method " + mm.Name);
+			for (pp in t.GetProperties(all)) if (pp.IsDefined(CG, false)) out.push("property " + pp.Name);
+			out.sort(Reflect.compare);
+			Sys.println(t.Name + ": " + out.join(", "));
+		}
+	}
+}
+===
+[run]
+Model: field <name>k__BackingField, field <total>k__BackingField, method get_name, method get_total, method set_name, method set_total
+Box`1: field <item>k__BackingField, field <made>k__BackingField, method get_item, method get_made, method set_item, method set_made
+Plain: field <x>k__BackingField, method get_x, method set_x
 --- property-var-accessor-clash-is-an-error
 class A {
 	@:property @:isVar public var x(get, set):Int;

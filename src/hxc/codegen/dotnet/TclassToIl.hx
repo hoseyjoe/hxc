@@ -1,6 +1,7 @@
 package hxc.codegen.dotnet;
 
 import haxe.ds.ObjectMap;
+import haxe.io.Bytes;
 import hxc.ast.Position;
 import hxc.core.Globals;
 import hxc.core.TexprTools;
@@ -1643,6 +1644,16 @@ class TclassToIl {
 		for (p in plan.properties) {
 			if (p.name == IndexerToIl.itemName && p.index.length > 0) indexer = true;
 			p.token = mb.property(plan.token, p.name, g.sigs.property(p.sig, p.isStatic != true, p.index));
+			// Roslyn marks an auto-property's backing field and both accessors CompilerGenerated.
+			if (p.backing != null) {
+				if (g.compilerGeneratedCtor == 0)
+					g.compilerGeneratedCtor = mb.memberRef(g.typeTokenOf(LClass({ns: ["System", "Runtime", "CompilerServices"], nested: [], name: "CompilerGeneratedAttribute"}, [])),
+						".ctor", g.sigs.method(true, LVoid, [], 0));
+				var blob = Bytes.ofHex("01000000");
+				mb.customAttribute(p.backing.token, g.compilerGeneratedCtor, blob);
+				mb.customAttribute(p.getter.token, g.compilerGeneratedCtor, blob);
+				mb.customAttribute(p.setter.token, g.compilerGeneratedCtor, blob);
+			}
 			if (p.getter != null) mb.methodSemantics(SemanticsAttrs.GETTER, p.getter.token, p.token);
 			if (p.setter != null) mb.methodSemantics(SemanticsAttrs.SETTER, p.setter.token, p.token);
 			// Every Haxe use of get_X and set_X calls the public accessor, as gencs writes `o.X` and `o.X = v`.
