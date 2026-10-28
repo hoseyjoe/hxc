@@ -323,6 +323,9 @@ class ExternMembers {
 		var want = types.withParams(c.params, cf.params, () -> [for (a in declared.args) types.toSig(a.t)]);
 		var links = chain(c);
 		if (isCtor) links = [links[0]];
+		if (call != null)
+			refuseConstrainedTypeParams(call.caller, [for (a in call.args) a.type], links, name, isStatic,
+				isCtor ? "constructor of " + typeS(c) : "overload of " + typeS(c) + "." + name);
 		if (exactOnly || !isHandWritten(c)) {
 			for (link in links) {
 				var args = linkArgs(link);
@@ -785,6 +788,54 @@ class ExternMembers {
 
 	// An override, which C# looks for where the method was first declared.
 	static function isOverride(m:IlMethod):Bool return overrides(m.mflags);
+
+	// Ruling 7: gencs's C# declares a @:nativeGen class's constrained type parameters (`where T : I`, for the
+	// class's and its methods' own), and C# binds an argument of one by its constraints, where hxc, which
+	// writes no GenericParamConstraint rows, would bind by object. So a call in such a class (or in a local
+	// function of one) that passes one to a .NET method `name` with more than one overload along `links` is
+	// refused. `args` are the arguments' Haxe types, null where there is none; `what` names the overloads.
+	// This is a check of its own, before any binding, so the order of `converts`' rules does not matter.
+	function refuseConstrainedTypeParams(caller:Null<TClass>, args:Array<Null<T>>, links:Array<{cls:IlClass, parent:IlSigNorm}>, name:String,
+			isStatic:Bool, what:String):Void {
+		var owners = types.g == null ? null : types.g.closureOwners;
+		for (_ in 0...64) {
+			var owner = caller == null || owners == null ? null : owners.get(caller);
+			if (owner == null) break;
+			caller = owner;
+		}
+		if (caller == null || !TypeFunctions.hasMeta(":nativeGen", caller.meta) || HxGen.isHxGen(TClassDecl(caller))) return;
+		var param = null;
+		for (t in args) {
+			param = constrainedParam(t);
+			if (param != null) break;
+		}
+		if (param == null) return;
+		var overloads = 0;
+		for (l in links) for (m in l.cls.cmethods)
+			if (m.mname == name && (m.mflags.contract.indexOf(CMStatic) >= 0) == isStatic && !isOverride(m)) overloads++;
+		if (overloads > 1) throw Unsupported.error("hxc cannot tell which .NET " + what + " the type parameter " + param + "'s constraints select");
+	}
+
+	// The name of the type parameter `t` is, through Null, when it has a constraint gencs's C# writes in its
+	// `where` clause (anything but String, which C# cannot name there), or null.
+	static function constrainedParam(t:Null<T>):Null<String> {
+		for (_ in 0...16) {
+			if (t == null) return null;
+			switch (TypeFunctions.follow(t)) {
+				case TAbstract({path: {pack: [], name: "Null"}}, [inner]):
+					t = inner;
+				case TInst(c, _):
+					return switch (c.kind) {
+						case KTypeParameter(cl) if (Lambda.exists(cl, x -> !TypeFunctions.follow(x).match(TInst({path: {pack: [], name: "String"}}, [])))):
+							c.path.name;
+						case _: null;
+					}
+				case _:
+					return null;
+			}
+		}
+		return null;
+	}
 
 	static function overrides(flags:MethodFlags):Bool
 		return flags.contract.indexOf(CMVirtual) >= 0 && flags.vtable.indexOf(VNewSlot) < 0;
@@ -1798,7 +1849,8 @@ class ExternMembers {
 	// exact match, else the one applicable method; refused where more than one applies or hxc cannot tell.
 	// A protected method is never taken, as hxc cannot tell whether the receiver allows it. Null when no
 	// class along the chain declares a method of that name.
-	public function bindCs(recv:IlSigNorm, name:String, isStatic:Bool, args:Array<IlSigNorm>, argKinds:Array<ArgKind>, pos:hxc.ast.Position):Null<CsMethod> {
+	public function bindCs(recv:IlSigNorm, name:String, isStatic:Bool, args:Array<IlSigNorm>, argKinds:Array<ArgKind>, pos:hxc.ast.Position,
+			?site:{caller:Null<TClass>, types:Array<Null<T>>}):Null<CsMethod> {
 		var isCtor = name == ".ctor";
 		var links = isCtor ? csChain(recv) : csChain(recv, name);
 		var what = isCtor ? "constructor of " + sigS(recv) : "overload of " + sigS(recv) + "." + name;
@@ -1822,6 +1874,12 @@ class ExternMembers {
 			break;
 		}
 		if (!Lambda.exists(links, l -> Lambda.exists(l.cls.cmethods, m -> m.mname == name))) return null;
+		if (site != null) try {
+			refuseConstrainedTypeParams(site.caller, site.types, links, name, isStatic, what);
+		} catch (u:Unsupported) {
+			u.pos = pos;
+			throw u;
+		}
 		var receiver:Null<Receiver> = isStatic ? null : {cls: null, opaque: true};
 		byValue = false;
 		byNull = false;

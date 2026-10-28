@@ -867,7 +867,14 @@ and `List` copy, and two threads casting one array at once.
      ClassLayout row for its `Pack` and `Size`, and `FieldOffset` a FieldLayout row, with Roslyn's errors
      (CS0636, CS0625, CS0637, CS0842, CS0591, CS0599); Roslyn's others (`MethodImpl`, `DllImport`,
      `MarshalAs`, ...) are errors. This fixes std's `haxe.io.FPHelper`, and so `Bytes.getDouble` and its kin,
-     which read and wrote zeros. Nullability metadata and events are not written yet, with no error: hxc compiles the
+     which read and wrote zeros. Every assembly gets the SDK's `TargetFramework(".NETCoreApp,Version=v<net>.0",
+     FrameworkDisplayName = ".NET <net>.0")`, and `@:cs.assemblyMeta` entries are assembly rows, refused as
+     gencs refuses them on a class that is not its module's first or that has no package; a `@:noCompletion`
+     field, property, method or constructor gets `EditorBrowsable(EditorBrowsableState.Never)` (ruling 6).
+     A `@:nativeGen` class's methods and constructors get gencs's overloads for their trailing optional
+     arguments, each with the field's attributes. Its constrained type parameters still get no
+     GenericParamConstraint rows, so a call that passes one to an overloaded .NET method, which gencs's C#
+     binds by the `where` clause, is refused (ruling 7). Nullability metadata and events are not written yet, with no error: hxc compiles the
      class without them (an `@:event` var's `add_` and `remove_` methods are plain methods), where gencs
      writes a C# `event`, so .NET reflection sees no event.
      The carried items:
@@ -968,6 +975,11 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   writes no row. The runtime sizes both at 1 byte, so only metadata sees it: `Type.StructLayoutAttribute.Size`
   is 1 for gencs's struct and 0 for hxc's. hxc keeps this so that a DLL without explicit layout is unchanged
   by 4c's pseudo-attributes.
+- A `@:nativeGen` method or constructor with optional arguments: hxc gives each of its optional-argument
+  overloads, and the full method, the field's attributes once (`attrs-nativegen-optional-overloads-attributes`).
+  gencs writes the field's attributes in front of the first overload, which then has them twice and the full
+  method none, so its C# does not compile for an attribute without `AllowMultiple`: `CS0579: Duplicate
+  'System.ComponentModel.DescriptionAttribute' attribute`.
 
 ## Left to the builder
 

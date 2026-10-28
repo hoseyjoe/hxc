@@ -132,6 +132,8 @@ class AttributesToIl {
 	static final attributePath:IlPath = {ns: ["System"], nested: [], name: "Attribute"};
 	static final usagePath:IlPath = {ns: ["System"], nested: [], name: "AttributeUsageAttribute"};
 	static final typePath:IlPath = {ns: ["System"], nested: [], name: "Type"};
+	static final editorBrowsablePath:IlPath = {ns: ["System", "ComponentModel"], nested: [], name: "EditorBrowsableAttribute"};
+	static final editorBrowsableStatePath:IlPath = {ns: ["System", "ComponentModel"], nested: [], name: "EditorBrowsableState"};
 	static final pseudoNames = [
 		"System.Runtime.InteropServices.StructLayoutAttribute", "System.Runtime.InteropServices.FieldOffsetAttribute",
 		"System.SerializableAttribute", "System.NonSerializedAttribute"
@@ -245,8 +247,24 @@ class AttributesToIl {
 	function member(owner:Int, meta:Metadata, target:AttrTarget, pos:Position, site:AttrSite):Void {
 		// The attribute types already on the member, by IlPaths.key.
 		var seen = new Map<String, Bool>();
+		entries(owner, meta, ":meta", target, site, seen, pos);
+		// gencs's gen_nocompletion: EditorBrowsable(EditorBrowsableState.Never) after the @:meta attributes, on a
+		// @:noCompletion field, property, method or constructor (ruling 6).
+		if (target.match(TField | TProperty | TMethod | TCtor) && TypeFunctions.hasMeta(":noCompletion", meta)) {
+			if (seen.exists(IlPaths.key(editorBrowsablePath))) {
+				var m = TypeFunctions.getMetaOpt(":noCompletion", meta);
+				g.error("@:noCompletion writes EditorBrowsable on " + site.name + ", which already has one (C# error CS0579)", m.pos);
+				return;
+			}
+			var ctor = runtimeAttr(g, "System.ComponentModel", "EditorBrowsableAttribute", [ATEnum(editorBrowsableStatePath, ATI4)]);
+			write(g, owner, ctor, [AEnum(dottedName(editorBrowsableStatePath), ATI4, Int64.ofInt(1))], []);
+		}
+	}
+
+	// The rows of `meta`'s entries named `name` on `owner`, each type recorded in `seen`.
+	function entries(owner:Int, meta:Metadata, name:String, target:AttrTarget, site:AttrSite, seen:Map<String, Bool>, pos:Position):Void {
 		for (m in meta) {
-			if (m.name != ":meta") continue;
+			if (m.name != name) continue;
 			try {
 				entry(owner, m, target, site, seen);
 			} catch (e:AttrError) {
@@ -256,6 +274,58 @@ class AttributesToIl {
 				g.report(u);
 			}
 		}
+	}
+
+	// The assembly's rows (ruling 6): each class's @:cs.assemblyMeta entries (StrictMeta has rewritten
+	// @:cs.assemblyStrict into them), in the order the classes are written, then the SDK's
+	// TargetFramework(".NETCoreApp,Version=v<net>.0", FrameworkDisplayName = ".NET <net>.0"). gencs writes
+	// `[assembly: ...]` before the namespace of the first class of a module, where C# looks the names up
+	// from the global namespace, and refuses them on another class or on a class of a top-level module.
+	public static function forAssembly(g:DotnetCtx, classes:Array<TClass>, version:Int):Void {
+		var a = of(g);
+		var owner = (TableIdx.IAssembly << 24) | 1;
+		var seen = new Map<String, Bool>();
+		var site:AttrSite = {name: "the assembly", ns: []};
+		for (c in classes) {
+			var m = TypeFunctions.getMetaOpt(":cs.assemblyMeta", c.meta);
+			if (m == null) continue;
+			if (c.path.pack.length == 0) {
+				g.error("@:cs.assemblyMeta cannot be used on top level modules", c.pos);
+				continue;
+			}
+			if (firstType(g, c) != c) {
+				g.error("@:cs.assemblyMeta can only be used on the first class of a module", c.pos);
+				continue;
+			}
+			a.entries(owner, c.meta, ":cs.assemblyMeta", TAssembly, site, seen, c.pos);
+		}
+		var framework:IlPath = {ns: ["System", "Runtime", "Versioning"], nested: [], name: "TargetFrameworkAttribute"};
+		if (seen.exists(IlPaths.key(framework))) {
+			g.error("TargetFrameworkAttribute is on the assembly already: hxc writes it on every assembly, as the .NET SDK does (C# error CS0579)", Position.nullPos);
+			return;
+		}
+		var ctor = runtimeAttr(g, "System.Runtime.Versioning", "TargetFrameworkAttribute", [ATString]);
+		var v = version + ".0";
+		write(g, owner, ctor, [AString(".NETCoreApp,Version=v" + v)], [
+			{isProperty: true, name: "FrameworkDisplayName", type: ATString, value: AString(".NET " + v)}
+		]);
+	}
+
+	// The first type of `c`'s module that gencs writes: a class that is not extern, or an enum, that the
+	// compile keeps.
+	static function firstType(g:DotnetCtx, c:TClass):Null<TClass> {
+		var kept = new haxe.ds.ObjectMap<{}, Bool>();
+		for (mt in g.ctx.types) switch (mt) {
+			case TClassDecl(k) if (k.module == c.module): kept.set(k, true);
+			case TEnumDecl(e) if (e.module == c.module): kept.set(e, true);
+			case _:
+		}
+		for (mt in c.module.types) switch (mt) {
+			case TClassDecl(k) if (kept.exists(k) && !TypeFunctions.hasClassFlag(k, CExtern)): return k;
+			case TEnumDecl(e) if (kept.exists(e) && !e.isExtern): return null;
+			case _:
+		}
+		return null;
 	}
 
 	function entry(owner:Int, m:MetadataEntry, target:AttrTarget, site:AttrSite, seen:Map<String, Bool>):Void {

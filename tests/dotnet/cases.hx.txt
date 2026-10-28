@@ -20946,3 +20946,214 @@ P.hx:15: characters 104-113 : dotnet: the value given to Size is not valid (C# e
 P.hx:5: characters 56-73 : dotnet: the FieldOffset attribute on a needs StructLayout(LayoutKind.Explicit) on its type (C# error CS0636)
 P.hx:11: characters 2-19 : dotnet: b needs a FieldOffset attribute, as its type has StructLayout(LayoutKind.Explicit) (C# error CS0625)
 P.hx:12: characters 56-80 : dotnet: the FieldOffset attribute is not allowed on the static field s (C# error CS0637)
+# @:cs.assemblyMeta and @:cs.assemblyStrict: assembly-level attributes, which gencs writes on the first
+# class of a module that has a package. hxc's StrictMeta port matches ":assemblyStrict" instead of
+# ":cs.assemblyStrict" today, and nothing writes either.
+--- attrs-assembly-meta @gencs @module=pk.A
+package pk;
+
+import cs.system.reflection.AssemblyCompanyAttribute;
+import cs.system.reflection.AssemblyDescriptionAttribute;
+
+// Assembly-level attributes: gencs writes them on the first class of a module that has a package.
+@:cs.assemblyMeta(System.Reflection.AssemblyDescriptionAttribute("described"))
+@:cs.assemblyStrict(AssemblyCompanyAttribute("company"))
+class A {
+	static function main() {
+		var asm = cs.Lib.toNativeType(A).Assembly;
+		var d:AssemblyDescriptionAttribute = cast cs.system.Attribute.GetCustomAttribute(asm, cs.Lib.toNativeType(AssemblyDescriptionAttribute));
+		var c:AssemblyCompanyAttribute = cast cs.system.Attribute.GetCustomAttribute(asm, cs.Lib.toNativeType(AssemblyCompanyAttribute));
+		Sys.println(d == null ? "no description" : d.Description);
+		Sys.println(c == null ? "no company" : c.Company);
+	}
+}
+===
+[run]
+described
+company
+# A @:nativeGen class's constructor and methods get an overload per trailing optional argument (gencs.ml
+# get_overloads_for_optional_args), the constructors chaining with : this(...). The parameterless one is
+# what Type.createEmptyInstance and SK's model construction need; hxc today has only the full overloads and
+# createEmptyInstance throws MissingMethodException.
+--- attrs-nativegen-optional-overloads @gencs
+import cs.system.reflection.BindingFlags;
+// gencs gives a @:nativeGen class's constructor and methods an overload per trailing optional argument.
+@:nativeGen class NG {
+	public var a:Int;
+	public function new(?x:Int, y:String = "y") { a = x == null ? 9 : x; }
+	public function opt(a:Int, ?b:Int, c:String = "c"):String return a + "," + b + "," + c;
+	public static function sopt(?z:Float):String return "z=" + z;
+}
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(NG);
+		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var ms = t.GetMethods(all);
+		var sigs = [for (i in 0...ms.Length) Std.string(ms[i])];
+		var cs_ = t.GetConstructors(all);
+		for (i in 0...cs_.Length) sigs.push(Std.string(cs_[i]));
+		sigs.sort(Reflect.compare);
+		for (s in sigs) Sys.println(s);
+		var n:NG = Type.createEmptyInstance(NG);
+		Sys.println(n != null);
+		Sys.println(new NG().opt(1) + " " + NG.sopt());
+	}
+}
+===
+[run]
+System.String opt(Int32)
+System.String opt(Int32, haxe.lang.Null`1[System.Int32])
+System.String opt(Int32, haxe.lang.Null`1[System.Int32], System.String)
+System.String sopt()
+System.String sopt(haxe.lang.Null`1[System.Double])
+Void .ctor()
+Void .ctor(haxe.lang.Null`1[System.Int32])
+Void .ctor(haxe.lang.Null`1[System.Int32], System.String)
+True
+1,null,c z=null
+# Ruling 7: a @:nativeGen class's type parameter with an interface constraint is `where T : IComparable` in
+# gencs's C#, so a hand-written extern call or inline C# with a T argument binds H(IComparable), and gencs's
+# run prints `H(IComparable)` twice. hxc writes no GenericParamConstraint rows and would bind H(object), so a
+# call passing such a T to an overloaded .NET method is refused.
+--- netlib-nativegen-constrained-type-param-argument-refused @netlib=CarLib
+import car.*;
+@:native("car.Ovl") extern class O { static function H(x:Any):String; }
+class K implements cs.system.IComparable { public function new() {} public function CompareTo(o:Dynamic):Int return 0; }
+@:nativeGen class N<T:cs.system.IComparable> {
+	public function new() {}
+	public function b(x:T):String return O.H(x);
+	public function c(x:T):String return untyped __cs__("car.Ovl.H({0})", x);
+}
+class P {
+	static function main() {
+		var n = new N<K>();
+		Sys.println(n.b(new K()));
+		Sys.println(n.c(new K()));
+	}
+}
+===
+[compile]
+P.hx:6: characters 39-45 : dotnet: hxc cannot tell which .NET overload of car.Ovl.H the type parameter T's constraints select
+P.hx:7: characters 47-74 : dotnet: hxc cannot tell which .NET overload of car.Ovl.H the type parameter T's constraints select
+# Ruling 6: gencs writes [EditorBrowsable(EditorBrowsableState.Never)] on a @:noCompletion field and method, and
+# on the accessor Haxe's typer marks @:noCompletion for an interface property.
+--- attrs-editor-browsable @gencs
+import cs.system.componentmodel.EditorBrowsableAttribute;
+interface I {
+	var x(get, never):Int;
+}
+class C implements I {
+	@:noCompletion public var f:Int = 1;
+	public var plain:Int = 2;
+	public var x(get, never):Int;
+	public function new() {}
+	@:noCompletion public function m():Int return 3;
+	public function get_x():Int return 4;
+}
+class P {
+	static function state(m:cs.system.reflection.MemberInfo):String {
+		var a:EditorBrowsableAttribute = cast cs.system.Attribute.GetCustomAttribute(m, cs.Lib.toNativeType(EditorBrowsableAttribute));
+		return m.Name + " " + (a == null ? "none" : Std.string(a.State));
+	}
+	static function main() {
+		var c = cs.Lib.toNativeType(C);
+		var i = cs.Lib.toNativeType(I);
+		Sys.println(state(c.GetField("f")));
+		Sys.println(state(c.GetField("plain")));
+		Sys.println(state(c.GetMethod("m")));
+		Sys.println(state(c.GetMethod("get_x")));
+		Sys.println(state(i.GetMethod("get_x")));
+		var o:I = new C();
+		Sys.println(o.x + new C().m());
+	}
+}
+===
+[run]
+f Never
+plain none
+m Never
+get_x none
+get_x Never
+7
+# Ruling 7: a default other than null is passed to the full method, a generic @:nativeGen class's overloads
+# call the full method through its own instantiation (a static's through G<object>, as gencs writes it), and
+# each overload of a @:noCompletion method is EditorBrowsable too.
+--- attrs-nativegen-optional-overloads-generic @gencs
+import cs.system.componentmodel.EditorBrowsableAttribute;
+@:nativeGen class G<T> {
+	public var v:T;
+	public function new(?v:T, n:Int = 5) { this.v = v; Sys.println("new " + v + " " + n); }
+	@:noCompletion public function m(a:String, b:Int = 7, f:Float = 1.5, ?c:Bool):String return a + b + f + c;
+	public static function s(x:Int = 3):Int return x * 2;
+}
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(G);
+		var all = new cs.Flags(cs.system.reflection.BindingFlags.Public) | cs.system.reflection.BindingFlags.Instance | cs.system.reflection.BindingFlags.Static | cs.system.reflection.BindingFlags.DeclaredOnly;
+		var lines = [];
+		var ms:Array<cs.system.reflection.MethodBase> = [for (m in t.GetMethods(all)) m];
+		for (c in t.GetConstructors(all)) ms.push(c);
+		for (m in ms) {
+			var e:EditorBrowsableAttribute = cast cs.system.Attribute.GetCustomAttribute(m, cs.Lib.toNativeType(EditorBrowsableAttribute));
+			lines.push(Std.string(m) + " " + (e == null ? "-" : Std.string(e.State)));
+		}
+		lines.sort(Reflect.compare);
+		for (l in lines) Sys.println(l);
+		var gt = cs.Lib.getNativeType(new G<String>("full"));
+		var g:G<String> = cast gt.GetConstructor(new cs.NativeArray(0)).Invoke(new cs.NativeArray(0));
+		Sys.println(g.v == null);
+		Sys.println(gt.GetMethod("m", cs.NativeArray.make(cs.Lib.toNativeType(String))).Invoke(g, cs.NativeArray.make(("x" : Dynamic))));
+		Sys.println(gt.GetMethod("s", new cs.NativeArray(0)).Invoke(null, new cs.NativeArray(0)));
+	}
+}
+===
+[run]
+Int32 s() -
+Int32 s(haxe.lang.Null`1[System.Int32]) -
+System.String m(System.String) Never
+System.String m(System.String, haxe.lang.Null`1[System.Int32]) Never
+System.String m(System.String, haxe.lang.Null`1[System.Int32], haxe.lang.Null`1[System.Double]) Never
+System.String m(System.String, haxe.lang.Null`1[System.Int32], haxe.lang.Null`1[System.Double], haxe.lang.Null`1[System.Boolean]) Never
+Void .ctor() -
+Void .ctor(haxe.lang.Null`1[System.Object]) -
+Void .ctor(haxe.lang.Null`1[System.Object], haxe.lang.Null`1[System.Int32]) -
+new full 5
+new null 5
+True
+x71.5null
+6
+# Divergence (ruling 7): each optional-argument overload, and the full method, carries the field's
+# attributes once, from @:meta or @:strict. gencs writes the method's attributes in front of its first
+# overload, which then has them twice and the full method none, so its C# does not compile for an attribute
+# without AllowMultiple: "error CS0579: Duplicate 'System.ComponentModel.DescriptionAttribute' attribute".
+--- attrs-nativegen-optional-overloads-attributes
+import cs.system.componentmodel.DescriptionAttribute;
+@:nativeGen class N {
+	@:strict(DescriptionAttribute("ctor"))
+	public function new(?x:Int, y:String = "y") {}
+	@:meta(System.ComponentModel.DescriptionAttribute("m"))
+	public function m(a:Int, ?b:Int, c:String = "c"):String return a + "," + b + "," + c;
+}
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(N);
+		var all = new cs.Flags(cs.system.reflection.BindingFlags.Public) | cs.system.reflection.BindingFlags.Instance | cs.system.reflection.BindingFlags.DeclaredOnly;
+		var ms:Array<cs.system.reflection.MethodBase> = [for (m in t.GetMethods(all)) m];
+		for (c in t.GetConstructors(all)) ms.push(c);
+		var lines = [];
+		for (m in ms) {
+			var d = cs.system.Attribute.GetCustomAttributes(m, cs.Lib.toNativeType(DescriptionAttribute));
+			lines.push(Std.string(m) + " " + d.Length + " " + (d.Length == 0 ? "-" : (cast d[0] : DescriptionAttribute).Description));
+		}
+		lines.sort(Reflect.compare);
+		for (l in lines) Sys.println(l);
+	}
+}
+===
+[run]
+System.String m(Int32) 1 m
+System.String m(Int32, haxe.lang.Null`1[System.Int32]) 1 m
+System.String m(Int32, haxe.lang.Null`1[System.Int32], System.String) 1 m
+Void .ctor() 1 ctor
+Void .ctor(haxe.lang.Null`1[System.Int32]) 1 ctor
+Void .ctor(haxe.lang.Null`1[System.Int32], System.String) 1 ctor

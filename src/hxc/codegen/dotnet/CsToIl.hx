@@ -34,6 +34,10 @@ private typedef CsConst = {t:IlSigNorm, i:haxe.Int64, f:Float};
 // A decimal constant: `mantissa` (non-negative) / 10^scale, negated when `negative`.
 private typedef DecimalConst = {mantissa:haxe.Int64, negative:Bool, scale:Int};
 
+// A call's argument, pushed: its type (null for the null literal), its kind, and for a placeholder the Haxe
+// type of its argument (ruling 7's refusal reads it).
+private typedef CsArg = {t:Null<IlSigNorm>, kind:ArgKind, ?hx:T};
+
 // Inline C# (`untyped __cs__`, `cs.Syntax.code`, `cs.Syntax.plainCode`) as IL: CsSyntax's expression, its
 // names resolved over CLR types and lowered with C#'s semantics (csexpr §6). Shares its state through the
 // TexprToIl that owns it.
@@ -385,21 +389,31 @@ class CsToIl {
 	}
 
 	// The arguments of a call, pushed in order: each one's type (null for the null literal) and its kind, by
-	// which C# also converts an int constant or the null literal (4a's ruling X).
-	function pushArgs(args:Array<CsExpr>):Array<{t:Null<IlSigNorm>, kind:ArgKind}> {
+	// which C# also converts an int constant or the null literal (4a's ruling X), and a placeholder's Haxe type.
+	function pushArgs(args:Array<CsExpr>):Array<CsArg> {
 		return [
 			for (a in args) {
 				var c = constant(a);
 				var t = value(a);
 				if (t != null && t.match(LVoid)) error("the inline C# expression has no value (C# error CS0029)");
-				{t: t, kind: t == null ? KNull : c != null && c.t.match(LInt32) ? KIntConst(c.i.low) : KPlain};
+				{t: t, kind: t == null ? KNull : c != null && c.t.match(LInt32) ? KIntConst(c.i.low) : KPlain, hx: placeholderType(a)};
 			}
 		];
 	}
 
+	// The Haxe type of the argument of the placeholder `x` is, through parentheses, or null.
+	function placeholderType(x:CsExpr):Null<T> {
+		return switch (x.def) {
+			case CParen(e1): placeholderType(e1);
+			case CPlaceholder(n) if (n < args.length): args[n].type;
+			case _: null;
+		}
+	}
+
 	// The .NET method `name` that a call with the arguments `pushed` binds on the receiver type `t`.
-	function bind(t:IlSigNorm, name:String, isStatic:Bool, pushed:Array<{t:Null<IlSigNorm>, kind:ArgKind}>):Null<CsMethod> {
-		return atPos(() -> g.externs.bindCs(t, name, isStatic, [for (p in pushed) p.t == null ? LObject : p.t], [for (p in pushed) p.kind], pos));
+	function bind(t:IlSigNorm, name:String, isStatic:Bool, pushed:Array<CsArg>):Null<CsMethod> {
+		return atPos(() -> g.externs.bindCs(t, name, isStatic, [for (p in pushed) p.t == null ? LObject : p.t], [for (p in pushed) p.kind], pos,
+			{caller: tl.cls, types: [for (p in pushed) p.hx]}));
 	}
 
 	static function sameSig(a:IlSigNorm, b:IlSigNorm):Bool {
@@ -416,7 +430,7 @@ class CsToIl {
 	// conversions (which the binding checked): from the first that needs code on, they go through
 	// temporaries. `fixReceiver`, which then runs with only the receiver on the stack, changes it as the member
 	// needs (`boxReceiverFor`).
-	function convertArgs(pushed:Array<{t:Null<IlSigNorm>, kind:ArgKind}>, params:Array<IlSigNorm>, ?fixReceiver:Void->Void):Void {
+	function convertArgs(pushed:Array<CsArg>, params:Array<IlSigNorm>, ?fixReceiver:Void->Void):Void {
 		var n = pushed.length;
 		function needs(i:Int):Bool {
 			var from = pushed[i].t, to = params[i];
@@ -507,7 +521,7 @@ class CsToIl {
 
 	// The bound .NET method `m` called (`isNew`: constructed) with the arguments `pushed`, after the receiver
 	// `r` (a type for a static method or `new`).
-	function emitCall(m:CsMethod, r:CsValue, isStatic:Bool, pushed:Array<{t:Null<IlSigNorm>, kind:ArgKind}>, isNew = false):IlSigNorm {
+	function emitCall(m:CsMethod, r:CsValue, isStatic:Bool, pushed:Array<CsArg>, isNew = false):IlSigNorm {
 		var onValue = DotnetTypes.isValueType(m.parent);
 		var fix = switch (r) {
 			case VAddress(_) if (!isStatic && !isNew && !onValue): () -> boxReceiverFor(r, m.parent);

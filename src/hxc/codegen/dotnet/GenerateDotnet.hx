@@ -572,6 +572,7 @@ class GenerateDotnet {
 			var e = enums[i];
 			AttributesToIl.forMember(g, enumTokens[i], e.meta, AttrTarget.TClrEnum, e.pos, {name: e.path.name, ns: DotnetNames.typePath(TEnumDecl(e)).ns});
 		}
+		AttributesToIl.forAssembly(g, [for (p in plans) if (p.c != null) p.c], version);
 		// GenericParam rows go in owner order, a TypeDef's before its methods'.
 		var generics = [];
 		for (p in plans) {

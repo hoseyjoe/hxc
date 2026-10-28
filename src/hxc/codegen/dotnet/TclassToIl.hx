@@ -62,6 +62,10 @@ enum MethodKind {
 	// (`isSet`) its setter, which calls `get` or `set`; `explicit` the element type of the explicit
 	// implementation of the companion interface's indexer, null for the class's own.
 	MIndexer(get:Null<TClassField>, set:Null<TClassField>, isSet:Bool, explicit:Null<IlSigNorm>);
+	// gencs's overload of a @:nativeGen class's method or constructor `cf` with trailing optional arguments
+	// (gencs.ml get_overloads_for_optional_args): its first `n` parameters, passing null or the default value
+	// for each of the others to the full method, `: this(...)` for a constructor.
+	MOptionalOverload(cf:TClassField, n:Int);
 }
 
 // How an override takes the slot of the method it overrides, as gencs's FixOverrides fixes one whose
@@ -439,6 +443,7 @@ class TclassToIl {
 				if (made != null) for (b in made) methods.push(bridgeMethod(g, c, b));
 				switch (shape) {
 					case OSame:
+						if (prop == null && f == cf && cf.overloads.length == 0) for (o in optionalOverloads(g, c, f, flags, name, isStatic, isCtor, sig)) methods.push(o);
 						var m:MethodPlan = {
 							kind: MField(f),
 							name: name,
@@ -1186,6 +1191,39 @@ class TclassToIl {
 		return made;
 	}
 
+	// gencs's overloads of a @:nativeGen class's method or constructor `f` (its own class's, not a local
+	// function's) that has trailing optional arguments and no type parameters of its own: one per optional
+	// argument from the last, each taking the parameters before it, the longest first, as gencs writes them
+	// in front of the method (gencs.ml:151-205, 2299). Each has the method's flags, as gencs gives its copy of
+	// the field the field's own.
+	static function optionalOverloads(g:DotnetCtx, c:TClass, f:TClassField, flags:Int, name:String, isStatic:Bool, isCtor:Bool,
+			sig:{args:Array<IlSigNorm>, names:Array<String>, ret:IlSigNorm}):Array<MethodPlan> {
+		if (!TypeFunctions.hasMeta(":nativeGen", c.meta) || g.closureOwners.exists(c) || f.params.length > 0) return [];
+		if (!f.kind.match(Method(MethNormal | MethInline)) || f.expr == null || !f.expr.expr.match(TFunction(_))) return [];
+		var args = switch (TypeFunctions.follow(f.type)) {
+			case TFun(s): s.args;
+			case _: return [];
+		}
+		var r:Array<MethodPlan> = [];
+		var n = args.length;
+		while (n > 0 && args[n - 1].opt) {
+			n--;
+			r.push({
+				kind: MOptionalOverload(f, n),
+				name: name,
+				flags: flags,
+				hasThis: !isStatic,
+				ret: isCtor ? LVoid : sig.ret,
+				args: sig.args.slice(0, n),
+				argNames: sig.names.slice(0, n),
+				generics: [],
+				pos: f.pos,
+				token: 0
+			});
+		}
+		return r;
+	}
+
 	static function bridgeMethod(g:DotnetCtx, c:TClass, b:InterfaceBridge):MethodPlan {
 		var names = switch (TypeFunctions.follow(b.im.type)) {
 			case TFun(sig): [for (a in sig.args) a.name];
@@ -1735,19 +1773,35 @@ class TclassToIl {
 				AttributesToIl.forMember(g, p.token, p.cf.meta, AttrTarget.TProperty, p.cf.pos, site(p.cf.name));
 			}
 		}
+		// The optional-argument overloads, whose attributes are their method's (written after it, and only
+		// when its own gave no error, which C# would report for each overload again).
+		var overloads:Array<MethodPlan> = [];
+		var clean = new ObjectMap<TClassField, Bool>();
 		for (m in plan.methods) switch (m.kind) {
 			case MField(cf) if (!done.exists(cf)):
 				var isCtor = m.name == ".ctor";
 				if (isCtor && plan.emptyCtor != null) continue;
 				done.set(cf, true);
+				var before = g.diagnostics;
 				AttributesToIl.forMember(g, m.token, cf.meta, isCtor ? AttrTarget.TCtor : AttrTarget.TMethod, cf.pos, site(isCtor ? "new" : cf.name));
 				var args = signatureArgs(cf.type);
 				if (args != null) paramAttributes(g, m, [for (a in args) {name: a.name, t: a.t}], 0, cf.pos, ns);
+				if (g.diagnostics == before) clean.set(cf, true);
+			case MOptionalOverload(_, _):
+				overloads.push(m);
 			// An hxgen class's constructor's parameters keep their typedefs' attributes on the real
 			// constructor and on the static __hx_ctor_* (after its __hx_this), as gencs's argt_s writes both.
 			case MSplitCtor(hc) | MStaticCtor(hc):
 				var pos = hc.origin != null ? hc.origin.pos : plan.c.pos;
 				paramAttributes(g, m, [for (a in hc.args) {name: a.name, t: a.t}], m.kind.match(MStaticCtor(_)) ? 1 : 0, pos, ns);
+			case _:
+		}
+		for (m in overloads) switch (m.kind) {
+			case MOptionalOverload(cf, n) if (clean.exists(cf)):
+				var isCtor = m.name == ".ctor";
+				AttributesToIl.forMember(g, m.token, cf.meta, isCtor ? AttrTarget.TCtor : AttrTarget.TMethod, cf.pos, site(isCtor ? "new" : cf.name));
+				var args = signatureArgs(cf.type);
+				if (args != null) paramAttributes(g, m, [for (a in args.slice(0, n)) {name: a.name, t: a.t}], 0, cf.pos, ns);
 			case _:
 		}
 		if (c != null) {
@@ -1854,6 +1908,7 @@ class TclassToIl {
 			case MCompanionMember: m.name;
 			case MPropertyAccessor(_, _): m.name;
 			case MIndexer(_, _, _, _): m.name;
+			case MOptionalOverload(cf, _): cf.name;
 		}
 	}
 
@@ -2072,6 +2127,41 @@ class TclassToIl {
 		}
 	}
 
+	// gencs's optional-argument overload (MOptionalOverload): `return this.<method>(args, defaults)`, a
+	// static's `return <Class>.<method>(...)` and a constructor's `: this(args, defaults) {}`. Each argument
+	// it leaves out gets its default value, or null where it has none (`?x`); the full method's body then
+	// applies the defaults as it does for any caller.
+	@:access(hxc.codegen.dotnet.TexprToIl)
+	static function optionalOverloadBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, cf:TClassField, n:Int, code:IlCode, lower:TexprToIl):Void {
+		var target = g.methodPlans.get(cf);
+		var tf = switch (g.exprOf(cf).expr) {
+			case TFunction(tf): tf;
+			case _: null;
+		}
+		if (target == null || tf == null) throw "internal error: no method " + plan.hxPath + "." + cf.name + " for its optional-argument overload";
+		var first = m.hasThis ? 1 : 0;
+		for (i in 0...n + first) code.ldarg(i);
+		for (i in n...target.args.length) {
+			var slot = target.args[i];
+			var c = i < tf.args.length ? tf.args[i].c : null;
+			if (c == null || TexprToIl.isNullConst(c)) {
+				lower.pushDefault(slot);
+			} else {
+				var own = lower.sig(c.type);
+				lower.texpr(RValue(own), c);
+				lower.convert(own, slot);
+			}
+		}
+		// A static is called through the class with object for its type parameters, as gencs writes
+		// `C<object>.m(...)` for any static call.
+		var token = g.memberOf(plan, m.hasThis ? plan.thisSig : TexprToIl.staticOwner(plan), cf);
+		var argc = target.args.length + first;
+		var pushes = target.ret.match(LVoid) ? 0 : 1;
+		var virt = m.hasThis && m.name != ".ctor" && !plan.isStruct && target.flags & MethodAttrs.VIRTUAL != 0;
+		code.opToken(virt ? IlOps.CALLVIRT : IlOps.CALL, token, argc, pushes);
+		code.op(IlOps.RET, pushes, 0);
+	}
+
 	// An interface bridge (InterfaceBridge): `return (<ret>) this.<method>((<arg>) args)`, and for an
 	// explicit implementation the MethodImpl row that makes it the interface method's implementation.
 	@:access(hxc.codegen.dotnet.TexprToIl)
@@ -2242,6 +2332,8 @@ class TclassToIl {
 					if (p.backing != null) backingAccessorBody(g, plan, p, isSet, code) else accessorBody(p, isSet, code);
 				case MIndexer(get, set, isSet, explicit):
 					IndexerToIl.emit(g, plan, m, get, set, isSet, explicit, code);
+				case MOptionalOverload(cf, n):
+					g.types.inParams(plan.classParams, [], () -> optionalOverloadBody(g, plan, m, cf, n, code, lower));
 				case MEntryPoint:
 					var boot = g.bootInit();
 					if (boot != null) code.opToken(IlOps.CALL, boot, 0, 0);
