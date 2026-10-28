@@ -511,7 +511,9 @@ and `List` copy, and two threads casting one array at once.
   - **multi-argument indexers**: `x.get_Item(a, b)` and `x.set_Item(a, b, v)`, which compile under both
     compilers.
   - **`#pragma`** in `@:classCode` is ignored, since C# compiler warnings don't exist at the IL
-    level. Other `@:classCode`/`@:functionCode` content is an error.
+    level. Other `@:classCode`/`@:functionCode` content is an error, and the class is still compiled, so its
+    uses do not cascade into "left out" errors. The replacements: hand-written `@:native` externs for what a
+    `@:classCode` injected (ruling 8), and `#if !dotnet` around a `@:functionCode` (ruling 9).
 - **Nullability metadata**: for types the AI tool schemas see, emit `NullableAttribute` /
   `NullableContextAttribute` from Haxe types: `String` → non-null, `Null<String>` → nullable. Semantic
   Kernel reads these through `NullabilityInfoContext`. The schemas the server app produces today must come out

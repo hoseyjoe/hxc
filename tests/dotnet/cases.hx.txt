@@ -18700,3 +18700,279 @@ class P {
 ===
 [run]
 42
+
+--- classcode-pragma-only-ignored @gencs
+// A @:classCode holding only #pragma lines (the server app's FieldLookup override has one) is ignored: C#
+// warnings do not exist in IL. Blank lines and several pragmas are allowed; the class compiles as without it.
+@:classCode("#pragma warning disable 628\n")
+class Quiet {
+	public var n = 1;
+	public function new() {}
+}
+
+@:classCode("\n  #pragma warning disable 109, 114\n\t#pragma warning restore 114\n")
+class Quieter {
+	public static function twice(x:Int) return x * 2;
+}
+
+class P {
+	static function main() {
+		trace(new Quiet().n, Quieter.twice(4), Type.getInstanceFields(Quiet), Type.getClassFields(Quieter));
+	}
+}
+===
+[run]
+P.hx:16: 1, 8, [n], [twice]
+# [probe case2] gencs compiles and prints:
+#   P.hx:15: 1, [pubInst,k]
+# hxc today: "P.hx:7: lines 7-10 : dotnet: @:classCode is not supported yet" and "P.hx:14: characters 11-19 :
+# dotnet: CC (left out: @:classCode) is not supported yet". Proposed: one error, and the class is still compiled.
+--- classcode-members-are-an-error
+// @:classCode with C# members (the server app's nativepdf Zlib injects a static method with `using` statements)
+// is refused, naming the Haxe replacement; gencs pastes the text into the class body.
+@:classCode('
+	static int helper(int a) { using (var ms = new global::System.IO.MemoryStream()) { ms.WriteByte((byte)a); return (int) ms.Length + a; } }
+	public int pubInst() { return 41 + this.k; }
+')
+class CC {
+	public var k:Int = 1;
+	public function new() {}
+}
+
+class P {
+	static function main() {
+		var c = new CC();
+		trace(c.k, Type.getInstanceFields(CC));
+	}
+}
+===
+[compile]
+P.hx:7: lines 7-10 : dotnet: @:classCode is C# source, which hxc does not compile: declare the members in Haxe, calling .NET through extern classes (a @:classCode of #pragma lines only is ignored)
+# [probe case3] gencs compiles and prints (the functionCode runs for `new Area()` only, after C#'s implicit
+# base(), and replaces the field initializer and init(); the subclass runs the Haxe body, never the functionCode):
+#   P.hx:31: null, base, set
+#   P.hx:33: fromInit, base, null
+# hxc today: "@:functionCode is not supported yet" at the same position.
+--- functioncode-constructor-is-an-error
+// @:functionCode on a constructor (a library sets a GUID field this way) is refused. gencs puts the C# into the
+// C# constructor alone, after an implicit base(): `new Area()` skips super(...)'s arguments, the field
+// initializers and the Haxe body, while a subclass's super() and Type.createEmptyInstance never run it.
+class Base {
+	public var tag:String = "base";
+	public function new() {}
+}
+
+class Area extends Base {
+	public var text:String = "fieldinit";
+	var _guid:String;
+
+	@:functionCode("_guid = System.Guid.NewGuid().ToString();")
+	public function new() {
+		super();
+		init();
+	}
+
+	function init() text = "fromInit";
+
+	public function guid() return _guid == null ? "null" : "set";
+}
+
+class Sub extends Area {
+	public function new() super();
+}
+
+class P {
+	static function main() {
+		var a = new Area();
+		trace(a.text, a.tag, a.guid());
+		var s = new Sub();
+		trace(s.text, s.tag, s.guid());
+	}
+}
+===
+[compile]
+P.hx:14: lines 14-17 : dotnet: @:functionCode is C# source, which hxc does not compile: write the body in Haxe, calling .NET through extern classes, or keep the metadata out of the dotnet build with #if !dotnet
+# [probe case4] gencs compiles and prints:
+#   P.hx:18: 103, 8, s, 3
+# hxc today: "@:functionCode is not supported yet" at the same three positions.
+--- functioncode-method-is-an-error
+// @:functionCode on a method is refused; gencs replaces that overload's body with the C# text, whose names are
+// gencs's (a parameter named like a C# keyword is @string).
+class M {
+	@:functionCode("return a + b + 100;")
+	public static function add(a:Int, b:Int):Int return a + b;
+
+	@:functionCode("return a * 2;")
+	@:overload public static function ov(a:Int):Int return a;
+
+	@:overload public static function ov(a:String):String return a;
+
+	@:functionCode("return @string.Length;")
+	public static function len(string:String):Int return 0;
+}
+
+class P {
+	static function main() {
+		trace(M.add(1, 2), M.ov(4), M.ov("s"), M.len("abc"));
+	}
+}
+===
+[compile]
+P.hx:5: characters 2-59 : dotnet: @:functionCode is C# source, which hxc does not compile: write the body in Haxe, calling .NET through extern classes, or keep the metadata out of the dotnet build with #if !dotnet
+P.hx:8: characters 13-58 : dotnet: @:functionCode is C# source, which hxc does not compile: write the body in Haxe, calling .NET through extern classes, or keep the metadata out of the dotnet build with #if !dotnet
+P.hx:13: characters 2-56 : dotnet: @:functionCode is C# source, which hxc does not compile: write the body in Haxe, calling .NET through extern classes, or keep the metadata out of the dotnet build with #if !dotnet
+# [probe caseE] The replacement proposed for the server app's nativepdf Zlib.hx (no @:classCode, no __cs__).
+# hxc compiles it today, so the case passes now. The md5 is the one the original @:classCode helper gives under
+# gencs (probe zlib).
+--- serverapp-zlib-through-externs @gencs
+import haxe.io.Bytes;
+
+// The server app's nativepdf Zlib without @:classCode or __cs__: .NET's ZLibStream through hand-written externs,
+// which the reference assemblies the app passes predate. Same bytes as the @:classCode helper (md5 38c405ad...).
+class P {
+	static function main() {
+		var buf = new haxe.io.BytesBuffer();
+		for (i in 0...300) buf.addString("stream " + (i % 17) + " ");
+		var b = buf.getBytes();
+		var big = Bytes.alloc(b.length + 50);
+		big.blit(0, b, 0, b.length);
+		var whole = Zlib.compress(b).toHex();
+		var view = Zlib.compress(big.sub(0, b.length)).toHex();
+		var s = new ZlibStream();
+		s.write(b, 0, 100);
+		s.write(b, 100, b.length - 100);
+		var st = s.finish().toHex();
+		trace(b.length, whole.length, whole.substr(0, 40));
+		trace(whole == view, whole == st, Zlib.compress(Bytes.alloc(0)).toHex());
+		trace(haxe.crypto.Md5.encode(whole));
+	}
+}
+
+
+
+/**
+ * zlib (RFC 1950) compression for PDF FlateDecode streams. C# has no haxe.zip.Compress, so it uses
+ * .NET's ZLibStream through the externs at the end of this file.
+ */
+class Zlib {
+	public static function compress(b:Bytes):Bytes {
+		var s = new ZlibStream();
+		s.write(b, 0, b.length);
+		return s.finish();
+	}
+}
+
+/**
+ * zlib compression fed piece by piece: on C# through .NET's ZLibStream as it comes, so only the compressed bytes are
+ * held; elsewhere collected and compressed at the end.
+ */
+class ZlibStream {
+	var ms:cs.system.io.MemoryStream;
+	var z:NetZLibStream;
+
+	public function new() {
+		ms = new cs.system.io.MemoryStream();
+		z = new NetZLibStream(ms, NetCompressionLevel.Optimal, true);
+	}
+
+	public function write(b:Bytes, pos:Int, len:Int):Void {
+		z.Write(b.getData(), pos, len);
+	}
+
+	/** The compressed data; nothing more can be written. */
+	public function finish():Bytes {
+		z.Dispose();
+		return Bytes.ofData(ms.ToArray());
+	}
+}
+
+/** .NET 6's System.IO.Compression.ZLibStream, which the --net-std reference assemblies predate. */
+@:native("System.IO.Compression.ZLibStream")
+extern class NetZLibStream {
+	function new(stream:cs.system.io.Stream, level:NetCompressionLevel, leaveOpen:Bool);
+	function Write(buffer:cs.NativeArray<cs.types.UInt8>, offset:Int, count:Int):Void;
+	function Dispose():Void;
+}
+
+@:native("System.IO.Compression.CompressionLevel")
+extern enum NetCompressionLevel {
+	Optimal;
+	Fastest;
+	NoCompression;
+	SmallestSize;
+}
+===
+[run]
+P.hx:18: 2820, 190, 789ced96b91180400c035bb912103fe510109260
+P.hx:19: true, true, 
+P.hx:20: 38c405ad3226716daa033e158ba05733
+# [probe caseF] The replacement proposed for the library's BaseTextArea and BaseUiComponent: the constructor's
+# @:functionCode guarded by #if !dotnet. Passes today.
+--- serverapp-guid-functioncode-guarded @gencs
+// The library's BaseTextArea shape with its constructor @:functionCode guarded by #if !dotnet, as proposed. Every
+// path the apps take (a subclass's super(), Type.createEmptyInstance as the AMF reader does, serialization) is the
+// same under gencs (functionCode kept) and hxc (functionCode compiled out); only `new BaseTextArea()` would differ.
+abstract Guid(String) {
+	inline function new(s:String) this = s;
+	public static function newGuid():Guid return new Guid("haxe-guid");
+	@:to public function toString():String return this;
+}
+
+interface IExt {}
+
+class BaseTextArea implements IExt {
+	@:property public var guid(get, set):String;
+	var _guid:Guid;
+	public var text:String;
+	public var x:Float;
+	public var tag:String = "tag";
+
+	#if !dotnet
+	@:functionCode("_guid = System.Guid.NewGuid().ToString();")
+	#end
+	public function new() {
+		init();
+	}
+
+	function init() {
+		text = "";
+		x = 0;
+	}
+
+	public function get_guid():String {
+		if (_guid == null) _guid = Guid.newGuid();
+		return _guid;
+	}
+
+	public function set_guid(v:String) {
+		_guid = cast v;
+		return v;
+	}
+
+	public function rawGuid():String return _guid == null ? "null" : (_guid.toString().length == 36 ? "a System.Guid" : _guid.toString());
+}
+
+class ResizableTextArea extends BaseTextArea {
+	public var w:Float = 3;
+	public function new() {
+		super();
+		init();
+	}
+}
+
+class P {
+	static function show(name:String, b:BaseTextArea) {
+		Sys.println(name + ": raw=" + b.rawGuid() + " text=" + b.text + " tag=" + b.tag + " guid=" + (b.guid.length == 36 ? "a System.Guid" : b.guid));
+	}
+
+	static function main() {
+		show("new ResizableTextArea", new ResizableTextArea());
+		show("createEmptyInstance BaseTextArea", Type.createEmptyInstance(BaseTextArea));
+		Sys.println(haxe.Serializer.run(new ResizableTextArea()));
+	}
+}
+===
+[run]
+new ResizableTextArea: raw=null text= tag=tag guid=haxe-guid
+createEmptyInstance BaseTextArea: raw=null text=null tag=null guid=haxe-guid
+cy17:ResizableTextAreay1:wi3y3:tagR2y1:xzy4:texty0:y5:_guidny4:guidy9:haxe-guidg

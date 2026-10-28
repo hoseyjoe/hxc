@@ -247,10 +247,61 @@ class TclassToIl {
 		g.planOf.set(c, plan);
 	}
 
+	// A @:classCode is C# source, which hxc does not compile. One of #pragma lines only (C# warnings have no IL)
+	// is ignored; any other is an error at the class, and the class is planned as without it so that its uses
+	// do not cascade.
+	static function checkClassCode(g:DotnetCtx, c:TClass):Void {
+		var m = TypeFunctions.getMetaOpt(":classCode", c.meta);
+		if (m == null) return;
+		var text = switch (m.params.length == 1 ? m.params[0].expr : null) {
+			case EConst(CString(s, _)): s;
+			case _: null;
+		}
+		if (text != null && isPragmaOnly(text)) {
+			g.records.push("ignored #pragma @:classCode in " + DotnetTypes.haxePath(TClassDecl(c)));
+			return;
+		}
+		var u = Unsupported.error("@:classCode is C# source, which hxc does not compile: declare the members in Haxe, calling .NET through extern classes (a @:classCode of #pragma lines only is ignored)");
+		u.pos = c.pos;
+		g.report(u);
+	}
+
+	// Whether every non-blank line, once // and /* */ comments are dropped, starts with #pragma.
+	static function isPragmaOnly(text:String):Bool {
+		var b = new StringBuf();
+		var i = 0;
+		while (i < text.length) {
+			var ch = text.charAt(i), next = text.charAt(i + 1);
+			if (ch == "/" && next == "/") {
+				while (i < text.length && text.charAt(i) != "
+") i++;
+			} else if (ch == "/" && next == "*") {
+				var end = text.indexOf("*/", i + 2);
+				i = end < 0 ? text.length : end + 2;
+				b.addChar(" ".code);
+			} else {
+				b.add(ch);
+				i++;
+			}
+		}
+		for (line in b.toString().split("
+")) {
+			var t = StringTools.trim(line);
+			if (t != "" && !StringTools.startsWith(t, "#pragma")) return false;
+		}
+		return true;
+	}
+
+	static function functionCodeError(cf:TClassField):Unsupported {
+		var u = Unsupported.error("@:functionCode is C# source, which hxc does not compile: write the body in Haxe, calling .NET through extern classes, or keep the metadata out of the dotnet build with #if !dotnet");
+		u.pos = cf.pos;
+		return u;
+	}
+
 	static function planClass(g:DotnetCtx, c:TClass, isStd:Bool):ClassPlan {
 		var isInterface = TypeFunctions.hasClassFlag(c, CInterface);
 		var isStruct = TypeFunctions.hasMeta(":struct", c.meta);
-		if (!isStd && TypeFunctions.hasMeta(":classCode", c.meta)) throw new Unsupported("@:classCode", false);
+		if (!isStd) checkClassCode(g, c);
 		var superSig = switch (c.superClass) {
 			case null: null;
 			case s: g.types.classSig(s.c, s.params);
@@ -1787,7 +1838,7 @@ class TclassToIl {
 	static function staticCtorBody(g:DotnetCtx, plan:ClassPlan, m:MethodPlan, hc:HaxeCtor, code:IlCode, lower:TexprToIl, what:String):Void {
 		var c = plan.c;
 		if (hc.own != null) {
-			if (TypeFunctions.hasMeta(":functionCode", hc.own.meta)) throw new Unsupported("@:functionCode", false, hc.own.pos);
+			if (TypeFunctions.hasMeta(":functionCode", hc.own.meta)) throw functionCodeError(hc.own);
 			var tf = functionOf(g, hc.own, what);
 			lower.bindArgs(tf, 1, m.args.slice(1));
 			statement(lower, RReturn, withInits(g, c, tf.expr));
@@ -1987,7 +2038,7 @@ class TclassToIl {
 					code.opToken(IlOps.CALL, g.memberOf(plan, plan.thisSig, cf), m.args.length + 1, 1);
 					code.op(IlOps.RET, 1, 0);
 				case MField(cf):
-					if (TypeFunctions.hasMeta(":functionCode", cf.meta)) throw new Unsupported("@:functionCode", false, cf.pos);
+					if (TypeFunctions.hasMeta(":functionCode", cf.meta)) throw functionCodeError(cf);
 					var tf = switch (g.exprOf(cf).expr) {
 						case TFunction(tf): tf;
 						case _: throw "internal error: method " + what + " has no function";
