@@ -20007,3 +20007,28 @@ class P {
 P.hx:4: characters 23-24 : dotnet: a cast between Int and System.IntPtr throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
 P.hx:5: characters 20-33 : dotnet: a cast between System.IntPtr and Int throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
 P.hx:6: characters 27-40 : dotnet: a cast between System.IntPtr and haxe.Int64 throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
+--- macro-add-build-to-std-class @gencs + --macro addMetadata("@:build(P.M.build())","StringTools")
+#if macro
+import haxe.macro.Context;
+import haxe.macro.Expr;
+class M {
+	public static function build():Array<Field> {
+		var fields = Context.getBuildFields();
+		for (field in fields) switch (field.kind) {
+			case FFun(fn) if (field.name == "startsWith"):
+				fn.expr = macro return cs.Syntax.code("{0}.StartsWith({1}, global::System.StringComparison.Ordinal)", s, start);
+			default:
+		}
+		return fields;
+	}
+}
+#else
+class P {
+	static function main() {
+		Sys.println(StringTools.startsWith("\u00ADabc", "abc"));
+	}
+}
+#end
+===
+[run]
+False

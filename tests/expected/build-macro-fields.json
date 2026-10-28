@@ -9,5 +9,6 @@
 	"the-macro-api-builds-a-canceled-class-once-its-parent-is-built": "P.hx:4: characters 1-8 : Warning : peek B fields=[] super=[]\nP.hx:1: character 1 : Warning : B fields=[] statics=[] constructor=false super=[a,added]\nP.hx:2: characters 1-8 : Warning : peek B fields=[b] super=[a,added]",
 	"a-subclass-a-building-parent-reaches-builds-after-it": "P.hx:2: characters 1-8 : Warning : peek C fields=[] super=[]\nP.hx:5: character 1 : Warning : Q fields=[] statics=[] constructor=false super=[g,added]\nP.hx:1: character 1 : Warning : C fields=[] statics=[] constructor=false super=[p]",
 	"a-build-canceled-again-with-nothing-built-between-is-a-loop": "P.hx:2: characters 1-8 : Warning : peek C fields=[] super=[]\nP.hx:1: characters 1-44 : Loop in class building prevent compiler termination (Q)",
-	"a-grandchild-of-a-building-parent-is-a-loop": "P.hx:2: characters 1-44 : Loop in class building prevent compiler termination (Q)"
+	"a-grandchild-of-a-building-parent-is-a-loop": "P.hx:2: characters 1-44 : Loop in class building prevent compiler termination (Q)",
+	"add-metadata-builds-a-std-class-the-core-types-load": "(unknown) : Warning : EnumTools fields=[] statics=[] constructor=false super=-"
 }

@@ -269,6 +269,11 @@ class Context {
 	public var initMacrosDone:Bool = false;
 
 	public var declOfType:StringMap<{decl:TypeDef, pos:Position}>;
+	// Each class made from a declaration, with the path its type patches name (an abstract's, for its
+	// implementation) and how many patches were registered when it was made. Haxe 4.3.7 patches a class
+	// when it builds, so one made before a patch was registered (a std class loaded with the core types,
+	// ahead of the init macros) still takes that patch's class metadata (ModuleLoader.applyLateClassPatches).
+	public var classPatchMarks:haxe.ds.ObjectMap<TClass, {path:Path, seen:Int}> = new haxe.ds.ObjectMap();
 
 	/**
 	 * Types whose declarations failed resolution. Skip their unbound fields and bodies to avoid
@@ -552,6 +557,7 @@ class Context {
 		resources = new StringMap();
 		resourceOrder = [];
 		declOfType = new StringMap();
+		classPatchMarks = new haxe.ds.ObjectMap();
 		declErrored = new StringMap();
 		declBuiltBeforeError = new StringMap();
 		classSlots = [];

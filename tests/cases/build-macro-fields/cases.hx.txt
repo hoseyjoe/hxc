@@ -75,3 +75,7 @@ class C extends Q { public var c:Int = 3; }
 class G { public var g:Int = 1; public function new() {} }
 class Q extends G { public var p:Int = 2; }
 class P { static function main() { new D().d; } }
+
+--- add-metadata-builds-a-std-class-the-core-types-load + --macro addMetadata('@:build(M.show())','haxe.EnumTools')
+enum E { A; }
+class P { static function main() { haxe.EnumTools.getName(E); } }

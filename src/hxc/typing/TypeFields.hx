@@ -457,6 +457,7 @@ class TypeFields {
 		if (c.kind.match(KTypeParameter(_))) return;
 		var m = c.module;
 		if (m == null) return;
+		hxc.context.ModuleLoader.applyLateClassPatches(ctx, c);
 		classBuilt.set(c, true);
 		buildQueued.set(c, true);
 		fieldsAwaited.set(c, true);

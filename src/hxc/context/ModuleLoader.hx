@@ -304,6 +304,36 @@ class ModuleLoader {
 		return {meta: classMeta, fields: result};
 	}
 
+	// Haxe 4.3.7 applies a class's type patches when the class builds (patch_class), not when its module
+	// loads. hxc applies them at the load, so a class made before a patch was registered (StringTools,
+	// which the core types load ahead of the init macros) gets the patch's class metadata here, at the
+	// start of its build, where its @:build entries are read. A field patch still only reaches a class made
+	// after it: the field shells are registered at the load.
+	public static function applyLateClassPatches(ctx:Context, c:TClass):Void {
+		var mark = ctx.classPatchMarks.get(c);
+		if (mark == null || mark.seen >= ctx.typePatches.length) return;
+		var added:Metadata = [];
+		for (i in mark.seen...ctx.typePatches.length) {
+			var patch = ctx.typePatches[i];
+			if (patch.field == null && patch.path.name == mark.path.name && sameArray(patch.path.pack, mark.path.pack))
+				added = added.concat(patch.meta);
+		}
+		mark.seen = ctx.typePatches.length;
+		if (added.length == 0) return;
+		c.meta = c.meta.concat(added);
+		// The declaration is replaced, not written into: it may be the server's cached copy.
+		var key = Context.pathKey(c.path);
+		var entry = ctx.declOfType.get(key);
+		if (entry != null) switch (entry.decl) {
+			case EClass(d):
+				ctx.declOfType.set(key, {
+					decl: EClass({dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: d.dMeta.concat(added), dFlags: d.dFlags, dData: d.dData}),
+					pos: entry.pos
+				});
+			case _:
+		}
+	}
+
 	// Restore cached module imports without replacing existing types; import-only declarations append
 	// no types.
 	public static function typeImportsIntoModule(ctx:Context, m:ModuleDef, imports:Array<TypeDecl>):Void {
@@ -761,6 +791,7 @@ class ModuleLoader {
 					if (patch.meta != d.dMeta || patch.fields != d.dData)
 						d = {dName: d.dName, dDoc: d.dDoc, dParams: d.dParams, dMeta: patch.meta, dFlags: d.dFlags, dData: patch.fields};
 					var c = TypeFunctions.mkClass(m, path, p, d.dName.pos);
+					ctx.classPatchMarks.set(c, {path: path, seen: ctx.typePatches.length});
 					// forceBuild initializes heritage and fields once, returning Building on reentry. Synthetic
 					// shells remain Built.
 					c.build = function():BuildState return hxc.typing.TypeResolve.forceBuild(ctx, c);
@@ -956,6 +987,7 @@ class ModuleLoader {
 						c.meta = implMeta;
 						c.isPrivate = true;
 						c.kind = KAbstractImpl(a);
+						ctx.classPatchMarks.set(c, {path: path, seen: ctx.typePatches.length});
 						TypeFunctions.addClassFlag(c, CFinal);
 						registerFields(c, implFields, ctx);
 						decls.push(TClassDecl(c));
