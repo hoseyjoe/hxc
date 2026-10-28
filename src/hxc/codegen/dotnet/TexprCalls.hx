@@ -1546,9 +1546,18 @@ class TexprCalls {
 		return null;
 	}
 
-	static function noGet(c:TClass):Unsupported {
-		var n = DotnetTypes.haxePath(TClassDecl(c));
-		return Unsupported.error("a[i] on " + n + " needs " + n + ".__get, which dead code elimination removed: mark it @:keep");
+	// A read of `c[i]` whose class `c` (or the class `aa` up its chain that implements ArrayAccess) has no
+	// __get: one dead code elimination removed, or none at all.
+	function noGet(c:TClass, aa:TClass):Unsupported {
+		var cur = c;
+		while (cur != null) {
+			var n = DotnetTypes.haxePath(TClassDecl(cur));
+			if (g.ctx.dceRemovedFields.exists(Globals.sTypePath(cur.path) + ".__get"))
+				return Unsupported.error("a[i] on " + n + " needs " + n + ".__get, which dead code elimination removed: mark it @:keep");
+			if (cur == aa) break;
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		return Unsupported.error(DotnetTypes.haxePath(TClassDecl(c)) + " has no __get: a[i] on it cannot be read");
 	}
 
 	static function noSet(c:TClass):Unsupported {
@@ -1597,7 +1606,7 @@ class TexprCalls {
 			cur = sup.c;
 			depth++;
 		}
-		if (reads && getAt == null) throw noGet(aa);
+		if (reads && getAt == null) throw noGet(rc, aa);
 		if (writes && setAt == null) throw noSet(rc);
 		var getValue = getAt == null ? null : DotnetTypes.substitute(getAt.m.ret, getAt.inst, []);
 		var setValue = setAt == null ? null : DotnetTypes.substitute(setAt.m.args[1], setAt.inst, []);
@@ -1625,11 +1634,11 @@ class TexprCalls {
 			cur = cur.superClass == null ? null : cur.superClass.c;
 		}
 		if (found == null) {
-			if (aa.fields.get("__get") == null) throw noGet(aa);
+			if (aa.fields.get("__get") == null) throw noGet(c, aa);
 			throw new Unsupported("a[i] through a Dynamic instantiation of a class whose indexer its companion interface does not declare", false);
 		}
 		var p = found.p;
-		if (reads && p.getter == null) throw noGet(aa);
+		if (reads && p.getter == null) throw noGet(c, aa);
 		if (writes && p.setter == null) throw noSet(c);
 		return {
 			parent: found.sig,

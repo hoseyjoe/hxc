@@ -19444,6 +19444,34 @@ class P {
 ===
 [run]
 P.hx:19: 101
+# Not @gencs: the mirror of haxe-class-indexer-hidden-setter. gencs's C# fails, since Sub's set-only indexer
+# hides Grid's getter:
+#   error CS0154: The property or indexer 'Sub.this[int]' cannot be used in this context because it lacks the get accessor
+# hxc reads through the nearest class's get_Item, Grid's; the store goes through Sub's own set_Item.
+--- haxe-class-indexer-hidden-getter
+class Grid implements ArrayAccess<Int> {
+	var cells = [10, 20, 30];
+	public function new() {}
+	public function __get(i:Int):Int return cells[i];
+	public function __set(i:Int, v:Int):Int return cells[i] = v;
+}
+
+class Sub extends Grid {
+	public function new() super();
+	override public function __set(i:Int, v:Int):Int return super.__set(i, v * 10);
+}
+
+class P {
+	static function main() {
+		var s = new Sub();
+		s[0] = 1;
+		s[1] += 2;
+		trace(s[0], s[1]);
+	}
+}
+===
+[run]
+P.hx:18: 10, 220
 # gencs's Array indexer (its __get/__set rule): the get_Item/set_Item entries removed from generic-reflection,
 # resolve-generic-class and type-argument-clr-shapes, in a program of its own (its member lists follow DCE).
 --- array-companion-indexer @gencs
@@ -19584,19 +19612,82 @@ class P {
 [compile]
 P.hx:4: characters 2-56 : dotnet: M.__get and __set disagree on the element type for the index int (int and string): gencs's indexer for them does not compile
 P.hx:9: characters 9-16 : dotnet: M (left out: M.__get and __set disagree on the element type for the index int (int and string): gencs's indexer for them does not compile) is not supported yet
-# gencs writes an indexer with bodies into the interface, which C# rejects; hxc refuses.
---- haxe-interface-get-is-an-error
+# [review probe iface] An interface with __get/__set gets gencs's indexer as a C# default interface member, with
+# bodies that call __get and __set; an implementing class's own indexer implements it, virtual and sealed.
+--- haxe-interface-indexer @gencs
+import cs.system.reflection.BindingFlags;
+
 interface I {
 	function __get(i:Int):Int;
 }
 
+interface J<T> {
+	function __get(i:Int):T;
+	function __set(i:Int, v:T):T;
+}
+
+class C implements I {
+	public function new() {}
+	public function __get(i:Int):Int return i * 2;
+}
+
+class D implements J<String> {
+	var s = ["a", "b"];
+	public function new() {}
+	public function __get(i:Int):String return s[i];
+	public function __set(i:Int, v:String):String return s[i] = v;
+}
+
+class P {
+	static function accessors(t:cs.system.Type):String {
+		var flags = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+		var ms = t.GetMethods(flags);
+		var out = [];
+		for (i in 0...ms.Length) if (ms[i].Name.indexOf("_Item") >= 0) {
+			var m = ms[i];
+			out.push(m.Name + (m.IsVirtual ? " virtual" : "") + (m.IsFinal ? " final" : "") + (m.IsAbstract ? " abstract" : ""));
+		}
+		var ps = t.GetProperties(flags);
+		var dm = t.GetDefaultMembers();
+		return out.join(", ") + " | " + [for (i in 0...ps.Length) ps[i].Name + " w=" + ps[i].CanWrite].join(",") + " | default=" + [for (i in 0...dm.Length) dm[i].Name].join(",");
+	}
+
+	static function main() {
+		var i:I = new C();
+		trace(i.__get(3));
+		var j:J<String> = new D();
+		j.__set(1, "c");
+		trace(j.__get(1));
+		Sys.println("I " + accessors(cs.Lib.toNativeType(I)));
+		Sys.println("J " + accessors(cs.system.Type._GetType("J`1")));
+		Sys.println("C " + accessors(cs.Lib.toNativeType(C)));
+		Sys.println("D " + accessors(cs.Lib.toNativeType(D)));
+		var ip = cs.Lib.toNativeType(I).GetProperty("Item");
+		Sys.println("I.Item via reflection " + ip.GetValue(i, cs.NativeArray.make((5 : Dynamic))));
+	}
+}
+===
+[run]
+P.hx:40: 6
+P.hx:43: c
+I get_Item virtual | Item w=false | default=Item
+J get_Item virtual, set_Item virtual | Item w=true | default=Item
+C get_Item virtual final | Item w=false | default=Item
+D get_Item virtual final, set_Item virtual final | Item w=true | default=Item
+I.Item via reflection 10
+# The read form of haxe-class-indexer-dce-full-is-an-error for a class that never declared __get: gencs's C#
+# fails with CS0021 (no indexer); hxc refuses, naming the missing __get.
+--- haxe-class-indexer-no-get-is-an-error
+class F implements ArrayAccess<Int> {
+	public function new() {}
+}
+
 class P {
 	static function main() {
-		var i:I = null;
-		trace(i);
+		var f = new F();
+		trace(f[0]);
 	}
 }
 ===
 [compile]
-P.hx:2: characters 2-28 : dotnet: the interface I declares __get, which gencs makes an indexer that C# does not compile in an interface: declare it in the classes that implement it
-P.hx:7: characters 3-18 : dotnet: I (left out: the interface I declares __get, which gencs makes an indexer that C# does not compile in an interface: declare it in the classes that implement it) is not supported yet
+P.hx:8: characters 9-13 : dotnet: F has no __get: a[i] on it cannot be read

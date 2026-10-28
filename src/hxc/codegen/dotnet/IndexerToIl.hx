@@ -9,7 +9,7 @@ import hxc.codegen.dotnet.IlCode;
 import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.TclassToIl;
 
-// gencs's indexers (check_special_behaviors in gencs.ml; codeblocks notes §3). Every class, not an interface,
+// gencs's indexers (check_special_behaviors in gencs.ml; codeblocks notes §3). Every class or interface
 // that has an instance `__get` with one argument and/or `__set` with two, of its own and kept by DCE, gets
 // `public V this[I index] { get { return this.__get(index); } set { this.__set(index, value); } }`, one per
 // index type in the order of the C# type names: Public HideBySig SpecialName get_Item and set_Item, a
@@ -23,7 +23,11 @@ import hxc.codegen.dotnet.TclassToIl;
 // `__get(Int)` DCE removed, or that has no `__set`, gets a companion indexer it can implement (none, or a
 // get-only one) instead of one it cannot (C# errors CS0535 and CS1061); and a companion that declares
 // `__get` and `__set` themselves (they mention no type parameter) gets the one indexer, not gencs's two
-// (CS0111). A `__get`/`__set` pair whose element types differ, and either on an interface, are refused.
+// (CS0111). A `__get`/`__set` pair whose element types differ is refused.
+//
+// An interface gets the same indexer as a C# default interface member: Public Virtual HideBySig NewSlot
+// SpecialName accessors with bodies that callvirt its `__get` and `__set`. An implementing class's own
+// accessor of the same signature implements it, virtual and sealed as C# makes it.
 class IndexerToIl {
 	public static inline final itemName = "Item";
 
@@ -36,12 +40,7 @@ class IndexerToIl {
 		if (c.kind.match(KAbstractImpl(_))) return [];
 		var get = c.fields.get("__get"), set = c.fields.get("__set");
 		if (get == null && set == null) return [];
-		if (TypeFunctions.hasClassFlag(c, CInterface)) {
-			var u = Unsupported.error("the interface " + DotnetTypes.haxePath(TClassDecl(c)) + " declares " + (get != null ? "__get" : "__set")
-				+ ", which gencs makes an indexer that C# does not compile in an interface: declare it in the classes that implement it");
-			u.pos = (get != null ? get : set).pos;
-			throw u;
-		}
+		var isInterface = TypeFunctions.hasClassFlag(c, CInterface);
 		function planOf(f:TClassField):Null<MethodPlan> {
 			for (m in methods) switch (m.kind) {
 				case MField(x) if (x == f && m.hasThis): return m;
@@ -81,8 +80,19 @@ class IndexerToIl {
 		}
 		groups.sort((a, b) -> a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 		var r:Array<PropertyPlan> = [];
-		for (x in groups) r.push(property(c, itemName, x.value, x.index, x.get, x.set, null, ["index", "value"],
-			MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME, "", (x.get != null ? x.get : x.set).pos));
+		// An interface's indexer is a C# default interface member, virtual with a body.
+		var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME
+			| (isInterface ? MethodAttrs.VIRTUAL | MethodAttrs.NEW_SLOT : 0);
+		var implemented = isInterface ? [] : interfaceAccessors(g, c);
+		for (x in groups) {
+			var p = property(c, itemName, x.value, x.index, x.get, x.set, null, ["index", "value"], flags, "", (x.get != null ? x.get : x.set).pos);
+			// An accessor that implements an indexer accessor of an interface the class lists is virtual and
+			// sealed, as C# makes a member that implicitly implements an interface member.
+			for (a in [p.getter, p.setter]) if (a != null) for (i in implemented) if (i.isSet == (a == p.setter) && IlPaths.sigEq(i.index, x.index)
+				&& IlPaths.sigEq(i.value, x.value))
+				a.flags |= MethodAttrs.VIRTUAL | MethodAttrs.FINAL | MethodAttrs.NEW_SLOT;
+			r.push(p);
+		}
 		// The explicit implementation of the companion's `object this[int key]`, on gencs's own __get's
 		// index and on the group of the Int index.
 		if (c.arrayAccess != null && CompanionToIl.hasCompanion(g, c)) {
@@ -91,6 +101,10 @@ class IndexerToIl {
 			for (x in groups) if (x.index.match(LInt32)) ints = x;
 			if (own != null && own.args.length == 1 && own.args[0].match(LInt32) && ints != null && ints.get != null) {
 				var element = g.types.toSig(TypeFunctions.applyParams(c.params, [for (_ in c.params) TypeFunctions.tDynamic], c.arrayAccess));
+				// The explicit accessors cast between the element and __get's and __set's types as C# does: a box,
+				// an unbox or a reference cast, never a conversion between two value types.
+				checkCast(c, ints.value, element, ints.get.pos);
+				if (ints.set != null) checkCast(c, element, ints.value, ints.set.pos);
 				var prefix = "global::" + TclassToIl.displayName(c, CompanionToIl.companionSig(c)) + ".";
 				r.push(property(c, prefix + itemName, element, LInt32, ints.get, ints.set, element, ["key", "value"],
 					MethodAttrs.PRIVATE | MethodAttrs.FINAL | MethodAttrs.VIRTUAL | MethodAttrs.HIDE_BY_SIG | MethodAttrs.NEW_SLOT | MethodAttrs.SPECIAL_NAME,
@@ -99,6 +113,39 @@ class IndexerToIl {
 		}
 		return r;
 	}
+
+	// The indexer accessors of the interfaces `c` lists (deep) that gencs gives an indexer (an interface's own
+	// kept __get and __set, not a companion's), with their index and element types in `c`'s terms.
+	static function interfaceAccessors(g:DotnetCtx, c:TClass):Array<{isSet:Bool, index:IlSigNorm, value:IlSigNorm}> {
+		var r = [];
+		function visit(i:TClass, params:Array<T>) {
+			for (name in ["__get", "__set"]) {
+				var f = i.fields.get(name);
+				if (f == null) continue;
+				for (o in [f].concat(f.overloads)) {
+					if (CompanionToIl.isMember(g, i, o)) continue;
+					var sig = try TclassToIl.functionSig(g, TypeFunctions.applyParams(i.params, params, o.type)) catch (_:Unsupported) null;
+					if (sig == null) continue;
+					if (name == "__get" && sig.args.length == 1) r.push({isSet: false, index: sig.args[0], value: sig.ret});
+					if (name == "__set" && sig.args.length == 2) r.push({isSet: true, index: sig.args[0], value: sig.args[1]});
+				}
+			}
+			for (sup in i.interfaces) visit(sup.c, [for (t in sup.params) TypeFunctions.applyParams(i.params, params, t)]);
+		}
+		for (i in c.interfaces) if (!TypeFunctions.hasClassFlag(i.c, CExtern)) visit(i.c, i.params);
+		return r;
+	}
+
+	// Refuses an explicit accessor's cast from `from` to `to` that is not a box, an unbox or a reference cast.
+	static function checkCast(c:TClass, from:IlSigNorm, to:IlSigNorm, pos:hxc.ast.Position):Void {
+		if (IlPaths.sigEq(from, to) || !(isValueLike(from) && isValueLike(to))) return;
+		var u = Unsupported.error("the element type of " + DotnetTypes.haxePath(TClassDecl(c)) + "'s array access (" + csName(c, to)
+			+ ") is another value type than its __get's and __set's (" + csName(c, from) + "): the explicit indexer of its companion interface cannot cast between them");
+		u.pos = pos;
+		throw u;
+	}
+
+	static function isValueLike(s:IlSigNorm):Bool return DotnetTypes.isValueType(s) || s.match(LTypeParam(_));
 
 	static function property(c:TClass, name:String, value:IlSigNorm, index:IlSigNorm, get:Null<TClassField>, set:Null<TClassField>,
 			explicit:Null<IlSigNorm>, names:Array<String>, flags:Int, prefix:String, pos:hxc.ast.Position):PropertyPlan {
@@ -241,8 +288,7 @@ class IndexerToIl {
 	// or a castclass.
 	static function castElement(g:DotnetCtx, from:IlSigNorm, to:IlSigNorm, code:IlCode):Void {
 		if (IlPaths.sigEq(from, to)) return;
-		var fromValue = DotnetTypes.isValueType(from) || from.match(LTypeParam(_));
-		var toValue = DotnetTypes.isValueType(to) || to.match(LTypeParam(_));
+		var fromValue = isValueLike(from), toValue = isValueLike(to);
 		if (fromValue && !toValue) {
 			code.opToken(IlOps.BOX, g.typeTokenOf(from), 1, 1);
 			if (!to.match(LObject)) code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
@@ -251,8 +297,7 @@ class IndexerToIl {
 		} else if (!fromValue && !toValue) {
 			if (!to.match(LObject)) code.opToken(IlOps.CASTCLASS, g.typeTokenOf(to), 1, 1);
 		} else {
-			throw Unsupported.error("an explicit indexer of a companion interface whose element type " + ExternMembers.sigS(to)
-				+ " differs from __get's or __set's (" + ExternMembers.sigS(from) + ")");
+			throw "internal error: an explicit indexer's cast between two value types (checkCast)";
 		}
 	}
 }

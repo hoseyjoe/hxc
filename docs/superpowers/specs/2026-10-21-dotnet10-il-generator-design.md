@@ -262,6 +262,8 @@ losing writes that gencs keeps.
 - **Indexers are gencs's.** gencs gives every class with an instance `__get` and/or `__set` (Array
   included) an indexer, `T this[int]` on ``Array`1``, and a class with a companion and array access also
   the companion's `object this[int]`, implemented explicitly (milestone 4b; `array-indexer-clr-surface`).
+  An interface's indexer is a default interface member, which an implementing class's own indexer
+  implements (`haxe-interface-indexer`).
   Element access on an `Array<Dynamic>` reads, writes and increments through the companion's indexer,
   whose setter casts with `(T)value`: `a[1] = 3.7` on an `Array<Dynamic>` holding an `Array<Int>`
   throws `InvalidCastException`, and `++` stores a double, which throws there too. `op=` goes through
@@ -882,6 +884,10 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   (`haxe-class-indexer-hidden-setter`). gencs gives the subclass its own get-only indexer, which hides the
   base class's, so its C# does not compile: `CS0200: Property or indexer 'Sub.this[int]' cannot be assigned
   to -- it is read only`. The subclass's metadata stays gencs's.
+- The mirror: a read through a subclass that overrides only `__set` calls the nearest superclass's
+  `get_Item` (`haxe-class-indexer-hidden-getter`). gencs's subclass has its own set-only indexer, so its C#
+  does not compile: `CS0154: The property or indexer 'Sub.this[int]' cannot be used in this context because
+  it lacks the get accessor`.
 - A generic class with array access gets the companion indexer it can implement
   (`haxe-generic-class-get-only-indexer`, `haxe-generic-class-int-indexer`): a get-only one when it has no
   `__set`, none when DCE removed its `__get`, and a single one where its `__get` and `__set` mention no
