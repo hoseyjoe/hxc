@@ -1237,11 +1237,11 @@ class TexprToIl {
 					case XField(open, initOnly):
 						var s = ExternMembers.subst(open, inst);
 						if (initOnly) throw new Unsupported("assignments to read-only .NET fields", true);
-						if (needVal(ret)) throw new Unsupported("the value of an assignment to a .NET field", false);
 						if (!isStatic) calls.receiver(obj, parent);
 						texpr(RValue(s), rhs);
 						var token = g.mb.memberRef(g.typeTokenOf(parent), ExternMembers.memberName(cf), g.sigs.field(open));
-						code.opToken(isStatic ? IlOps.STSFLD : IlOps.STFLD, token, isStatic ? 1 : 2, 0);
+						// The value of the assignment is the value stored, as for a property.
+						storeKeeping(ret, s, () -> code.opToken(isStatic ? IlOps.STSFLD : IlOps.STFLD, token, isStatic ? 1 : 2, 0));
 					case XProperty(open, _, setter) if (setter != null):
 						var s = ExternMembers.subst(open, inst);
 						if (!isStatic) calls.receiver(obj, parent);
@@ -1458,6 +1458,28 @@ class TexprToIl {
 						code.opToken(IlOps.STFLD, f.token, 2, 0);
 					}
 				};
+			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c) && !isStringClass(c) && cf.kind.match(Var(_))
+				&& !dyn.isDynamicReceiver(fa, obj)):
+				// A .NET field, read and stored on the receiver evaluated once (a value type's address, as C# takes it).
+				var isStatic = fa.match(FStatic(_, _));
+				var x = calls.externField(obj, fa, c, cf, true, true);
+				switch (x.member) {
+					case XField(open, initOnly):
+						if (initOnly) throw new Unsupported("assignments to read-only .NET fields", true);
+						var token = g.mb.memberRef(g.typeTokenOf(x.parent), ExternMembers.memberName(cf), g.sigs.field(open));
+						return {
+							sig: ExternMembers.subst(open, x.args),
+							receiver: !isStatic,
+							prepare: () -> if (!isStatic) calls.receiver(obj, x.parent, true),
+							load: () -> {
+								if (!isStatic) code.op(IlOps.DUP, 1, 2);
+								code.opToken(isStatic ? IlOps.LDSFLD : IlOps.LDFLD, token, isStatic ? 0 : 1, 1);
+							},
+							store: () -> code.opToken(isStatic ? IlOps.STSFLD : IlOps.STFLD, token, isStatic ? 1 : 2, 0)
+						};
+					case _:
+						return null;
+				}
 			case _:
 				return null;
 		}

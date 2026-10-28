@@ -744,8 +744,9 @@ and `List` copy, and two threads casting one array at once.
          (`netlib-indexer-element-mismatch-is-an-error`).
        - The element of a converted extern is typed Dynamic: a read passes a struct or `Nullable`
          element as an object, which Runtime converts (`netlib-indexer-nullable-elements`).
-       - The value of an assignment through an indexer or a .NET property is the value stored, kept
-         across the call, not what a setter returns (`netlib-property-store-value`).
+       - The value of an assignment through an indexer, a .NET property or a .NET field is the value
+         stored, kept across the call, not what a setter returns (`netlib-property-store-value`,
+         `netlib-field-store-value`); `op=` and `++`/`--` on a .NET field work as values too.
      - A Haxe class implements the properties of a .NET interface converted from a `--net-lib` as gencs
        does (ruling 7; `iface-property-bcl`, `netlib-iface-properties`). gencs's InterfaceProps picks the
        vars: one with a get or set accessor, named as such a var of an interface its class lists itself.

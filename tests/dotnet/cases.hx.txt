@@ -16073,6 +16073,36 @@ class P {
 P.hx:6: value, 7, 7
 P.hx:8: null, false, false
 P.hx:9: argument, has 3, 3
+# The value of an assignment to a .NET field is the value stored, after the field's conversion, as for a property: chained,
+# returned, a static field, a struct held in a local, a generic owner whose field is a type parameter, and the compound and
+# increment forms (prefix gives the new value, postfix the old).
+--- netlib-field-store-value @gencs @netlib=M4Lib,ValLib
+import m4.Vec_1;
+class P {
+	static function set(h:Vec_1<Int>, v:Int):Int return h.X = v;
+	static function main() {
+		var a = vallib.SlotHolder.Calls = 5;
+		var b = vallib.SlotHolder.Calls = a = 7;
+		trace("static", a, b, vallib.SlotHolder.Calls);
+		var h = new Vec_1<Int>(1);
+		var c = h.X = 4;
+		trace("instance", c, h.X, set(h, 8), h.X);
+		var p = new vallib.Pt(1);
+		var q = (p.X = 9);
+		var r = p.X = q + 1;
+		trace("struct", q, r, p.X);
+		var vf = new Vec_1<Float>(0.5);
+		var d = (vf.X = 3);
+		trace("converted", d / 2, vf.X / 2);
+		trace("compound", p.X += 5, p.X, vallib.SlotHolder.Calls -= 2, h.X *= 3, vf.X *= 3);
+		trace("prefix", ++p.X, p.X, --vallib.SlotHolder.Calls, ++h.X, ++vf.X);
+		trace("postfix", p.X++, p.X, vallib.SlotHolder.Calls--, vallib.SlotHolder.Calls, h.X--, h.X, vf.X++, vf.X);
+		p.X++;
+		vf.X += 1;
+		trace("statement", p.X, vf.X);
+	}
+}
+===
 # Indexers a derived class overrides are looked up where the base declared them (C# picks this[int] of the base for d[0], although
 # the derived class has its own DefaultMemberAttribute), and a getter-only override leaves the base's setter.
 --- netlib-indexer-override @gencs @netlib
