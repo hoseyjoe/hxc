@@ -859,7 +859,9 @@ and `List` copy, and two threads casting one array at once.
      assembly-qualified as Roslyn writes them (4c rulings 3 and 4). `@:meta` with several parameters or with
      C# text, an attribute on a var that is not physical and an argument's `@:strict` are errors, where
      gencs drops or misplaces them, and C#'s attribute errors (CS0579, CS0592, CS0246, CS0616, CS1503,
-     CS0182, CS0121) are `dotnet:` errors that name them. The attributes the backend writes itself come from
+     CS0182, CS0121, CS1614, CS0617, CS0023, CS1021) are `dotnet:` errors that name them; a literal's Haxe
+     suffix types it (`i64` a long, `u32` a uint), and the attribute classes are read from the reference pack,
+     which Roslyn compiles gencs's C# against. The attributes the backend writes itself come from
      System.Runtime. Nullability metadata and events are not written yet, with no error: hxc compiles the
      class without them (an `@:event` var's `add_` and `remove_` methods are plain methods), where gencs
      writes a C# `event`, so .NET reflection sees no event.

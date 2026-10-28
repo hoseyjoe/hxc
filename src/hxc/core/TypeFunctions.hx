@@ -532,12 +532,14 @@ class TypeFunctions {
 	// Shallow clone of a class field (a fresh record with the same fields). Used by
 	// to build a per-`@:overload` field carrying its own type.
 	public static function copyField(f:TClassField):TClassField {
-		return {
+		var r:TClassField = {
 			name: f.name, type: f.type, pos: f.pos, namePos: f.namePos,
 			doc: f.doc, meta: f.meta, kind: f.kind, params: f.params,
 			expr: f.expr, exprUnoptimized: f.exprUnoptimized, overloads: f.overloads,
 			flags: f.flags
 		};
+		r.hxcArgStrict = f.hxcArgStrict;
+		return r;
 	}
 
 	static function withCfType(f:TClassField, t:T):TClassField {

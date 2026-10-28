@@ -109,9 +109,14 @@ class ModuleBuilder {
 		tables.customAttribute.push([coded(T.IHasCustomAttribute, parent), coded(T.ICustomAttributeType, ctor), heaps.blobs.add(value)]);
 	}
 
-	// The Param row `method` (a MethodDef token) made for its parameter `index`, 0 for the first.
+	// The Param row of `method` (a MethodDef token) for its parameter `index`, 0 for the first: the row with
+	// sequence index + 1, since a return value's row (sequence 0) may come first.
 	public function paramToken(method:Int, index:Int):Int {
-		return (T.IParam << 24) | (tables.methodDef[row(method) - 1][5] + index);
+		var r = row(method);
+		var first = tables.methodDef[r - 1][5];
+		var end = r < tables.methodDef.length ? tables.methodDef[r][5] : tables.param.length + 1;
+		for (p in first...end) if (tables.param[p - 1][1] == index + 1) return (T.IParam << 24) | p;
+		throw "internal error: method " + r + " has no Param row for its parameter " + index;
 	}
 
 	public function field(owner:Int, flags:Int, name:String, sig:Bytes):Int {

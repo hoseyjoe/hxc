@@ -351,6 +351,9 @@ class TClassField {
 	// so a field a later compilation reuses from the cache is not typed again (a member var's initializer,
 	// which the field-init pass moved out, included).
 	public var hxcBodyTyped:Bool = false;
+	// A bodiless method's (an interface's or an abstract one's) argument @:strict entries, which no
+	// argument variable keeps: the .NET generator refuses them, as it does a method argument's.
+	public var hxcArgStrict:Null<Array<MetadataEntry>> = null;
 	public function new(name:String, type:T, pos:Position, namePos:Position, doc:Documentation,
 			meta:Metadata, kind:FieldKind, params:TypeParams, expr:Null<TExpr>,
 			exprUnoptimized:Null<TExpr>, overloads:Array<TClassField>, flags:Int) {

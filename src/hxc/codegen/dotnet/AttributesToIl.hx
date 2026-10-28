@@ -165,6 +165,8 @@ class AttributesToIl {
 
 	// A row for one of the backend's own attributes.
 	public static function write(g:DotnetCtx, owner:Int, ctor:AttrCtor, fixed:Array<AttrValue>, named:Array<AttrNamed>):Void {
+		if (fixed.length != ctor.params.length)
+			throw "internal error: an attribute row with " + fixed.length + " arguments for a constructor of " + ctor.params.length;
 		var a = of(g);
 		var b = new IlBytes();
 		b.u16(1);
@@ -280,6 +282,8 @@ class AttributesToIl {
 		for (a in args) switch (a.expr) {
 			case EBinop(OpAssign, {expr: EConst(CIdent(name))}, v):
 				var mem = memberOf(cls, name);
+				if (mem != null && mem.writeOnly)
+					throw new AttrError(name + " is not a valid named argument: a property must have a public getter and setter (C# error CS0617)", a.pos);
 				if (mem == null) throw new AttrError(cls.name + " has no public field or settable property " + name + " (C# error CS0246)", a.pos);
 				var k = constant(v, site.ns);
 				if (!converts(k, mem.type))
@@ -333,7 +337,11 @@ class AttributesToIl {
 				r = e != null ? {path: path, name: dottedName(path), e: e} : {path: path, name: dottedName(path)};
 			}
 		} else {
-			var lib = NetRefs.of(g.ctx).definer(path);
+			// The reference pack's class first: Roslyn compiles gencs's C# against it, so its constructors
+			// (DefaultValueAttribute's (uint) and (ulong), which net-20's lacks) are the ones C# chooses from.
+			var refs = NetRefs.of(g.ctx);
+			var lib = refs.packDefiner(path);
+			if (lib == null) lib = refs.definer(path);
 			var raw = lib == null ? null : lib.rawClass(path);
 			if (raw != null) r = {path: path, name: dottedName(path), net: raw};
 		}
@@ -372,8 +380,12 @@ class AttributesToIl {
 	function resolveAttribute(parts:Array<String>, ns:Array<String>, pos:Position):AttrClass {
 		var plain = lookup(parts, ns);
 		var suffixed = lookup(parts.slice(0, parts.length - 1).concat([parts[parts.length - 1] + "Attribute"]), ns);
-		if (plain != null && isAttribute(plain)) return plain;
-		if (suffixed != null && isAttribute(suffixed)) return suffixed;
+		var plainIs = plain != null && isAttribute(plain), suffixedIs = suffixed != null && isAttribute(suffixed);
+		if (plainIs && suffixedIs)
+			throw new AttrError(parts.join(".") + " is ambiguous between the attribute classes " + plain.name + " and " + suffixed.name
+				+ "; write the one meant in full (C# error CS1614)", pos);
+		if (plainIs) return plain;
+		if (suffixedIs) return suffixed;
 		var found = plain != null ? plain : suffixed;
 		if (found != null) throw new AttrError(found.name + " is not an attribute class (C# error CS0616)", pos);
 		var name = parts.join(".");
@@ -619,20 +631,31 @@ class AttributesToIl {
 	function constant(e:Expr, ns:Array<String>):Const {
 		return switch (e.expr) {
 			case EParenthesis(x): constant(x, ns);
-			case EConst(CInt(s, _)):
-				var v = parseInt(s);
-				if (v == null) throw notConstant(e.pos);
-				KInt(v, literalType(v));
-			case EConst(CFloat(s, _)): KFloat(Std.parseFloat(s));
+			case EConst(CInt(s, suffix)): intLiteral(s, suffix, false, e.pos);
+			case EConst(CFloat(s, suffix)):
+				if (suffix != null && suffix != "f64") throw new AttrError(suffix + " is not a valid float suffix", e.pos);
+				KFloat(Std.parseFloat(StringTools.replace(s, "_", "")));
 			case EConst(CString(s, _)): KString(s);
 			case EConst(CIdent("true")): KBool(true);
 			case EConst(CIdent("false")): KBool(false);
 			case EConst(CIdent("null")): KNull;
 			case EUnop(Neg, Prefix, x):
-				switch (constant(x, ns)) {
-					case KInt(v, _): KInt(Int64.neg(v), literalType(Int64.neg(v)));
-					case KFloat(v): KFloat(-v);
-					case _: throw notConstant(e.pos);
+				var lit = x;
+				while (true) switch (lit.expr) {
+					case EParenthesis(y): lit = y;
+					case _: break;
+				}
+				switch (lit.expr) {
+					case EConst(CInt(s, suffix)): intLiteral(s, suffix, true, e.pos);
+					case _:
+						switch (constant(x, ns)) {
+							// C#'s unary minus: a uint becomes a long, and a ulong has none.
+							case KInt(_, ATU8): throw negUlong(e.pos);
+							case KInt(v, ATU4): KInt(Int64.neg(v), ATI8);
+							case KInt(v, t): KInt(Int64.neg(v), t);
+							case KFloat(v): KFloat(-v);
+							case _: throw notConstant(e.pos);
+						}
 				}
 			case ECall({expr: EConst(CIdent("typeof"))}, [t]):
 				var parts = dotted(t);
@@ -683,31 +706,71 @@ class AttributesToIl {
 		return null;
 	}
 
-	// A decimal or 0x literal, or null when it is out of range.
-	static function parseInt(s:String):Null<Int64> {
-		try {
-			if (StringTools.startsWith(s, "0x") || StringTools.startsWith(s, "0X")) {
-				var hex = s.substr(2);
-				if (hex.length == 0 || hex.length > 16) return null;
-				var v = Int64.ofInt(0);
-				for (i in 0...hex.length) {
-					var d = Std.parseInt("0x" + hex.charAt(i));
-					if (d == null) return null;
-					v = Int64.or(Int64.shl(v, 4), Int64.ofInt(d));
-				}
-				return v;
-			}
-			return haxe.Int64Helper.parseString(s);
-		} catch (_:Dynamic) {
-			return null;
+	static function negUlong(pos:Position):AttrError {
+		return new AttrError("the operator - cannot be applied to a ulong (C# error CS0023)", pos);
+	}
+
+	// An integer literal, negated or not, as C# types it: unsuffixed, the first of int, uint, long and
+	// ulong that holds it (a 0x literal of 2^63 or more is a ulong, its bits kept); with Haxe's suffix,
+	// i32's int (a 0x literal's bits), u32's uint or i64's long (its bits).
+	function intLiteral(s:String, suffix:Null<String>, neg:Bool, pos:Position):Const {
+		var digits = StringTools.replace(s, "_", "");
+		// The parser folds a minus into the literal.
+		if (StringTools.startsWith(digits, "-")) {
+			digits = digits.substr(1);
+			neg = !neg;
+		}
+		var hex = StringTools.startsWith(digits, "0x") || StringTools.startsWith(digits, "0X");
+		var v = parseInt(digits);
+		if (v == null) throw new AttrError("the integer literal " + s + " is too large (C# error CS1021)", pos);
+		inline function negated(t:AttrType) return KInt(neg ? Int64.neg(v) : v, t);
+		return switch (suffix) {
+			case null:
+				if (Int64.compare(v, 0) < 0) {
+					// C# makes the decimal -9223372036854775808 a long; another negated ulong is an error.
+					if (!neg) KInt(v, ATU8) else if (!hex && Int64.eq(v, Int64.make(0x80000000, 0))) KInt(v, ATI8) else throw negUlong(pos);
+				} else if (inRange(v, ATI4)) negated(ATI4);
+				else if (inRange(v, ATU4))
+					// C# makes the decimal -2147483648 an int; another negated uint is a long.
+					neg && !hex && Int64.eq(v, Int64.make(0, 0x80000000)) ? KInt(Int64.neg(v), ATI4) : negated(neg ? ATI8 : ATU4);
+				else negated(ATI8);
+			case "i32":
+				var i:Null<Int64> = !hex ? v : digits.length <= 10 ? Int64.ofInt(v.low) : null;
+				if (i == null || !inRange(i, ATI4) || (neg && Int64.eq(i, Int64.make(-1, 0x80000000))))
+					throw new AttrError("Cannot represent " + s + " with a 32 bit integer", pos);
+				KInt(neg ? Int64.neg(i) : i, ATI4);
+			case "u32":
+				if (!inRange(v, ATU4)) throw new AttrError("Cannot represent " + s + " with a 32 bit unsigned integer", pos);
+				negated(neg ? ATI8 : ATU4);
+			case "i64": negated(ATI8);
+			case other: throw new AttrError(other + " is not a valid integer suffix", pos);
 		}
 	}
 
-	// C#'s type of an integer literal: int, else uint, else long.
-	static function literalType(v:Int64):AttrType {
-		if (inRange(v, ATI4)) return ATI4;
-		if (inRange(v, ATU4)) return ATU4;
-		return ATI8;
+	// A decimal or 0x literal's 64 bits, unsigned, or null when it needs more.
+	static function parseInt(s:String):Null<Int64> {
+		var v = Int64.ofInt(0);
+		if (StringTools.startsWith(s, "0x") || StringTools.startsWith(s, "0X")) {
+			var hex = s.substr(2);
+			if (hex.length == 0 || hex.length > 16) return null;
+			for (i in 0...hex.length) {
+				var d = Std.parseInt("0x" + hex.charAt(i));
+				if (d == null) return null;
+				v = Int64.or(Int64.shl(v, 4), Int64.ofInt(d));
+			}
+			return v;
+		}
+		if (s.length == 0) return null;
+		// 2^64 - 1 is 1844674407370955161 * 10 + 5.
+		var tenth = Int64.make(0x19999999, 0x99999999);
+		for (i in 0...s.length) {
+			var d = s.charCodeAt(i) - "0".code;
+			if (d < 0 || d > 9) return null;
+			var c = Int64.ucompare(v, tenth);
+			if (c > 0 || (c == 0 && d > 5)) return null;
+			v = Int64.add(Int64.mul(v, 10), Int64.ofInt(d));
+		}
+		return v;
 	}
 
 	static function inRange(v:Int64, t:AttrType):Bool {
@@ -825,7 +888,9 @@ class AttributesToIl {
 			case [ATObject, KNull]: ABoxed(AString(null));
 			case [ATObject, _]: ABoxed(valueOf(k, naturalType(k)));
 			case [ATBool, KBool(b)]: ABool(b);
-			case [ATR4 | ATR8, KInt(v, _)]: AFloat(t, v.high * 4294967296.0 + (v.low < 0 ? v.low + 4294967296.0 : v.low));
+			case [ATR4 | ATR8, KInt(v, lt)]:
+				var high:Float = lt.match(ATU8) && v.high < 0 ? v.high + 4294967296.0 : v.high;
+				AFloat(t, high * 4294967296.0 + (v.low < 0 ? v.low + 4294967296.0 : v.low));
 			case [ATR4 | ATR8, KFloat(v)]: AFloat(t, v);
 			case [_, KInt(v, _)] if (isIntegral(t) || t.match(ATChar)): AInt(t, v);
 			case [ATEnum(p, under), KInt(v, _) | KEnum(_, v)]: AEnum(qualified(LValueType(p, [])), under, v);
@@ -924,28 +989,29 @@ class AttributesToIl {
 		throw new AttrError("the call to " + cls.name + "'s constructor is ambiguous between " + label(pair[0]) + " and " + label(pair[1]) + " (C# error CS0121)", pos);
 	}
 
-	// The public instance field or settable property `name` of the class or its bases.
-	function memberOf(cls:AttrClass, name:String):Null<{isProperty:Bool, type:AttrType, label:String}> {
+	// The public instance field or settable property `name` of the class or its bases; writeOnly when the
+	// property has no public getter, which C# needs too.
+	function memberOf(cls:AttrClass, name:String):Null<{isProperty:Bool, type:AttrType, label:String, writeOnly:Bool}> {
 		var cur = cls, depth = 0;
 		while (cur != null && depth++ < 64) {
-			var found:Null<{isProperty:Bool, sig:IlSigNorm}> = null;
+			var found:Null<{isProperty:Bool, sig:IlSigNorm, writeOnly:Bool}> = null;
 			if (cur.net != null) {
 				for (f in cur.net.cfields)
 					if (f.fname == name && f.fflags.access == FAPublic && f.fflags.contract.indexOf(CStatic) < 0
 						&& f.fflags.contract.indexOf(CInitOnly) < 0 && f.fflags.contract.indexOf(CLiteral) < 0)
-						found = {isProperty: false, sig: f.fsig.snorm};
+						found = {isProperty: false, sig: f.fsig.snorm, writeOnly: false};
 				for (p in cur.net.cprops)
 					if (found == null && p.pname == name && p.pset != null && p.pset.flags.access == FAPublic && p.pset.flags.contract.indexOf(CMStatic) < 0)
-						found = {isProperty: true, sig: p.psig.snorm};
+						found = {isProperty: true, sig: p.psig.snorm, writeOnly: p.pget == null || p.pget.flags.access != FAPublic};
 			} else if (cur.c != null) {
 				var plan = g.planOf.get(cur.c);
 				if (plan != null) {
 					for (f in plan.fields)
 						if (f.name == name && f.property == null && f.flags & 7 == FieldAttrs.PUBLIC && f.flags & (FieldAttrs.STATIC | FieldAttrs.INIT_ONLY | FieldAttrs.LITERAL) == 0)
-							found = {isProperty: false, sig: f.sig};
+							found = {isProperty: false, sig: f.sig, writeOnly: false};
 					for (p in plan.properties)
 						if (found == null && p.name == name && p.index.length == 0 && p.isStatic != true && p.setter != null && p.setter.flags & 7 == MethodAttrs.PUBLIC)
-							found = {isProperty: true, sig: p.sig};
+							found = {isProperty: true, sig: p.sig, writeOnly: p.getter == null || p.getter.flags & 7 != MethodAttrs.PUBLIC};
 				}
 			}
 			if (found != null) {
@@ -955,7 +1021,7 @@ class AttributesToIl {
 					case s: s;
 				}
 				var t = attrType(sig);
-				return t == null ? null : {isProperty: found.isProperty, type: t, label: haxeName(sig)};
+				return t == null ? null : {isProperty: found.isProperty, type: t, label: haxeName(sig), writeOnly: found.writeOnly};
 			}
 			cur = superOf(cur);
 		}

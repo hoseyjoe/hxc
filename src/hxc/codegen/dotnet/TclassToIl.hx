@@ -1670,7 +1670,8 @@ class TclassToIl {
 	// later): the @:meta attributes where gencs's C# puts them (AttributesToIl), then C#'s
 	// [DefaultMember("Item")] on a type that declares an indexer, which Roslyn writes after the type's own.
 	// gencs puts an hxgen class's constructor's attributes on its (haxe.lang.EmptyObject) constructor, a
-	// @:property var's on its property, and a parameter's typedef's on the parameter; a generic interface's
+	// @:property var's on its property, and a parameter's typedef's on the parameter (an hxgen constructor's
+	// on the real constructor and the static __hx_ctor_*); a generic interface's
 	// members that mention no type parameter are its companion's (CompanionToIl), and so are their
 	// attributes. The attributes of a var with no field or property are refused, where gencs's land on the
 	// next C# member, and so is an argument's @:strict, which gencs drops.
@@ -1701,11 +1702,12 @@ class TclassToIl {
 				done.set(cf, true);
 				AttributesToIl.forMember(g, m.token, cf.meta, isCtor ? AttrTarget.TCtor : AttrTarget.TMethod, cf.pos, site(isCtor ? "new" : cf.name));
 				var args = signatureArgs(cf.type);
-				if (args != null) for (i in 0...args.length) {
-					var meta = typedefMeta(args[i].t);
-					if (meta.length > 0 && i < m.argNames.length)
-						AttributesToIl.forMember(g, g.mb.paramToken(m.token, i), meta, AttrTarget.TParam, cf.pos, site(args[i].name));
-				}
+				if (args != null) paramAttributes(g, m, [for (a in args) {name: a.name, t: a.t}], 0, cf.pos, ns);
+			// An hxgen class's constructor's parameters keep their typedefs' attributes on the real
+			// constructor and on the static __hx_ctor_* (after its __hx_this), as gencs's argt_s writes both.
+			case MSplitCtor(hc) | MStaticCtor(hc):
+				var pos = hc.origin != null ? hc.origin.pos : plan.c.pos;
+				paramAttributes(g, m, [for (a in hc.args) {name: a.name, t: a.t}], m.kind.match(MStaticCtor(_)) ? 1 : 0, pos, ns);
 			case _:
 		}
 		if (c != null) {
@@ -1722,17 +1724,33 @@ class TclassToIl {
 			}
 			var fields = c.orderedFields.concat(c.orderedStatics);
 			if (c.constructor != null) fields.push(c.constructor);
-			for (cf in fields) for (f in [cf].concat(cf.overloads)) switch (f.expr) {
-				case {expr: TFunction(tf)}:
-					for (a in tf.args) for (m in a.v.meta) if (m.name == ":strict")
-						g.error("@:strict on a function argument is not written (gencs drops it too); put the attribute on a typedef of the argument's type",
-							m.params.length > 0 ? m.params[0].pos : m.pos);
-				case _:
+			inline function refuse(m:hxc.ast.Ast.MetadataEntry)
+				g.error("@:strict on a function argument is not written (gencs drops it too); put the attribute on a typedef of the argument's type",
+					m.params.length > 0 ? m.params[0].pos : m.pos);
+			for (cf in fields) for (f in [cf].concat(cf.overloads)) {
+				switch (f.expr) {
+					case {expr: TFunction(tf)}:
+						for (a in tf.args) for (m in a.v.meta) if (m.name == ":strict") refuse(m);
+					case _:
+				}
+				// A bodiless method (an interface's, an abstract one) keeps its arguments' @:strict here.
+				if (f.hxcArgStrict != null) for (m in f.hxcArgStrict) refuse(m);
 			}
 		}
 		for (p in plan.properties) if (p.name == IndexerToIl.itemName && p.index.length > 0) {
 			IndexerToIl.defaultMember(g, plan.token);
 			break;
+		}
+	}
+
+	// The Param rows of `m`'s arguments (from its parameter `first` on) for the @:meta of the typedefs their
+	// types go through.
+	static function paramAttributes(g:DotnetCtx, m:MethodPlan, args:Array<{name:String, t:T}>, first:Int, pos:hxc.ast.Position,
+			ns:Array<String>):Void {
+		for (i in 0...args.length) {
+			var meta = typedefMeta(args[i].t);
+			if (meta.length > 0 && first + i < m.argNames.length)
+				AttributesToIl.forMember(g, g.mb.paramToken(m.token, first + i), meta, AttrTarget.TParam, pos, {name: args[i].name, ns: ns});
 		}
 	}
 

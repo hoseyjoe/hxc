@@ -1285,6 +1285,15 @@ class ModuleLoader {
 			cf.doc = cff.cffDoc;
 			// Its own array, as the type's (createModuleTypes_): the declaration may be the cached parse.
 			cf.meta = cff.cffMeta.copy();
+			// A bodiless method's argument @:strict, which buildArgs never puts on a variable.
+			switch (cff.cffKind) {
+				case FFun(fd) if (fd.fExpr == null):
+					for (fa in fd.fArgs) for (m in fa.meta) if (m.name == ":strict") {
+						if (cf.hxcArgStrict == null) cf.hxcArgStrict = [];
+						cf.hxcArgStrict.push(m);
+					}
+				case _:
+			}
 			// Every abstract MEMBER (declared in the impl class and not static) is CfImpl, whatever its
 			// kind.
 			if (isAbstractImplMember) TypeFunctions.addClassFieldFlag(cf, CfImpl);

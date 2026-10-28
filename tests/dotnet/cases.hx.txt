@@ -19962,8 +19962,7 @@ class Vec<T> implements ArrayAccess<T> {
 class P {
 	static function attempt(name:String, f:Void->Dynamic) {
 		try Sys.println(name + ": " + Std.string(f())) catch (e:Dynamic) Sys.println(name + ": EXC " + Std.string(e).split("
-")[0].split("
-")[0]);
+")[0].split("\r")[0]);
 	}
 
 	static function main() {
@@ -20673,3 +20672,152 @@ class P {
 [ObjArg((System.DayOfWeek)5)]
 [ObjArg((System.Environment+SpecialFolder)0)]
 [DayArg((System.DayOfWeek)2)]
+# Haxe's literal suffixes type an attribute argument as C# would type the value: 5i64 a long, 7u32 a uint,
+# a negated uint a long, 1.5f64 a double; a 0x literal of 2^63 or more is a ulong with its bits kept, as
+# C# types it. gencs pastes 5i64 into its C#, which C# rejects, so this case has no @gencs.
+--- attrs-literal-suffix-and-ulong
+import cs.system.componentmodel.DefaultValueAttribute;
+
+class P {
+	@:meta(System.ComponentModel.DefaultValueAttribute(5i64)) static var a:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(7u32)) static var b:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(-7u32)) static var c:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(0xFFFFFFFFi32)) static var d:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(1.5f64)) static var e:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(0xFFFFFFFFFFFFFFFF)) static var f:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(9223372036854775808)) static var g:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(-9223372036854775808)) static var h:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(3000000000)) static var i:Int = 0;
+	@:meta(System.ComponentModel.DefaultValueAttribute(-2147483648)) static var j:Int = 0;
+	static function main() {
+		var t = cs.Lib.toNativeType(P);
+		for (n in ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]) {
+			var attrs = t.GetField(n, new cs.Flags(cs.system.reflection.BindingFlags.NonPublic) | cs.system.reflection.BindingFlags.Public | cs.system.reflection.BindingFlags.Static).GetCustomAttributes(false);
+			var v:Dynamic = (cast attrs[0] : DefaultValueAttribute).Value;
+			Sys.println(n + ": " + cs.Lib.getNativeType(v).Name + " " + Std.string(v));
+		}
+	}
+}
+===
+[run]
+a: Int64 5
+b: UInt32 7
+c: Int64 -7
+d: Int32 -1
+e: Double 1.5
+f: UInt64 18446744073709551615
+g: UInt64 9223372036854775808
+h: Int64 -9223372036854775808
+i: UInt32 3000000000
+j: Int32 -2147483648
+# C# types 0xFFFFFFFFFFFFFFFF as a ulong, which converts to neither int nor long: C# error CS1503.
+--- attrs-refuse-ulong-literal
+@:nativeGen class Wide extends cs.system.Attribute {
+	@:overload public function new(i:Int) { super(); }
+	@:overload public function new(l:haxe.Int64) { super(); }
+}
+class P {
+	@:meta(Wide(0xFFFFFFFFFFFFFFFF)) static var w:Int = 0;
+	static function main() w = 1;
+}
+===
+[compile]
+P.hx:6: characters 9-33 : dotnet: no constructor of Wide takes (cs.UInt64) (C# error CS1503)
+# C#'s unary minus has no ulong form: C# error CS0023.
+--- attrs-refuse-negated-ulong-literal
+class P {
+	@:meta(System.ComponentModel.DefaultValueAttribute(-0xFFFFFFFFFFFFFFFF)) static var n:Int = 0;
+	static function main() n = 1;
+}
+===
+[compile]
+P.hx:2: characters 53-72 : dotnet: the operator - cannot be applied to a ulong (C# error CS0023)
+# A suffix that is not Haxe's: Haxe rejects 5i8 as an expression; @:meta's argument is not typed, so hxc
+# refuses it there.
+--- attrs-refuse-literal-suffix
+class P {
+	@:meta(System.ComponentModel.DefaultValueAttribute(5i8)) static var s:Int = 0;
+	static function main() s = 1;
+}
+===
+[compile]
+P.hx:2: characters 53-56 : dotnet: i8 is not a valid integer suffix
+# When both Tag and TagAttribute are attribute classes, C# reports CS1614 for [Tag]; hxc refuses it too.
+--- attrs-refuse-ambiguous-attribute-name
+class Tag extends cs.system.Attribute { public function new() super(); }
+class TagAttribute extends cs.system.Attribute { public function new() super(); }
+class P {
+	@:meta(Tag()) static var t:Int = 0;
+	static function main() t = 1;
+}
+===
+[compile]
+P.hx:4: characters 9-14 : dotnet: Tag is ambiguous between the attribute classes Tag and TagAttribute; write the one meant in full (C# error CS1614)
+# A named argument's property needs a public getter as well as a setter: C# error CS0617.
+--- attrs-refuse-write-only-property
+@:nativeGen class W extends cs.system.Attribute {
+	public function new() super();
+	@:property public var Only(never, set):Int;
+	function set_Only(v:Int):Int return v;
+}
+class P {
+	@:meta(W(Only = 1)) static var w:Int = 0;
+	static function main() w = 1;
+}
+===
+[compile]
+P.hx:7: characters 11-19 : dotnet: Only is not a valid named argument: a property must have a public getter and setter (C# error CS0617)
+# An argument's @:strict on a bodiless method (an interface's, an abstract class's) is refused too
+# (ruling 3); gencs drops it.
+--- attrs-refuse-strict-on-bodiless-argument
+interface I {
+	function m(@:strict(System.ObsoleteAttribute("i")) x:Int):Void;
+}
+abstract class A {
+	abstract function f(@:strict(System.ObsoleteAttribute("a")) y:Int):Void;
+}
+class P {
+	static function main() {}
+}
+===
+[compile]
+P.hx:2: characters 22-51 : dotnet: @:strict on a function argument is not written (gencs drops it too); put the attribute on a typedef of the argument's type
+P.hx:5: characters 31-60 : dotnet: @:strict on a function argument is not written (gencs drops it too); put the attribute on a typedef of the argument's type
+# gencs's argt_s writes a parameter's typedef @:meta on an hxgen class's real constructor and on its static
+# __hx_ctor_* (after __hx_this), an inherited constructor's included.
+--- attrs-constructor-parameter-typedef @gencs
+import cs.system.reflection.BindingFlags;
+
+@:meta(System.ComponentModel.DescriptionAttribute("t")) typedef Tagged = String;
+class C {
+	public function new(a:Tagged, n:Int) {}
+}
+class D extends C {}
+class P {
+	static function show(t:cs.system.Type) {
+		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var lines = [];
+		var cs_ = t.GetConstructors(all);
+		for (i in 0...cs_.Length) lines.push(Std.string(cs_[i]) + " " + params(cs_[i].GetParameters()));
+		var ms = t.GetMethods(all);
+		for (i in 0...ms.Length) if (StringTools.startsWith(ms[i].Name, "__hx_ctor")) lines.push(ms[i].Name + " " + params(ms[i].GetParameters()));
+		lines.sort(Reflect.compare);
+		for (l in lines) Sys.println(t.Name + ": " + l);
+	}
+	static function params(ps:cs.NativeArray<cs.system.reflection.ParameterInfo>):String {
+		return [for (i in 0...ps.Length) ps[i].Name + "[" + [for (a in ps[i].GetCustomAttributes(false)) Std.string(a)].join(",") + "]"].join(" ");
+	}
+	static function main() {
+		new D("x", 1);
+		show(cs.Lib.toNativeType(C));
+		show(cs.Lib.toNativeType(D));
+	}
+}
+===
+[run]
+C: Void .ctor(System.String, Int32) a[System.ComponentModel.DescriptionAttribute] n[]
+C: Void .ctor(haxe.lang.EmptyObject) empty[]
+C: __hx_ctor__C __hx_this[] a[System.ComponentModel.DescriptionAttribute] n[]
+D: Void .ctor(System.String, Int32) a[System.ComponentModel.DescriptionAttribute] n[]
+D: Void .ctor(haxe.lang.EmptyObject) empty[]
+D: __hx_ctor__D __hx_this[] a[System.ComponentModel.DescriptionAttribute] n[]
