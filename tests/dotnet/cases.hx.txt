@@ -21663,3 +21663,75 @@ class P {
 [compile]
 ./tools/P.hx:3: lines 3-6 : dotnet: hxc cannot write the nullable metadata (-D dotnet-nullable) of tools.Box: its type parameter T is constrained, and hxc writes no constraints
 ./tools/P.hx:5: characters 2-79 : dotnet: hxc cannot write the nullable metadata (-D dotnet-nullable) of tools.Box.pick: its type parameter A is constrained, and hxc writes no constraints
+# haxe.lang.Null<T> has hxcs's C# surface that C# code needs: the implicit conversion from T (C# code passing a
+# bool to a Haxe ?x:Bool parameter), _ofDynamic, and initonly fields. The nested __NoValue__ class and its
+# op_Implicit stay out (C# `Null<int> x = null` does not compile against hxc's DLL, and nothing does it): a
+# recorded divergence, gencs's output under [gencs].
+--- null-struct-csharp-surface @gencs
+class P {
+	static function main() {
+		var t:cs.system.Type = cs.system.Type.GetType("haxe.lang.Null`1");
+		var names = [];
+		for (m in t.GetMethods()) {
+			var n = m.Name;
+			if (m.IsStatic && (n == "op_Implicit" || n == "_ofDynamic" || n == "ofDynamic")) names.push(n);
+		}
+		names.sort(Reflect.compare);
+		Sys.println(names.join(","));
+		Sys.println(t.GetNestedType("__NoValue__") != null);
+		Sys.println(t.GetField("value").IsInitOnly + " " + t.GetField("hasValue").IsInitOnly);
+		var ti = t.MakeGenericType(cs.NativeArray.make(cs.system.Type.GetType("System.Int32")));
+		var conv = null;
+		for (m in ti.GetMethods())
+			if (m.Name == "op_Implicit" && m.GetParameters()[0].ParameterType == cs.system.Type.GetType("System.Int32")) conv = m;
+		if (conv != null) Sys.println(conv.Invoke(null, cs.NativeArray.make((5 : Dynamic))));
+		else Sys.println("no op_Implicit(T)");
+	}
+}
+===
+[run]
+_ofDynamic,ofDynamic,op_Implicit
+False
+true true
+5
+[gencs]
+_ofDynamic,ofDynamic,op_Implicit,op_Implicit
+True
+true true
+5
+# The same surface as metadata, without __NoValue__ (and its op_Implicit), which gencs has, and with
+# hxc's extra public toString() (the runtime method ToString calls).
+--- null-struct-csharp-metadata @lib @dump=haxe.lang.Null`1
+class P {}
+===
+[dump]
+type public sealed sequential beforefieldinit haxe.lang.Null`1<T> extends [mscorlib]System.ValueType
+  field public initonly !0 value
+  field public initonly bool hasValue
+  method public static hidebysig haxe.lang.Null`1<!0> _ofDynamic(object)
+  method public static hidebysig specialname haxe.lang.Null`1<!0> op_Implicit(!0)
+  method public hidebysig specialname rtspecialname void .ctor(!0, bool)
+  method public hidebysig object toDynamic()
+  method public hidebysig string toString()
+  method public virtual hidebysig string ToString()
+  method public static hidebysig haxe.lang.Null`1<!!0> ofDynamic<D>(object)
+# hxcs's @:classCode members of haxe.lang.Null<T> that C# calls: op_Implicit(T) (SpecialName) and _ofDynamic.
+# The fixture's C# converts a bool to the Haxe method's ?b:Bool parameter through that operator, as the server
+# app's C# does where it passes a bool to a Haxe optional Bool.
+--- null-implicit-from-csharp @gencs @netlib=EvLib
+class C {
+	public function new() {}
+	public function m(?b:Bool):String return b == null ? "null" : "got " + b;
+}
+class P {
+	static function main() {
+		Sys.println(ev.Use.CallWithBool(new C(), "m", true));
+		Sys.println(ev.Use.CallWithBool(new C(), "m", false));
+		Sys.println(new C().m());
+	}
+}
+===
+[run]
+got true
+got false
+null

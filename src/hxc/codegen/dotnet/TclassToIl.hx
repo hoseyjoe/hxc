@@ -33,6 +33,9 @@ enum MethodKind {
 	// An override of System.Object's virtual method that calls the Haxe method `body` with its arguments:
 	// the runtime Array's Equals and GetHashCode (arrayIdentity).
 	MObjectOverride(body:TClassField);
+	// The runtime Null<T> struct's C# surface (nullSurface): `op_Implicit(T)` (isImplicit), which wraps the
+	// value with hasValue true, and `_ofDynamic(object)`, which calls ofDynamic<T>.
+	MNullSurface(isImplicit:Bool);
 	// An hxgen class's constructor taking haxe.lang.EmptyObject, which runs no constructor body.
 	MEmptyCtor;
 	// An hxgen class's real constructor: base(EmptyObject.EMPTY), or the parameterless base constructor
@@ -388,7 +391,8 @@ class TclassToIl {
 					fields.push({
 						cf: cf,
 						name: DotnetNames.fieldName(c, cf.name),
-						flags: FieldAttrs.PUBLIC | (isStatic ? FieldAttrs.STATIC : 0) | pseudo.fieldFlags,
+						flags: FieldAttrs.PUBLIC | (isStatic ? FieldAttrs.STATIC : 0) | pseudo.fieldFlags
+							| (isStruct && c == g.runtimeClass("cs.internal._Null.Nullable") ? FieldAttrs.INIT_ONLY : 0),
 						sig: g.types.toSig(cf.type),
 						offset: pseudo.offset
 					});
@@ -593,6 +597,12 @@ class TclassToIl {
 			});
 		}
 		if (c == g.runtimeClass("Array")) for (m in arrayIdentity(c)) methods.push(m);
+		// gencs's Null<T> has these two ahead of its ToString and constructor.
+		if (isStruct && c == g.runtimeClass("cs.internal._Null.Nullable")) {
+			var surface = nullSurface(c, g.types.toSig(TInst(c, TypeFunctions.extractParamTypes(c.params))));
+			var at = 0;
+			for (m in surface) methods.insert(at++, m);
+		}
 		// gencs adds each overload's static constructor in front of the earlier ones, after the main one:
 		// the overloads come in reverse, the main one (listed last) still last.
 		if (staticCtors.length > 1) {
@@ -1523,6 +1533,39 @@ class TclassToIl {
 		return [overrideOf("Equals", "__hx_equals", LBool, [LObject], ["other"]), overrideOf("GetHashCode", "__hx_hashCode", LInt32, [], [])];
 	}
 
+	// The runtime Null<T>'s `_ofDynamic` and `op_Implicit(T)`, which hxcs's @:classCode gives the struct and
+	// which C# code calls (a bool passed to a Haxe ?b:Bool parameter converts through op_Implicit). Its
+	// __NoValue__ conversion is left out, a recorded divergence.
+	static function nullSurface(c:TClass, self:IlSigNorm):Array<MethodPlan> {
+		var pos = c.pos;
+		return [
+			{
+				kind: MNullSurface(false),
+				name: "_ofDynamic",
+				flags: MethodAttrs.PUBLIC | MethodAttrs.STATIC | MethodAttrs.HIDE_BY_SIG,
+				hasThis: false,
+				ret: self,
+				args: [LObject],
+				argNames: ["obj"],
+				generics: [],
+				pos: pos,
+				token: 0
+			},
+			{
+				kind: MNullSurface(true),
+				name: "op_Implicit",
+				flags: MethodAttrs.PUBLIC | MethodAttrs.STATIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME,
+				hasThis: false,
+				ret: self,
+				args: [LTypeParam(0)],
+				argNames: ["v"],
+				generics: [],
+				pos: pos,
+				token: 0
+			}
+		];
+	}
+
 	// gencs adds ToString for a class whose own toString() returns String and overrides nothing.
 	static function wrapsToString(g:DotnetCtx, c:TClass, cf:TClassField):Bool {
 		if (TypeFunctions.hasClassFieldFlag(cf, CfOverride) || TypeFunctions.hasClassFieldFlag(cf, CfExtern) || c.fields.exists("ToString")) return false;
@@ -1900,7 +1943,7 @@ class TclassToIl {
 			case MEntryPoint: "Main";
 			case MCctor: "__init__";
 			case MToString(_): "ToString";
-			case MObjectOverride(_): m.name;
+			case MObjectOverride(_) | MNullSurface(_): m.name;
 			case MEmptyCtor | MSplitCtor(_) | MClonedCtor(_): "new";
 			case MStaticCtor(_): "new";
 			case MReflect(r): ReflectionMembers.label(r);
@@ -2306,6 +2349,20 @@ class TclassToIl {
 				case MObjectOverride(cf):
 					for (i in 0...m.args.length + 1) code.ldarg(i);
 					code.opToken(IlOps.CALL, g.memberOf(plan, plan.thisSig, cf), m.args.length + 1, 1);
+					code.op(IlOps.RET, 1, 0);
+				case MNullSurface(isImplicit):
+					code.ldarg(0);
+					if (isImplicit) {
+						code.ldcI4(1);
+						var ctor = plan.c.constructor;
+						code.opToken(IlOps.NEWOBJ, g.memberOf(plan, plan.thisSig, ctor), 2, 1);
+					} else {
+						var of = plan.c.statics.get("ofDynamic");
+						var ofPlan = of == null ? null : g.methodPlans.get(of);
+						if (ofPlan == null) throw "internal error: the runtime Null has no ofDynamic";
+						var token = g.mb.methodSpec(g.methodOf(plan, plan.thisSig, ofPlan), g.sigs.methodSpec([LTypeParam(0)]));
+						code.opToken(IlOps.CALL, token, 1, 1);
+					}
 					code.op(IlOps.RET, 1, 0);
 				case MField(cf):
 					if (TypeFunctions.hasMeta(":functionCode", cf.meta)) throw functionCodeError(cf);

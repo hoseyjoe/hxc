@@ -25,7 +25,9 @@ package cs.internal;
 /**
 	hxc: hxcs adds C# to this struct that Haxe cannot say: `_ofDynamic`, a static method of the
 	instantiation (Runtime.mkNullable uses `ofDynamic` instead), and the implicit conversions from `T`
-	and from `__NoValue__`. Its `ToString` comes from `toString`.
+	and from `__NoValue__`. TclassToIl writes `_ofDynamic` and `op_Implicit(T)` (nullSurface) and gives
+	`value` and `hasValue` initonly; the nested `__NoValue__` and its conversion stay out, since nothing
+	converts a C# `null` to a Null<T>. Its `ToString` comes from `toString`.
 **/
 #if core_api_serialize
 @:meta(System.Serializable)

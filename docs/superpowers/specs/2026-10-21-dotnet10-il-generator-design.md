@@ -996,6 +996,12 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   'System.ComponentModel.DescriptionAttribute' attribute`. With `AllowMultiple` it compiles, and reflection
   sees two copies on the first overload and none on the full method, where hxc writes one on each
   (`attrs-nativegen-optional-overloads-allow-multiple`, whose `[gencs]` section shows gencs's counts).
+- `haxe.lang.Null<T>` has gencs's `op_Implicit(T)`, `_ofDynamic` and `initonly` `value` and `hasValue`, but not
+  its nested `__NoValue__` class and the `op_Implicit(__NoValue__)` conversion (`null-struct-csharp-surface`,
+  `null-struct-csharp-metadata`, `null-implicit-from-csharp`). C# `Null<int> x = null` compiles against gencs's
+  DLL and not against hxc's; nothing real writes it, and C# code that passes a `bool` to a Haxe `?b:Bool`
+  parameter works in both. Reflection sees one `op_Implicit` and no nested type, where gencs's shows two and
+  `__NoValue__`. hxc keeps its extra public `toString()`, the method `ToString` calls.
 
 ## Left to the builder
 
