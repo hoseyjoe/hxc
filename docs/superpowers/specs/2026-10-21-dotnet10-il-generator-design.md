@@ -453,7 +453,11 @@ and `List` copy, and two threads casting one array at once.
     arguments (`cells[row, col]`), and `new T(args)`.
   - Casts (chained, and as a parenthesised receiver: `(decimal){0}`, `(System.Char)ch`), `is`.
   - Unary `!` and `-`; binary arithmetic, comparisons, `==`/`!=`, `&&` and `||`, with C#'s numeric
-    promotion.
+    promotion. `==`/`!=` on references calls a user-defined operator that applies, found on either operand's
+    class as C# looks it up (`System.Version`'s), and compares by identity where none does; it is refused where
+    more than one applies or hxc cannot tell (`inline-cs-user-equality-operator`). A Haxe `null` as a
+    placeholder's argument is the C# null literal, as gencs's text substitution writes it
+    (`inline-cs-null-placeholder`).
   - Literals: integer, real (`d`, `f`, `m`), string, char, `true`, `false` and `null`.
   - A bare `throw`, as `throw` or `throw;`, which emits IL `rethrow` and keeps the stack trace.
   - Everything else is a lasting error naming the replacement: assignment, lambdas, `typeof`, `as`, `?:`,
@@ -473,6 +477,13 @@ and `List` copy, and two threads casting one array at once.
   which gencs's C# is compiled against. Known limits:
   - A member of a .NET superclass that the Haxe extern does not declare, named by its simple name, is
     C# error CS0103; `this.Name` reaches it.
+  - A Haxe property read through a getter (`var x(get, never)`) is no C# member in gencs's output, so it is
+    C# error CS0103 by its simple name and CS1061 through a value (`this.x`, `{0}.x`), as in gencs
+    (`inline-cs-haxe-property-is-an-error`). A physical one (`@:isVar`, or with a default read or write) is
+    gencs's plain field, which inline C# reads directly, bypassing the getter (`inline-cs-physical-property`).
+  - A .NET call binds past nothing C#'s member lookup would stop at: a derived class's public or protected
+    field, property or event hides the base classes' methods of its name, so a call of it is refused
+    (`inline-cs-hidden-base-method-is-an-error`: a delegate field's value, or C# error CS1955).
   - `cs.Syntax.plainCode` is parsed, but its names are not resolved in the Haxe scope.
   - In an abstract's method, `this` is the abstract's underlying value (`inline-cs-abstract-this`), and an
     abstract instance method named by its simple name is not lifted (CS0103).
@@ -834,7 +845,8 @@ and `List` copy, and two threads casting one array at once.
        recorded divergence in *Interop divergences from gencs*).
      - Known limit: a field-level `addMetadata`/`addTypePatch` aimed at a class the core types load before
        the init macros run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7
-       applies it. Only class-level metadata (an added `@:build`) is applied late.
+       applies it. Only class-level metadata (an added `@:build`) is applied late, and a late patch aimed at
+       an abstract reaches its impl class only, not the abstract.
    - **4c:** `@:nativeGen` details, attributes (`@:strict`, `@:meta`), nullability metadata for the AI
      tool schemas, events defined in Haxe (`@:event` vars), manifest resources (`-resource`,
      `Context.addResource`, `-D dotnet-embed`), milestone 4's exit below, and the carried items.
@@ -909,9 +921,8 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   of that name.
 - hxc resolves names gencs's C# cannot, in the Haxe scope where the typer met the inline C#
   (`inline-cs-names-gencs-cannot-resolve`): a local declared in a loop the typer unrolls, the loop variable of
-  an unrolled loop, an outer local only a closure's C# text names, and a Haxe property. gencs's C# does not
-  compile: `CS0103: The name 'col' does not exist in the current context` (and the same for `i`, `outer` and
-  `prop`). Under `-D analyzer-optimize`, gencs's analyzer also removes a local only `cs.Syntax.code` text
+  an unrolled loop, and an outer local only a closure's C# text names. gencs's C# does not compile:
+  `CS0103: The name 'col' does not exist in the current context` (and the same for `i` and `outer`). Under `-D analyzer-optimize`, gencs's analyzer also removes a local only `cs.Syntax.code` text
   reads, and a closure's class has no member of the enclosing class
   (`inline-cs-names-gencs-cannot-resolve-optimized`): CS0103 for `b`, `i` and `fld`.
 - `this` in the inline C# of an abstract's method is the abstract's underlying value in hxc

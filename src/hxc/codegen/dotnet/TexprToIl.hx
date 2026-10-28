@@ -864,9 +864,11 @@ class TexprToIl {
 			coerce(to, ret);
 			return;
 		}
-		// IntPtr or UIntPtr to or from another value type: gencs casts through object, which always throws.
-		if (from != null && to != null && !IlPaths.sigEq(from, to) && DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)
-			&& (from.match(LIntPtr | LUIntPtr) || to.match(LIntPtr | LUIntPtr))) {
+		// IntPtr or UIntPtr to or from another value type: gencs casts through object, which always throws. A
+		// haxe.lang.Null<T> counts as its T: gencs converts between IntPtr and Null<IntPtr>.
+		inline function under(s:IlSigNorm) return nullArg(s) != null ? nullArg(s) : s;
+		if (from != null && to != null && !IlPaths.sigEq(under(from), under(to)) && DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)
+			&& (under(from).match(LIntPtr | LUIntPtr) || under(to).match(LIntPtr | LUIntPtr))) {
 			function name(s:IlSigNorm, t:T):String return s.match(LIntPtr) ? "System.IntPtr" : s.match(LUIntPtr) ? "System.UIntPtr" : hxc.core.TPrinting.sTypeStr(t);
 			var u = Unsupported.error("a cast between " + name(from, e1.type) + " and " + name(to, e.type)
 				+ " throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()");

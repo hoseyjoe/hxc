@@ -18540,6 +18540,7 @@ class P {
 		Sys.println(untyped __cs__("(System.Numerics.BigInteger){0}", 5));
 		var il:cs.system.collections.generic.IList_1<Int> = null;
 		Sys.println(untyped __cs__("{0}.GetEnumerator()", il));
+		Sys.println(untyped __cs__("{0}.Length", null));
 	}
 }
 ===
@@ -18554,6 +18555,7 @@ P.hx:10: characters 23-55 : dotnet: more than one .NET overload of System.Math.M
 P.hx:11: characters 23-55 : dotnet: the .NET type System.IO.Stream is abstract or an interface, which `new` cannot create (C# error CS0144)
 P.hx:12: characters 23-67 : dotnet: hxc cannot apply the .NET conversion System.Numerics.BigInteger.op_Implicit in inline C#; convert in Haxe
 P.hx:14: characters 23-56 : dotnet: the .NET member System.Collections.Generic.IList<int>.GetEnumerator is declared on System.Collections.Generic.IEnumerable<int> and on System.Collections.IEnumerable; hxc does not model C#'s interface member lookup
+P.hx:15: characters 23-49 : dotnet: the inline C# null has no member Length (C# error CS0023)
 # Names that resolve the same in gencs's C# and in the Haxe scope.
 --- inline-cs-names @gencs
 // Names in inline C# that gencs's C# resolves as the Haxe code means them: locals, `this`, the class's own
@@ -18652,14 +18654,9 @@ System.Int32[]
 --- inline-cs-names-gencs-cannot-resolve
 // Names gencs's C# cannot resolve, which hxc resolves in the Haxe scope: a local declared in a loop the typer
 // unrolls (each copy's local is renamed, `col1`, `col2`), a loop variable the unrolling replaces by its
-// values, an outer local only the C# text of a closure names (so the closure does not capture it), and a
-// Haxe property, which has no C# member of its name. gencs: CS0103.
+// values, and an outer local only the C# text of a closure names (so the closure does not capture it).
+// gencs: CS0103.
 class P {
-	var _p = 9;
-	var prop(get, never):Int;
-	function get_prop() return _p;
-	public function new() {}
-	function readProp():Int return untyped __cs__("prop");
 	static function main() {
 		var total = 0;
 		for (r in 0...3) {
@@ -18671,7 +18668,6 @@ class P {
 		var outer = 11;
 		var h = () -> Sys.println(untyped __cs__("outer"));
 		h();
-		Sys.println(new P().readProp());
 	}
 }
 ===
@@ -18680,7 +18676,6 @@ class P {
 0
 1
 11
-9
 # A two-argument .NET indexer in inline C# is get_Item(int, int); the explicit get_Item/set_Item calls are
 # the first-class form (Haxe 4.3.7 gives a multi-argument indexer no array access).
 --- inline-cs-indexer-multi-arg @gencs @netlib
@@ -18955,6 +18950,139 @@ class P {
 [run]
 42
 
+# C#'s member lookup in inline C#: a derived class's field or property hides the base class's method of its
+# name, so `Make().X()` invokes the delegate field (refused, as hxc does not call a member's value) and
+# `Make().Y()` names a string property (CS1955), where binding CallHideBase's methods would be a silent wrong
+# call. A private member hides nothing from another assembly: Z() is CallHideBase's (inline-cs-hidden-private).
+--- inline-cs-hidden-base-method-is-an-error @netlib
+class P {
+	static function main() {
+		Sys.println(untyped __cs__("ValLib.CallHideDerived.Make().X()"));
+		Sys.println(untyped __cs__("ValLib.CallHideDerived.Make().Y()"));
+	}
+}
+===
+[compile]
+P.hx:3: characters 23-66 : dotnet: calls of a .NET field or property's value (a delegate) in inline C# are not supported yet
+P.hx:4: characters 23-66 : dotnet: the .NET member ValLib.CallHideDerived.Y is no method or delegate, which a call cannot invoke (C# error CS1955)
+--- inline-cs-hidden-private @gencs @netlib
+class P {
+	static function main() {
+		var s:String = untyped __cs__("ValLib.CallHideDerived.Make().Z()");
+		Sys.println(s);
+	}
+}
+===
+[run]
+CallHideBase.Z()
+# A Haxe null as a placeholder's argument is gencs's text `null`, the C# null literal: Convert.ToString(null)
+# binds ToString(string) by C#'s betterness and returns null, where a typed object would bind ToString(object)
+# and return "". A null variable stays typed: a String binds ToString(string), a Dynamic ToString(object).
+--- inline-cs-null-placeholder @gencs
+class P {
+	static function main() {
+		var a:Bool = untyped __cs__("System.Convert.ToString(null) == null");
+		var b:Bool = untyped __cs__("System.Convert.ToString({0}) == null", null);
+		var s:String = null;
+		var c:Bool = untyped __cs__("System.Convert.ToString({0}) == null", s);
+		var o:Dynamic = null;
+		var d:Bool = untyped __cs__("System.Convert.ToString({0}) == null", o);
+		trace(a, b, c, d);
+	}
+}
+===
+[run]
+P.hx:9: true, true, true, false
+# `==` and `!=` in inline C# call a user-defined operator that applies (System.Version's compares the
+# versions), on either operand's class, and compare references where none does (StringBuilder), as C# does.
+--- inline-cs-user-equality-operator @gencs
+class P {
+	static function main() {
+		var eq:Bool = untyped __cs__("new System.Version(1, 2) == new System.Version(1, 2)");
+		var ne:Bool = untyped __cs__("new System.Version(1, 2) != new System.Version(1, 3)");
+		var v = new cs.system.Version(2, 0);
+		var w = new cs.system.Version(2, 0);
+		var vw:Bool = untyped __cs__("{0} == {1}", v, w);
+		var vn:Bool = untyped __cs__("{0} == null", v);
+		var nv:Bool = untyped __cs__("null != {0}", v);
+		var sbEq:Bool = untyped __cs__("new System.Text.StringBuilder(\"a\") == new System.Text.StringBuilder(\"a\")");
+		var sb = new cs.system.text.StringBuilder("a");
+		var sbSame:Bool = untyped __cs__("{0} == {1}", sb, sb);
+		var ov:Bool = untyped __cs__("(object){0} == {1}", v, w);
+		trace(eq, ne, vw, vn, nv, sbEq, sbSame, ov);
+	}
+}
+===
+[run]
+P.hx:14: true, true, true, false, true, false, true, false
+# A Haxe property read through a getter is no C# member in gencs's output, so its name in inline C# is C# error
+# CS0103, and through a value CS1061, as in gencs; a physical one is read as its field (inline-cs-physical-property).
+--- inline-cs-haxe-property-is-an-error
+class P {
+	var prop(get, never):Int;
+	function get_prop() return 9;
+	static var sprop(get, never):Int;
+	static function get_sprop() return 8;
+	public function new() {}
+	function a():Int return untyped __cs__("prop");
+	function b():Int return untyped __cs__("this.prop");
+	function c():Int return untyped __cs__("{0}.prop", this);
+	function d():Int return untyped __cs__("sprop");
+	static function main() {
+		var p = new P();
+		Sys.println(p.a() + p.b() + p.c() + p.d());
+	}
+}
+===
+[compile]
+P.hx:7: characters 34-48 : dotnet: the inline C# name prop is no local, member or type here (C# error CS0103)
+P.hx:8: characters 34-53 : dotnet: the inline C# name P.prop is no local, member or type here (C# error CS1061)
+P.hx:9: characters 34-58 : dotnet: the inline C# name P.prop is no local, member or type here (C# error CS1061)
+P.hx:10: characters 34-49 : dotnet: the inline C# name sprop is no local, member or type here (C# error CS0103)
+# A physical Haxe property (`@:isVar`, or with a default read or write) is a plain field in gencs's C#, which
+# inline C# reads directly, bypassing the getter, by its simple name, through `this` or a local, and through a
+# placeholder alike.
+--- inline-cs-physical-property @gencs
+class P {
+	@:isVar var z(get, set):Int = 7;
+	function get_z() return z * 100;
+	function set_z(v) return z = v;
+	var w(get, default):Int = 3;
+	function get_w() return -1;
+	static var sz(get, default):Int = 4;
+	static function get_sz() return -2;
+	function new() {}
+	function run() {
+		var e:Int = untyped __cs__("z");
+		var f:Int = untyped __cs__("{0}.z", this);
+		var g:Int = untyped __cs__("this.z");
+		var h:Int = untyped __cs__("w + sz");
+		var o = this;
+		var i:Int = untyped __cs__("o.w");
+		trace(e, f, g, h, i, z, w, sz);
+	}
+	static function main() new P().run();
+}
+===
+[run]
+P.hx:17: 7, 7, 7, 7, 3, 700, -1, -2
+# A lifted name's position is where it is in the source: past the opening quote and through the string's
+# escapes (the deprecation warnings point at `xx`). gencs types no inline C#, so it warns of nothing.
+--- inline-cs-lifted-name-positions @gencs
+class P {
+	@:deprecated("old") static var xx:Int = 1;
+	static function main() {
+		var a:Int = untyped __cs__("1 + xx");
+		var b:Int = untyped __cs__("\"q\".Length + xx");
+		trace(a, b);
+	}
+}
+===
+[compile]
+P.hx:4: characters 35-37 : Warning : (WDeprecated) old
+P.hx:5: characters 46-48 : Warning : (WDeprecated) old
+[run]
+P.hx:6: 2, 2
 --- classcode-pragma-only-ignored @gencs
 // A @:classCode holding only #pragma lines (the server app's FieldLookup override has one) is ignored: C#
 // warnings do not exist in IL. Blank lines and several pragmas are allowed; the class compiles as without it.
@@ -19160,6 +19288,22 @@ extern enum NetCompressionLevel {
 P.hx:18: 2820, 190, 789ced96b91180400c035bb912103fe510109260
 P.hx:19: true, true, 
 P.hx:20: 38c405ad3226716daa033e158ba05733
+# @:functionCode on `static function __init__`: both compilers drop the metadata and run the Haxe body, as
+# __init__ is no method of the output for the functionCode to replace.
+--- functioncode-static-init @gencs
+class P {
+	@:functionCode('System.Console.WriteLine("functionCode");')
+	static function __init__() {
+		trace("haxe body");
+	}
+	static function main() {
+		trace("main");
+	}
+}
+===
+[run]
+P.hx:4: haxe body
+P.hx:7: main
 # [probe caseF] The replacement proposed for the library's BaseTextArea and BaseUiComponent: the constructor's
 # @:functionCode guarded by #if !dotnet. Passes today.
 --- serverapp-guid-functioncode-guarded @gencs
@@ -20045,6 +20189,23 @@ class P {
 P.hx:4: characters 23-24 : dotnet: a cast between Int and System.IntPtr throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
 P.hx:5: characters 20-33 : dotnet: a cast between System.IntPtr and Int throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
 P.hx:6: characters 27-40 : dotnet: a cast between System.IntPtr and haxe.Int64 throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
+# A cast between IntPtr and Null<IntPtr> converts as gencs's does (haxe.lang.Null<IntPtr> is a value type, but
+# it holds an IntPtr): only a cast to or from another value type throws in gencs's C#.
+--- netlib-intptr-haxe-null-casts @gencs
+class P {
+	static function main() {
+		var p:cs.system.IntPtr = new cs.system.IntPtr(5);
+		var n:Null<cs.system.IntPtr> = cast p;
+		cast(p, Null<cs.system.IntPtr>);
+		trace(n);
+		var q:cs.system.IntPtr = cast n;
+		trace(q);
+	}
+}
+===
+[run]
+P.hx:6: 5
+P.hx:8: 5
 --- macro-add-build-to-std-class @gencs + --macro addMetadata("@:build(P.M.build())","StringTools")
 #if macro
 import haxe.macro.Context;

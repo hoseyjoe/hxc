@@ -25,17 +25,64 @@ private typedef Lifted = {te:TExpr, e:Null<Expr>, suffix:String};
 // binds the text to its own renamed output. Type names stay for CsToIl, which resolves them as CLR names.
 class CsLift {
 	final ctx:TyperContext;
-	// The code string's position, where the names' offsets start.
+	// The code string's position.
 	final p:Position;
+	// `sourceOffsets`: where each offset of the code string is in its literal; null to report the names at
+	// the whole string.
+	final offsets:Null<Array<Int>>;
 	// The number of the first added placeholder: the existing ones keep theirs.
 	final first:Int;
 	final edits:Array<{pos:Int, len:Int, text:String}> = [];
 	final added:Array<TExpr> = [];
 
-	function new(ctx:TyperContext, first:Int, p:Position) {
+	function new(ctx:TyperContext, first:Int, p:Position, code:String) {
 		this.ctx = ctx;
 		this.first = first;
 		this.p = p;
+		this.offsets = sourceOffsets(code, p);
+	}
+
+	// The source offset, from the literal's start, of each offset of `code` and of its end, where `p` is the
+	// string literal `code` was written as: past the opening quote and through the escapes \n, \t, \r, \\, \",
+	// \', an ASCII \xHH and a single-quoted string's $$. Null for any other source (another escape, a non-ASCII
+	// character, a constant that is no literal there), or where the mapped text is not `code`.
+	static function sourceOffsets(code:String, p:Position):Null<Array<Int>> {
+		var src = try Position.getFileContent(p.file) catch (_:Dynamic) return null;
+		if (p.min < 0 || p.max > src.length || p.max - p.min < 2) return null;
+		var raw = src.substring(p.min, p.max);
+		var quote = raw.charAt(0);
+		if ((quote != '"' && quote != "'") || raw.charAt(raw.length - 1) != quote) return null;
+		var r = [], text = new StringBuf(), i = 1, end = raw.length - 1;
+		while (i < end) {
+			var c = raw.charCodeAt(i);
+			if (c >= 0x80) return null;
+			r.push(i);
+			if (c == "\\".code) {
+				var n = raw.charAt(i + 1);
+				switch (n) {
+					case "n": text.add("\n");
+					case "t": text.add("\t");
+					case "r": text.add("\r");
+					case "\\" | '"' | "'": text.add(n);
+					case "x":
+						var hex = raw.substr(i + 2, 2);
+						if (!~/^[0-7][0-9a-fA-F]$/.match(hex)) return null;
+						text.addChar(Std.parseInt("0x" + hex));
+						i += 2;
+					case _: return null;
+				}
+				i += 2;
+			} else if (c == "$".code && quote == "'") {
+				if (raw.charAt(i + 1) != "$") return null;
+				text.add("$");
+				i += 2;
+			} else {
+				text.addChar(c);
+				i++;
+			}
+		}
+		r.push(end);
+		return text.toString() == code ? r : null;
 	}
 
 	// The text `code` of an inline C# call with the placeholders' arguments `args`, its code string at `p`, with
@@ -51,7 +98,7 @@ class CsLift {
 			case CPlaceholder(n) if (n >= args.length): return null;
 			case _:
 		}
-		var l = new CsLift(ctx, args.length, p);
+		var l = new CsLift(ctx, args.length, p, code);
 		l.walk(x, false);
 		if (l.edits.length == 0) return null;
 		// From last to first, so the earlier offsets still hold.
@@ -112,7 +159,9 @@ class CsLift {
 		return l == null ? null : {node: x, lifted: l};
 	}
 
-	function pos(x:CsExpr):Position return new Position(p.file, p.min + x.pos, p.min + x.pos + x.len);
+	function pos(x:CsExpr):Position {
+		return offsets == null ? p : new Position(p.file, p.min + offsets[x.pos], p.min + offsets[x.pos + x.len]);
+	}
 
 	function expr(def:ExprDef, x:CsExpr):Expr return new Expr(def, pos(x));
 
@@ -150,6 +199,10 @@ class CsLift {
 					var t = thisValue(x);
 					return t == null ? null : {te: t.te, e: null, suffix: "." + name};
 				}
+				if (readsByAccessor(found.f)) {
+					var t = thisValue(x);
+					return t == null || !TypeFunctions.isPhysicalVarField(found.f) ? null : rawRead(t.te, found.c2, found.f, found.t, x);
+				}
 				return typed(e, callee);
 			}
 		}
@@ -158,6 +211,8 @@ class CsLift {
 			var cf = cur.statics.get(name);
 			if (cf != null) {
 				if (methodGroup(cf, callee)) return null;
+				if (readsByAccessor(cf))
+					return TypeFunctions.isPhysicalVarField(cf) ? rawRead(null, {c: cur, params: []}, cf, cf.type, x) : null;
 				if (cur == c) return typed(e, callee);
 				var acc = Fields.fieldAccess(ctx, callee ? MCall([]) : MGet, cf, FHStatic(cur), TexprTools.makeTypeExpr(TClassDecl(cur), e.pos), e.pos);
 				return access(acc, null, callee);
@@ -180,6 +235,7 @@ class CsLift {
 		if (found == null || found.c2 == null || isExtern(found.c2.c)) return null;
 		// A call of a variable's value stays for CsToIl to refuse.
 		if (methodGroup(found.f, callee) || callee && !isMethod(found.f)) return null;
+		if (readsByAccessor(found.f)) return TypeFunctions.isPhysicalVarField(found.f) ? rawRead(prefix.te, found.c2, found.f, found.t, x) : null;
 		ctx.privateAccess++;
 		var l = try typed(expr(EField(prefix.e, name, EFNormal), x), callee) catch (err:haxe.Exception) {
 			ctx.privateAccess--;
@@ -187,6 +243,26 @@ class CsLift {
 		}
 		ctx.privateAccess--;
 		return l;
+	}
+
+	// A Haxe variable read through a getter, or never readable (`var x(get, never)`): gencs writes it as no C#
+	// member, so its C# finds none by that name (CS0103, or CS1061 through a value, as CsToIl's `{0}.x` does),
+	// or, for a physical one (`@:isVar`, or with a default read or write), as a plain field, which its C#
+	// reads directly, bypassing the getter.
+	static function readsByAccessor(cf:TClassField):Bool {
+		return switch (cf.kind) {
+			case Var(vk): vk.read.match(AccCall | AccNever);
+			case _: false;
+		}
+	}
+
+	// The raw read of the physical variable `cf` of `owner` (static where `recv` is null), as gencs's C# reads
+	// its field; nothing chains on over it.
+	function rawRead(recv:Null<TExpr>, owner:TClassWithParams, cf:TClassField, t:T, x:CsExpr):Lifted {
+		var at = pos(x);
+		var e = recv == null ? TField(TexprTools.makeTypeExpr(TClassDecl(owner.c), at), FStatic(owner.c, cf)) : TField(recv,
+			FInstance(owner.c, owner.params, cf));
+		return {te: TypeFunctions.mk(e, t, at), e: null, suffix: ""};
 	}
 
 	// The member `e` names, as a value, or as the method a callee calls.

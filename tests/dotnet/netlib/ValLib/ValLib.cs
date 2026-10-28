@@ -378,4 +378,19 @@ namespace ValLib
     {
         protected new string Name = "HideProt.Name";
     }
+    // A derived field or property hides a base method of its name from C#'s member lookup.
+    public class CallHideBase
+    {
+        public string X() { return "CallHideBase.X()"; }
+        public string Y() { return "CallHideBase.Y()"; }
+        public string Z() { return "CallHideBase.Z()"; }
+    }
+    public class CallHideDerived : CallHideBase
+    {
+        public new System.Func<string> X = () => "CallHideDerived.X delegate";
+        public new string Y { get { return "CallHideDerived.Y"; } }
+        private new string Z = "CallHideDerived.Z";
+        public static CallHideDerived Make() { return new CallHideDerived(); }
+        public string ZField() { return Z; }
+    }
 }

@@ -14,6 +14,7 @@ import hxc.codegen.dotnet.IlMeta;
 import hxc.codegen.dotnet.TexprToIl.Ret;
 import hxc.codegen.dotnet.TexprToIl.isTypeParam;
 import hxc.codegen.dotnet.TexprToIl.isReference;
+import hxc.codegen.dotnet.TexprToIl.isNullConst;
 import hxc.codegen.dotnet.TexprToIl.strip;
 
 // What a name in inline C# is: a type (a static receiver or a cast target), a namespace, or a value it has
@@ -490,8 +491,15 @@ class CsToIl {
 		var pushed = pushArgs(args);
 		var m = bind(rt.t, name, rt.isStatic, pushed);
 		if (m == null) {
-			if (atPos(() -> g.externs.memberCs(rt.t, name, rt.isStatic)) != null)
+			var b = atPos(() -> g.externs.memberCs(rt.t, name, rt.isStatic));
+			if (b != null) {
+				var t = switch (b.member) {
+					case XField(s, _) | XConstant(_, s) | XProperty(s, _, _): s;
+				}
+				if (!g.externs.isDelegateType(t))
+					error("the .NET member " + csName(rt.t) + "." + name + " is no method or delegate, which a call cannot invoke (C# error CS1955)");
 				throw new Unsupported("calls of a .NET field or property's value (a delegate) in inline C#", true);
+			}
 			return unknownName(csName(rt.t) + "." + name, rt.isStatic ? "CS0117" : "CS1061");
 		}
 		return emitCall(m, r, rt.isStatic, pushed);
@@ -757,9 +765,14 @@ class CsToIl {
 		throw Unsupported.haxeError("Out-of-bounds special parameter: " + n, new Position(textPos.file, textPos.min + x.pos, textPos.max));
 	}
 
-	function placeholder(n:Int, x:CsExpr):IlSigNorm {
+	// A Haxe null is gencs's text `null`, the C# null literal (as `literal(LNull)`).
+	function placeholder(n:Int, x:CsExpr):Null<IlSigNorm> {
 		if (n >= args.length) outOfBounds(n, x);
 		var a = args[n];
+		if (isNullConst(a)) {
+			il.op(IlOps.LDNULL, 0, 1);
+			return null;
+		}
 		var t = argSig(a);
 		if (tl.isHaxeNull(t)) t = LObject;
 		tl.texpr(RValue(t), a);
@@ -1110,7 +1123,7 @@ class CsToIl {
 	}
 
 	// `==` and `!=`: numbers after promotion, two bools, two strings by value (String.op_Equality), other
-	// references and null by identity.
+	// references and null by a user-defined operator where one applies (C# 12.4.5), else by identity.
 	function equality(eq:Bool, a:CsExpr, b:CsExpr, ta:Null<IlSigNorm>, tb:Null<IlSigNorm>):IlSigNorm {
 		var op = eq ? "==" : "!=";
 		if (isNumber(ta) && isNumber(tb)) {
@@ -1124,13 +1137,49 @@ class CsToIl {
 			var token = g.mb.memberRef(g.typeTokenOf(LString), eq ? "op_Equality" : "op_Inequality", g.sigs.method(false, LBool, [LString, LString], 0));
 			il.opToken(IlOps.CALL, token, 2, 1);
 			return LBool;
-		} else if (ta != null && ta.match(LBool) && tb != null && tb.match(LBool) || (ta == null || isReference(ta)) && (tb == null || isReference(tb))) {
+		} else if (ta != null && ta.match(LBool) && tb != null && tb.match(LBool)) {
 			il.op(IlOps.CEQ, 2, 1);
+		} else if ((ta == null || isReference(ta)) && (tb == null || isReference(tb))) {
+			// C# calls a user-defined operator that applies (System.Version's), else compares references.
+			var name = eq ? "op_Equality" : "op_Inequality";
+			var starts = [for (t in [ta, tb]) { var s = operatorStart(t); if (s != null) s; }];
+			var m = starts.length == 0 ? null : atPos(() -> g.externs.equalityCs(name, ta, tb, starts));
+			if (m == null) {
+				il.op(IlOps.CEQ, 2, 1);
+			} else {
+				var pushed = [for (t in [ta, tb]) {t: t, kind: t == null ? KNull : KPlain}];
+				convertArgs(pushed, m.params);
+				il.opToken(IlOps.CALL, g.mb.memberRef(g.typeTokenOf(m.parent), m.name, g.sigs.methodSig(m.sig, 0)), 2, 1);
+				return LBool;
+			}
 		} else {
 			operatorError(op, ta, tb);
 		}
 		if (!eq) not();
 		return LBool;
+	}
+
+	// Where C#'s lookup of a user-defined `==` for an operand of the reference type `t` starts: its .NET class,
+	// or a Haxe-compiled class's nearest .NET ancestor (Haxe classes declare no operators). Null for the null
+	// literal, object, string (whose operator compares as references do where it applies here), arrays, type
+	// parameters and a Haxe class with no .NET ancestor.
+	function operatorStart(t:Null<IlSigNorm>):Null<IlSigNorm> {
+		if (t == null || isTypeParam(t)) return null;
+		var c = programClass(t);
+		if (c != null) {
+			var cur = c, params = [for (p in c.params) p.type];
+			while (cur.superClass != null) {
+				var sup = cur.superClass, cparams = cur.params, args = params;
+				params = [for (p in sup.params) TypeFunctions.applyParams(cparams, args, p)];
+				cur = sup.c;
+				if (TypeFunctions.hasClassFlag(cur, CExtern)) return tl.sig(TInst(cur, params));
+			}
+			return null;
+		}
+		return switch (t) {
+			case LClass(_, _): t;
+			case _: null;
+		}
 	}
 
 	// Pushes `x`, which must be a bool.

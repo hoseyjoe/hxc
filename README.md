@@ -240,7 +240,8 @@ generator bring these. Milestones 4a (referenced-assembly interop) and 4b (inlin
 nullability metadata, events, `@:nativeGen` details and embedded resources) is left.
 A field-level `addMetadata` or `addTypePatch` aimed at a class the core types load before the init macros
 run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7 applies it; class-level
-metadata, such as an added `@:build`, is applied.
+metadata, such as an added `@:build`, is applied, though a late patch aimed at an abstract reaches its impl
+class only, not the abstract.
 Embedded resources (`-resource` or `Context.addResource`) are not supported yet: with `-D dotnet` they
 are a compile error, since `haxe.Resource` would find nothing.
 Standard-library code that needs a construct not supported yet compiles to a stub: `cs.Pointer.add`

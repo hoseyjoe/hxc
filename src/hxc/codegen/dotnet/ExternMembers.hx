@@ -1164,7 +1164,7 @@ class ExternMembers {
 	}
 
 	// Whether `s` is a .NET delegate type, one extending System.MulticastDelegate.
-	function isDelegateType(s:IlSigNorm):Bool {
+	public function isDelegateType(s:IlSigNorm):Bool {
 		var cls = classOf(s);
 		return cls != null && isSystem(cls.csuper, "MulticastDelegate");
 	}
@@ -1717,6 +1717,61 @@ class ExternMembers {
 		return null;
 	}
 
+	// C#'s user-defined `==` or `!=` (C# 12.4.5; `name` is op_Equality or op_Inequality) for operands of the
+	// types `a` and `b` (null for the null literal), whose operator lookups start at the .NET types `starts`:
+	// from each, the operators of the first class up its chain that declares any that apply. Null when none
+	// applies, where C# compares references. Refused where more than one applies (C#'s overload resolution
+	// among them is not modelled), where hxc cannot tell whether one applies, and for an operator that is
+	// abstract or an interface's, or that returns other than bool.
+	public function equalityCs(name:String, a:Null<IlSigNorm>, b:Null<IlSigNorm>, starts:Array<IlSigNorm>):Null<CsMethod> {
+		var list = "(" + [for (s in [a, b]) s == null ? "null" : sigS(s)].join(", ") + ")";
+		function applies(arg:Null<IlSigNorm>, param:IlSigNorm):Applies
+			return arg == null ? (takesNull(param) ? AYes : ANo) : converts(arg, param);
+		var found:Array<CsMethod> = [];
+		for (s in starts) for (link in csChain(s)) {
+			var largs = linkArgs(link), here = [];
+			for (m in link.cls.cmethods) {
+				if (m.mname != name || m.mflags.contract.indexOf(CMStatic) < 0 || m.mflags.access != FAPublic || m.margs.length != 2) continue;
+				var what = sigS(link.parent) + "." + name;
+				if (m.mflags.impl.indexOf(IAbstract) >= 0 || link.cls.cflags.semantics.indexOf(SInterface) >= 0)
+					throw Unsupported.error("hxc cannot tell whether the .NET operator " + what + " applies to " + list);
+				var params = [for (p in m.margs) DotnetTypes.substitute(p.sig.snorm, largs, [])];
+				var pa = applies(a, params[0]), pb = applies(b, params[1]);
+				if (pa == ANo || pb == ANo) continue;
+				if (pa == AUnknown || pb == AUnknown)
+					throw Unsupported.error("hxc cannot tell whether the .NET operator " + what + " applies to " + list);
+				var ret = DotnetTypes.substitute(m.mret.snorm, largs, []);
+				if (!norm(ret).match(LBool)) throw Unsupported.error("the .NET operator " + what + " returns " + sigS(ret) + ", not bool");
+				here.push(({
+					parent: link.parent,
+					name: m.mname,
+					sig: m.msig.snorm,
+					genericCount: 0,
+					typeArgs: null,
+					isVirtual: false,
+					params: params,
+					ret: ret,
+					omitted: []
+				} : CsMethod));
+			}
+			if (here.length == 0) continue;
+			for (m in here) if (!Lambda.exists(found, f -> IlPaths.sigEq(f.parent, m.parent) && IlPaths.sigEq(f.sig, m.sig))) found.push(m);
+			break;
+		}
+		if (found.length > 1) throw Unsupported.error("more than one .NET operator " + name + " applies to " + list);
+		return found.length == 0 ? null : found[0];
+	}
+
+	// Whether the .NET class `c` declares a field, property or event named `name` that C# code in another
+	// assembly can see (public or protected).
+	static function hidesByNonMethod(c:IlClass, name:String):Bool {
+		inline function seen(a:FieldAccess) return a.match(FAPublic | FAFamily | FAFamOrAssem);
+		inline function seenAcc(a:Null<IlAccessor>) return a != null && seen(a.flags.access);
+		return Lambda.exists(c.cfields, f -> f.fname == name && seen(f.fflags.access))
+			|| Lambda.exists(c.cprops, p -> p.pname == name && (seenAcc(p.pget) || seenAcc(p.pset)))
+			|| Lambda.exists(c.cevents, e -> e.ename == name && (seenAcc(e.eadd) || seenAcc(e.eremove)));
+	}
+
 	// The method named `name` (".ctor" for `new`) that C# binds for a call on a receiver of the type `recv`
 	// (`isStatic`: on a type) with arguments of the types `args` and the kinds `argKinds` (ruling X), as 4a's
 	// hand-written externs bind (`resolve`): link by link from `recv`'s class, overrides left out, the one
@@ -1737,6 +1792,13 @@ class ExternMembers {
 			var sem = links[0].cls.cflags.semantics;
 			if (sem.indexOf(SAbstract) >= 0 || sem.indexOf(SInterface) >= 0)
 				fail("the .NET type " + sigS(recv) + " is abstract or an interface, which `new` cannot create (C# error CS0144)");
+		}
+		// C#'s member lookup: a field, property or event hides the base classes' members of its name, so the
+		// chain stops at the first class declaring one (a method of a more derived class hides it in turn). A
+		// private or internal one is not found from another assembly, and hides nothing.
+		if (!isCtor) for (li in 0...links.length) if (hidesByNonMethod(links[li].cls, name)) {
+			links = links.slice(0, li);
+			break;
 		}
 		if (!Lambda.exists(links, l -> Lambda.exists(l.cls.cmethods, m -> m.mname == name))) return null;
 		var receiver:Null<Receiver> = isStatic ? null : {cls: null, opaque: true};
