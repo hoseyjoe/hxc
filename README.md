@@ -33,7 +33,7 @@ output.
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
 | `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set |
-| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, generic instantiations and the casts between them, the Serializer, exceptions and calls into `--net-lib` assemblies (overloads, generic methods, `Nullable<T>`, indexers, properties, delegates) work; see [.NET output](#net-output) |
+| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, generic instantiations and the casts between them, the Serializer, exceptions and calls into `--net-lib` assemblies (overloads, generic methods, `Nullable<T>`, indexers, properties, delegates) and a subset of inline C# work; see [.NET output](#net-output) |
 | `--lua`, `--python`, `--php`, `--hl`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
@@ -142,7 +142,26 @@ only the assemblies passed, and a type defined only in one of them is "Type not 
   `default(T)`, as under gencs, so a `Nullable<DateTime>` built from a `null` `DateTime` has a value,
   `0001-01-01`. `x == null` is `!x.HasValue` on a `Nullable` and `x.Equals(default(T))` on another
   struct.
-- **Indexers:** `a[i]` on a .NET type with an indexer calls it, compound assignment included.
+- **Indexers:** `a[i]` on a .NET type with an indexer calls it, compound assignment included. A Haxe
+  class with an instance `__get` or `__set` gets gencs's indexer (`get_Item`/`set_Item`, an `Item`
+  property and `[DefaultMember("Item")]`), so C# code can index it; `Array` has `T this[int]` and its
+  companion interface's `object this[int]`, and a Haxe interface with `__get`/`__set` gets a default
+  interface member indexer. A generic interface whose `__get` mentions no type parameter gets no `Item`
+  property (only the CLR surface: Haxe itself rejects `i[x]` on an interface).
+- **Inline C#:** `untyped __cs__(...)`, `cs.Syntax.code(...)` and `cs.Syntax.plainCode(...)` compile a
+  subset of C# expressions with C#'s semantics: `{N}` placeholders, names (Haxe locals and members are
+  resolved in the Haxe scope, as C# would see them, except in `plainCode`; types as CLR names over the
+  referenced assemblies), member access, calls, indexers with any number of arguments (`cells[row, col]`),
+  `new`, casts, `is`, `!`, `-`, arithmetic, comparisons, `&&`, `||` and literals, and a bare `throw`
+  (below). Anything else (assignments, lambdas, statements, `typeof`, `as`, `?:`, `??` and the like) is a
+  compile error naming the replacement, and so is C# in `@:classCode` or `@:functionCode`; the class is
+  still compiled. A `@:classCode` of `#pragma` lines only is ignored. The replacements: hand-written
+  `@:native` externs for what a `@:classCode` injected, and `#if !dotnet` around a `@:functionCode`. As
+  under gencs, only code that survives DCE is checked.
+- **Rethrow:** a bare `throw` in inline C#, `cs.Lib.rethrow(e)`, and `throw e` of a catch's own,
+  never-assigned variable rethrow the caught exception with IL `rethrow`, keeping its stack trace
+  (gencs's `throw e;` resets it). Outside a catch, in a local function or in a `finally`, a bare `throw`
+  is a compile error, as in C#.
 - **Properties:** a Haxe class implementing a .NET interface's properties (`var x(get, set)`) gives
   them CLR properties, so C# code reading them through the interface gets the Haxe getters' values.
   A `@:property` var is a CLR property too, so System.Text.Json and .NET reflection see it.
@@ -209,17 +228,19 @@ list is not complete; among others it has compound assignments to `Dynamic` arra
 (`d[i] += v`, `d[i]++`; a plain `d[i] = v` works), `return`, `break` and `continue` inside
 expressions, casts between instantiations of a generic class that has no companion interface (a
 generic `@:struct`) and `Std.isOfType` or enum constructor arguments with one,
-inline C# (`untyped __cs__`, `cs.Syntax.code`, `@:classCode`, `@:functionCode`), `new IntPtr(n)` and
-methods called on an `IntPtr` property's value, a static `@:property` var with get or set accessors,
+a static `@:property` var with get or set accessors,
 a .NET method, an overloaded method, a struct's method or a method reached through a `Dynamic`
 receiver as a delegate, and a .NET base class's non-virtual method or property implementing an
 interface method or property for a Haxe subclass (C# adds a forwarding stub there; a public virtual
 one works). Some interop is not written yet, with no error: attributes (`@:meta`, `@:strict`), events
 defined in Haxe (an `@:event` var's `add_` and `remove_` methods are compiled, but no event), and
 nullability metadata, so .NET reflection sees no attribute and no event. The next steps for the .NET
-generator bring these.
-`Array` has no `object this[int]` indexer yet (hxcs adds it with `@:classCode`), so C# code cannot index
-an `Array` and `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`.
+generator bring these. Milestones 4a (referenced-assembly interop) and 4b (inline C#, gencs's indexers,
+`IntPtr` members, `CompilerGeneratedAttribute` on `@:property` vars) are done; 4c (attributes,
+nullability metadata, events, `@:nativeGen` details and embedded resources) is left.
+A field-level `addMetadata` or `addTypePatch` aimed at a class the core types load before the init macros
+run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7 applies it; class-level
+metadata, such as an added `@:build`, is applied.
 Embedded resources (`-resource` or `Context.addResource`) are not supported yet: with `-D dotnet` they
 are a compile error, since `haxe.Resource` would find nothing.
 Standard-library code that needs a construct not supported yet compiles to a stub: `cs.Pointer.add`

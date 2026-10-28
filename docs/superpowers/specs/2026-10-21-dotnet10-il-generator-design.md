@@ -263,7 +263,8 @@ losing writes that gencs keeps.
   included) an indexer, `T this[int]` on ``Array`1``, and a class with a companion and array access also
   the companion's `object this[int]`, implemented explicitly (milestone 4b; `array-indexer-clr-surface`).
   An interface's indexer is a default interface member, which an implementing class's own indexer
-  implements (`haxe-interface-indexer`).
+  implements (`haxe-interface-indexer`). Known limit: a generic interface whose `__get` mentions no type
+  parameter gets no `Item` property (CLR surface only; Haxe rejects `i[x]` on an interface).
   Element access on an `Array<Dynamic>` reads, writes and increments through the companion's indexer,
   whose setter casts with `(T)value`: `a[1] = 3.7` on an `Array<Dynamic>` holding an `Array<Int>`
   throws `InvalidCastException`, and `++` stores a double, which throws there too. `op=` goes through
@@ -811,11 +812,29 @@ and `List` copy, and two threads casting one array at once.
          gives `null` (`delegate-remove`).
        - Not supported yet as a method group: a .NET method, an overloaded method, a struct's method, and a
          method reached through a `Dynamic` or companion-interface receiver.
-   - **4b:** the inline-C# subset (`__cs__`, `cs.Syntax.code`, `@:functionCode`, `@:classCode`),
+   - **4b (done):** the inline-C# subset (`__cs__`, `cs.Syntax.code`, `@:functionCode`, `@:classCode`),
      gencs's indexers from `__get`/`__set` (`Array`'s and its companion's included, not hxcs's
      `@:classCode`), the remaining standard-library stub (`Socket.select`, which calls a
      method on an `IntPtr` property's value; `new IntPtr(n)` is refused too), and Roslyn's
      `CompilerGeneratedAttribute` on a `@:property` var's backing field and accessors.
+     - Its last step measured the apps. The server app needs two source changes, which keep gencs's output
+       the same: nativepdf `Zlib`'s `@:classCode` becomes hand-written `@:native` externs for `ZLibStream`
+       and `CompressionLevel` (ruling 8), and its library's two constructor `@:functionCode`s, dead code in
+       both apps, go in `#if !dotnet` (ruling 9). With them, the server app and its nativepdf build have
+       no error and each writes its DLL (4a: 22 and 4). Without them, the server app has 4 errors (the
+       `@:classCode`, the 2 `@:functionCode`s, and the `zlibNative` call the `@:classCode` declared, an
+       unknown name) and nativepdf 2. The desktop app's only error is its embedded resources (4c), with
+       or without the Avalonia `--net-lib`s (4a: 10). No standard-library method either app calls is
+       stubbed; across the whole std, `cs.Pointer.add` is the one stub left and `haxe.ds.EnumValueMap`
+       the one class left out.
+     - ILVerify of the server DLL against the deployed assemblies gives only the line gencs's DLL gives
+       (`haxe.lang.BoxedPointer`'s unmanaged pointer). The server app's own no-browser export check, run on
+       gencs's DLL and on hxc's, prints the same results. The CLR shape of the 24 classes 4a measured and of
+       the AI tool models has the same members as gencs's; only their order differs, as hxc writes a
+       type's static members after its instance methods and gencs before them.
+     - Known limit: a field-level `addMetadata`/`addTypePatch` aimed at a class the core types load before
+       the init macros run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7
+       applies it. Only class-level metadata (an added `@:build`) is applied late.
    - **4c:** `@:nativeGen` details, attributes (`@:strict`, `@:meta`), nullability metadata for the AI
      tool schemas, events defined in Haxe (`@:event` vars), manifest resources (`-resource`,
      `Context.addResource`, `-D dotnet-embed`), milestone 4's exit below, and the carried items.

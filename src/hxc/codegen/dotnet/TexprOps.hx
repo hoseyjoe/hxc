@@ -446,10 +446,12 @@ class TexprOps {
 			} else if (equality && isReference(s1) && isReference(s2) && !s1.match(LObject) && !s2.match(LObject)) {
 				netOperator = equalityOperator(op, e1, e2);
 				// An instantiation of a generic Haxe class goes as itself, so a read of a place erased to object
-				// (an Array<Array<Int>>'s element) is cast into it first, as gencs casts it.
-				inline function as(s:IlSigNorm, i:Int) return netOperator != null ? netOperator.args[i] : g.isGenericHaxeClass(s) ? s : null;
-				tl.texpr(RValue(as(s1, 0)), e1);
-				tl.texpr(RValue(as(s2, 1)), e2);
+				// (an Array<Array<Int>>'s element) is cast into it first, as gencs casts it. So does a Null<T> one, which a
+				// generic call can give as a haxe.lang.Null<object> (StringMap<object>.get for a Map<String, E>).
+				inline function as(s:IlSigNorm, e:TExpr, i:Int) return netOperator != null ? netOperator.args[i]
+					: g.isGenericHaxeClass(s) || TypeFunctions.isExplicitNull(e.type) ? s : null;
+				tl.texpr(RValue(as(s1, e1, 0)), e1);
+				tl.texpr(RValue(as(s2, e2, 1)), e2);
 			} else {
 				throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
 			}

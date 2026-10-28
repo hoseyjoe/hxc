@@ -457,6 +457,9 @@ class TypeFields {
 		if (c.kind.match(KTypeParameter(_))) return;
 		var m = c.module;
 		if (m == null) return;
+		// Class metadata of type patches registered after the class was made. This approximates Haxe's timing:
+		// Haxe patches after set_heritance, hxc before heritage resolution, so the patch is in place either way
+		// when the build macros are read.
 		hxc.context.ModuleLoader.applyLateClassPatches(ctx, c);
 		classBuilt.set(c, true);
 		buildQueued.set(c, true);

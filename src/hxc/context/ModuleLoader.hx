@@ -304,11 +304,12 @@ class ModuleLoader {
 		return {meta: classMeta, fields: result};
 	}
 
-	// Haxe 4.3.7 applies a class's type patches when the class builds (patch_class), not when its module
-	// loads. hxc applies them at the load, so a class made before a patch was registered (StringTools,
-	// which the core types load ahead of the init macros) gets the patch's class metadata here, at the
-	// start of its build, where its @:build entries are read. A field patch still only reaches a class made
-	// after it: the field shells are registered at the load.
+	// Haxe 4.3.7 applies a class's type patches when the class builds (patch_class, after set_heritance),
+	// not when its module loads. hxc applies them at the load, so a class made before a patch was registered
+	// (StringTools, which the core types load ahead of the init macros) gets the patch's class metadata here,
+	// at the start of its build, before heritage resolution: an approximation of Haxe's timing that still
+	// comes before its @:build entries are read. A field patch still only reaches a class made after it: the
+	// field shells are registered at the load.
 	public static function applyLateClassPatches(ctx:Context, c:TClass):Void {
 		var mark = ctx.classPatchMarks.get(c);
 		if (mark == null || mark.seen >= ctx.typePatches.length) return;

@@ -4761,6 +4761,44 @@ False
 null
 red
 3
+--- null-reference-equality-from-generic-call @gencs
+enum Color {
+	Red;
+	Green;
+}
+class Thing {
+	public function new() {}
+}
+class P {
+	var prev:Map<String, Color> = [];
+	function new() {}
+	function changed(k:String, c:Color):Bool {
+		var r = !prev.exists(k) || prev.get(k) != c;
+		prev.set(k, c);
+		return r;
+	}
+	static function main() {
+		var p = new P();
+		Sys.println(p.changed("a", Red));
+		Sys.println(p.changed("a", Red));
+		Sys.println(p.changed("a", Green));
+		Sys.println(Green == p.prev.get("a"));
+		Sys.println(p.prev.get("b") == Red);
+		var t = new Thing();
+		var things = ["t" => t];
+		Sys.println(things.get("t") == t);
+		Sys.println(t != things.get("u"));
+	}
+}
+===
+[run]
+True
+False
+True
+True
+False
+True
+True
 --- enum-equality @gencs
 enum Color {
 	Red;
