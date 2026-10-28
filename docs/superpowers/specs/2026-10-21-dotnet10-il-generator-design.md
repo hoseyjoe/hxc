@@ -128,7 +128,10 @@ commit built with Haxe 4.3.7.
   gencs output was recompiled by `dotnet build` against the real packages, which absorbed the drift.
   IL member references are fixed when hxc writes them, so a member that changed between versions
   becomes a `MissingMethodException` at runtime. *(My call:)* hxc compiles against whatever
-  `--net-lib`/`--net-std` name, the same as today. The acceptance setup adds an ILVerify run of
+  `--net-lib`/`--net-std` name, the same as today. The one exception is inline C#'s member lookup: when no
+  `--net-std` class along the chain declares the name, it falls back to the reference pack, because inline
+  C# is written against the net10 surface the pack describes (gencs's C# is compiled against it). The
+  acceptance setup adds an ILVerify run of
   `HaxeServer.dll` with the **deployed** assemblies as references, which reports any member
   reference that doesn't resolve. The server app refreshes `res/netcore-dlls/` from its build outputs, which
   its own CLAUDE.md already asks for whenever the C# projects change.
@@ -469,7 +472,12 @@ and `List` copy, and two threads casting one array at once.
   ordinary expressions. Type names are not lifted: C# resolves them as CLR names, in the enclosing
   namespaces and then the global one, over the referenced assemblies and the reference pack. A member the
   `--net-std` lacks (hxcs's net-20 `StringBuilder` has no `Clear`) is looked up in the reference pack,
-  which gencs's C# is compiled against.
+  which gencs's C# is compiled against. Known limits:
+  - A member of a .NET superclass that the Haxe extern does not declare, named by its simple name, is
+    C# error CS0103; `this.Name` reaches it.
+  - `cs.Syntax.plainCode` is parsed, but its names are not resolved in the Haxe scope.
+  - In an abstract's method, `this` is the abstract's underlying value (`inline-cs-abstract-this`), and an
+    abstract instance method named by its simple name is not lifted (CS0103).
 
   DCE. A member the lift turns into a placeholder is a real use, so DCE keeps it. A member named only
   through a qualified type name, if DCE removed it, is a lasting error naming `@:keep` (gencs: CS0117).
@@ -870,6 +878,9 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   `prop`). Under `-D analyzer-optimize`, gencs's analyzer also removes a local only `cs.Syntax.code` text
   reads, and a closure's class has no member of the enclosing class
   (`inline-cs-names-gencs-cannot-resolve-optimized`): CS0103 for `b`, `i` and `fld`.
+- `this` in the inline C# of an abstract's method is the abstract's underlying value in hxc
+  (`inline-cs-abstract-this`). gencs writes the method as a static one, so its C# does not compile:
+  `CS0026: Keyword 'this' is not valid in a static property, static method, or static field initializer`.
 
 ## Left to the builder
 
