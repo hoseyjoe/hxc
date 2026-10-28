@@ -292,6 +292,7 @@ class CompanionToIl {
 		if (plan == null) throw "internal error: no plan for " + DotnetTypes.haxePath(TClassDecl(c));
 		var methods:Array<MethodPlan> = [castDecl(c, c.pos)];
 		var bases = [hxObjectSig(g)];
+		var indexer = null;
 		if (isInterface(c)) {
 			// The interface's methods that mention no type parameter, which its own plan left out.
 			for (cf in c.orderedFields) for (f in [cf].concat(cf.overloads)) if (isMember(g, c, f)) {
@@ -308,6 +309,9 @@ class CompanionToIl {
 					methods.push(abstractMethod(MCompanionMember, m.name, m.ret, m.args, m.argNames, m.generics, m.pos));
 				case _:
 			}
+			// gencs's `object this[int key]` of a companion with array access, after its other methods.
+			indexer = IndexerToIl.companionMembers(plan);
+			if (indexer != null) for (m in indexer.methods) methods.push(m);
 			while (s != null) {
 				if (hasCompanion(g, s.c)) bases.push(companionSig(s.c));
 				s = s.c.superClass;
@@ -317,6 +321,7 @@ class CompanionToIl {
 		// A generic interface's members that mention no type parameter come here, not through planClass.
 		TclassToIl.checkDistinctSignatures(methods);
 		var companion = typePlan(plan, "companion", companionPath(c), TypeAttrs.PUBLIC | TypeAttrs.INTERFACE | TypeAttrs.ABSTRACT, bases, methods);
+		if (indexer != null) companion.properties = [indexer.property];
 		g.plans.insert(g.plans.indexOf(plan), companion);
 		g.companionPlans.set(c, companion);
 		g.companionOrder.push(c);

@@ -659,7 +659,12 @@ class TexprDynamic {
 			case TField(obj, fa): new TExpr(TField(stable(obj), fa), lhs.type, lhs.pos);
 			case TArray(a, i):
 				tl.calls.refuseStructIndexer(a, i);
-				new TExpr(TArray(stable(a), stable(i)), lhs.type, lhs.pos);
+				// An element of an Array<Dynamic> (a companion interface's indexer) through Runtime.callField's
+				// "__get" and "__set", as gencs's DynamicOperators reaches it, which convert the value: the
+				// receiver as a Dynamic.
+				var recv = stable(a);
+				if (tl.calls.isCompanionArrayAccess(a)) recv = new TExpr(TCast(recv, null), TypeFunctions.tDynamic, recv.pos);
+				new TExpr(TArray(recv, stable(i)), lhs.type, lhs.pos);
 			case _: lhs;
 		}
 		tl.assign(ret, target, new TExpr(TBinop(op, target, rhs), e.type, e.pos));

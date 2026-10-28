@@ -86,12 +86,14 @@ class SigWriter {
 		return b.getBytes();
 	}
 
-	// A property's signature: PROPERTY, with HASTHIS for an instance property, no parameters, its type.
-	public function property(type:IlSigNorm, hasThis = true):Bytes {
+	// A property's signature: PROPERTY, with HASTHIS for an instance property, the number of its index
+	// parameters (an indexer's), its type, then the parameters' types.
+	public function property(type:IlSigNorm, hasThis = true, ?index:Array<IlSigNorm>):Bytes {
 		var b = new IlBytes();
 		b.u8(hasThis ? 0x28 : 0x08);
-		b.compressedU32(0);
+		b.compressedU32(index == null ? 0 : index.length);
 		this.type(b, type);
+		if (index != null) for (t in index) this.type(b, t);
 		return b.getBytes();
 	}
 

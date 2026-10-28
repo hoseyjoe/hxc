@@ -1164,6 +1164,15 @@ class TexprToIl {
 			case TArray(e1, e2) if (calls.isDynamicArrayAccess(e1)):
 				// Runtime.callField(a, "__set", hash, new object[]{i, v}).
 				dyn.fieldCall(ret, lhs, e1, "__set", [e2, rhs]);
+			case TArray(e1, e2) if (calls.haxeIndexer(e1, false, true) != null):
+				// set_Item(index, value) of a Haxe class's indexer or of a companion interface's (an
+				// Array<Dynamic>'s, whose setter casts the value to the element type), the value the stored one.
+				var ix = calls.haxeIndexer(e1, false, true);
+				var set = ix.setToken();
+				calls.receiver(e1, ix.parent, true);
+				nullOperand(RValue(ix.index), e2, false);
+				texprStore(ix.value, lhs.type, rhs);
+				storeKeeping(ret, ix.value, () -> code.opToken(ix.isStruct ? IlOps.CALL : IlOps.CALLVIRT, set, 3, 0));
 			case TArray(e1, e2) if (isNativeArray(e1.type)):
 				var elem = calls.pushArrayAndIndex(e1, e2);
 				texpr(RValue(elem), rhs);
@@ -1300,9 +1309,13 @@ class TexprToIl {
 						code.op(IlOps.POP, 1, 0);
 					}
 				};
-			case TArray(e1, e2) if (!isNativeArray(e1.type) && calls.isNetIndexer(e1, e2)):
-				// get_Item and set_Item on the receiver and index stored once.
-				var ix = calls.netIndexer(e1, e2, e.type, true, true);
+			case TArray(e1, e2) if (!isNativeArray(e1.type) && (calls.haxeIndexer(e1, true, true) != null || calls.isNetIndexer(e1, e2))):
+				// get_Item and set_Item on the receiver and index stored once: a Haxe class's indexer, a companion
+				// interface's (`++` on an Array<Dynamic>'s element stores the double TexprDynamic.incDec computes,
+				// as gencs's does), or a .NET class's. `op=` on an Array<Dynamic>'s element goes through
+				// Runtime.callField instead (TexprDynamic.compound).
+				var ix = calls.haxeIndexer(e1, true, true);
+				if (ix == null) ix = calls.netIndexer(e1, e2, e.type, true, true);
 				if (ix.isStruct) throw new Unsupported("read-modify-write through an indexer of a .NET struct", false);
 				var get = ix.getToken(), set = ix.setToken();
 				var recv = -1, idx = -1;

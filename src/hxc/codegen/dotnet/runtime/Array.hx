@@ -701,13 +701,13 @@ final class Array<T> implements ArrayAccess<T> {
 		}
 	}
 
-	private function __get(idx:Int):T {
+	@:keep private function __get(idx:Int):T {
 		if (__hx_fwd != null)
 			return __hx_resolve().__get(idx);
 		return if ((cast idx : UInt) >= length) null else __a[idx];
 	}
 
-	private function __set(idx:Int, v:T):T {
+	@:keep private function __set(idx:Int, v:T):T {
 		if (__hx_fwd != null)
 			return __hx_resolve().__set(idx, v);
 		var idx:UInt = idx;

@@ -259,14 +259,14 @@ losing writes that gencs keeps.
   depends on it. A `Map` abstract's downcast to its specialization with the same type arguments (the
   commonest shape in the server app) is the identity cast it is in gencs. `Type.resolveClass` of a generic
   class returns ``typeof(X<object…>)``.
-- **The `Array` indexer is missing.** `Array`'s companion has an `object this[int]` indexer that comes
-  from hxcs's `@:classCode`, which is milestone 4. Until then element access on an `Array<Dynamic>`
-  goes through `Runtime.callField` `"__get"`/`"__set"`, as hxc already does for `Dynamic` arrays, and
-  `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`. So an element write through
-  an `Array<Dynamic>` that holds a typed array converts the value as the same write on a `Dynamic`
-  does (`__set`, then `genericCast`): `a[1] = 3.7` stores 4 in an `Array<Int>`, and `a[1] = "q"`
-  throws `FormatException`. gencs's indexer casts with `(T)value` and throws `InvalidCastException`
-  for both.
+- **Indexers are gencs's.** gencs gives every class with an instance `__get` and/or `__set` (Array
+  included) an indexer, `T this[int]` on ``Array`1``, and a class with a companion and array access also
+  the companion's `object this[int]`, implemented explicitly (milestone 4b; `array-indexer-clr-surface`).
+  Element access on an `Array<Dynamic>` reads, writes and increments through the companion's indexer,
+  whose setter casts with `(T)value`: `a[1] = 3.7` on an `Array<Dynamic>` holding an `Array<Int>`
+  throws `InvalidCastException`, and `++` stores a double, which throws there too. `op=` goes through
+  `Runtime.callField` `"__get"`/`"__set"`, which convert, as gencs's DynamicOperators writes it
+  (`array-companion-element-access`, `array-companion-increment`).
 
 *Parent casts.* gencs's `P_cast<…>() { return this.X_cast<own params>(); }` always returns `this`.
 `FallbackPromise<T> implements Thenable<T>` shows it. Given a `FallbackPromise<Dynamic>` in a
@@ -402,11 +402,6 @@ hxcs, with gencs's output kept for contrast:
      `return this.X_cast<T…>()` calls itself until the stack overflows, hxc's returns `this` for the
      object's own type arguments and throws `InvalidCastException` for others (case
      `struct-and-abstract-base-casts`).
-4. **`Array`'s `object this[int]` indexer is missing** until milestone 4, so `get_Item` and
-   `set_Item` are absent from `getInstanceFields(Array)`. An element write through a companion-typed
-   `Array` (`a[i] = v` on an `Array<Dynamic>` holding an `Array<Int>`) converts `v` as a `Dynamic`
-   receiver's write does, where gencs's indexer throws `InvalidCastException` (case
-   `cast-array-view`).
 
 *Reproduced hxcs bugs.* These stay, because data depends on them: the map and `List` copy that shares
 `hashes`/`_keys` and gives the original a `k => null`; `getResponseHeaderValues` throwing a
@@ -557,11 +552,10 @@ and `List` copy, and two threads casting one array at once.
    instantiations as in *Casts between generic instantiations*: type-argument erasure, companion
    interfaces, `X_cast` and `__hx_cast`, and `Array` casts that share storage (issue 8314).
    **Exit:** the differential suite against Haxe 4.3.7 gencs passes, apart from the recorded
-   divergences (the 8314 forward, the parent casts, the paths left working, and the missing `Array`
-   indexer until milestone 4).
+   divergences (the 8314 forward, the parent casts, and the paths left working).
 4. **Interop.** `@:nativeGen`, attributes, properties, nullability, delegates/events, overloads,
-   generics that cross into referenced assemblies, the inline-C# subset, `Array`'s companion
-   indexer (hxcs's `@:classCode`), manifest resources (embedded resources, `-resource` or
+   generics that cross into referenced assemblies, the inline-C# subset, the indexers gencs gives a
+   class with `__get`/`__set` (`Array`'s companion indexer among them), manifest resources (embedded resources, `-resource` or
    `Context.addResource`, are a compile error until then). It is split into three plans:
    - **4a (done):** what the server app and the desktop app need from referenced assemblies to
      lower: `System.Nullable<T>`, `null` into a .NET value type (`default(T)`, as gencs gives it) and
@@ -798,7 +792,8 @@ and `List` copy, and two threads casting one array at once.
        - Not supported yet as a method group: a .NET method, an overloaded method, a struct's method, and a
          method reached through a `Dynamic` or companion-interface receiver.
    - **4b:** the inline-C# subset (`__cs__`, `cs.Syntax.code`, `@:functionCode`, `@:classCode`),
-     `Array`'s companion indexer, the remaining standard-library stub (`Socket.select`, which calls a
+     gencs's indexers from `__get`/`__set` (`Array`'s and its companion's included, not hxcs's
+     `@:classCode`), the remaining standard-library stub (`Socket.select`, which calls a
      method on an `IntPtr` property's value; `new IntPtr(n)` is refused too), and Roslyn's
      `CompilerGeneratedAttribute` on a `@:property` var's backing field and accessors.
    - **4c:** `@:nativeGen` details, attributes (`@:strict`, `@:meta`), nullability metadata for the AI
@@ -883,6 +878,17 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
 - `this` in the inline C# of an abstract's method is the abstract's underlying value in hxc
   (`inline-cs-abstract-this`). gencs writes the method as a static one, so its C# does not compile:
   `CS0026: Keyword 'this' is not valid in a static property, static method, or static field initializer`.
+- A store through a subclass that overrides only `__get` calls the nearest superclass's `set_Item`
+  (`haxe-class-indexer-hidden-setter`). gencs gives the subclass its own get-only indexer, which hides the
+  base class's, so its C# does not compile: `CS0200: Property or indexer 'Sub.this[int]' cannot be assigned
+  to -- it is read only`. The subclass's metadata stays gencs's.
+- A generic class with array access gets the companion indexer it can implement
+  (`haxe-generic-class-get-only-indexer`, `haxe-generic-class-int-indexer`): a get-only one when it has no
+  `__set`, none when DCE removed its `__get`, and a single one where its `__get` and `__set` mention no
+  type parameter, so that the companion declares them too. gencs's companion always declares `object this[int key] { get; set; }`, so its C# does not
+  compile: `CS1061` for the missing `__set`, `CS0535` for the missing implementation, and `CS0111: Type
+  'IVec' already defines a member called 'this' with the same parameter types` where the companion also
+  declares `__get` and `__set`.
 
 ## Left to the builder
 

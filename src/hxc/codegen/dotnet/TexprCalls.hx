@@ -16,6 +16,7 @@ import hxc.codegen.dotnet.TclassToIl.ClassPlan;
 import hxc.codegen.dotnet.TclassToIl.MethodAttrs;
 import hxc.codegen.dotnet.TclassToIl.MethodKind;
 import hxc.codegen.dotnet.TclassToIl.MethodPlan;
+import hxc.codegen.dotnet.TclassToIl.PropertyPlan;
 import hxc.codegen.dotnet.TexprToIl.Place;
 import hxc.codegen.dotnet.TexprToIl.Ret;
 import hxc.codegen.dotnet.TexprToIl.Slot;
@@ -1516,11 +1517,128 @@ class TexprCalls {
 	}
 
 	// Whether `e1[i]` is reached through Runtime.callField's "__get" and "__set", as gencs reaches an element
-	// of a Dynamic, and of an Array<Dynamic>, whose type is Array's companion interface, which has no indexer
-	// before hxcs's @:classCode is (plan 3c's ruling).
+	// of a Dynamic. An Array<Dynamic>, whose type is Array's companion interface, has gencs's companion indexer
+	// (isCompanionArrayAccess).
 	function isDynamicArrayAccess(e1:TExpr):Bool {
 		if (isNativeArray(e1.type)) return false;
-		return arrayOf(e1.type) == null ? TexprDynamic.isDynamic(e1.type) : g.types.isCompanionTyped(e1.type);
+		return arrayOf(e1.type) == null && TexprDynamic.isDynamic(e1.type);
+	}
+
+	// Whether `e1[i]` goes through the indexer of a companion interface, gencs's `object this[int key]`
+	// (IndexerToIl): `e1` is an Array<Dynamic>, or another Dynamic instantiation of an hxgeneric class with
+	// array access. gencs reads, writes and increments the element through it, and reaches it with
+	// Runtime.callField's "__get" and "__set" for `op=` (TexprDynamic.compound).
+	function isCompanionArrayAccess(e1:TExpr):Bool {
+		if (isNativeArray(e1.type) || !g.types.isCompanionTyped(e1.type)) return false;
+		return switch (TypeFunctions.follow(e1.type)) {
+			case TInst(c, _): arrayAccessClass(c) != null;
+			case _: false;
+		}
+	}
+
+	// The nearest class, `c` or a superclass that is no extern, that implements ArrayAccess.
+	static function arrayAccessClass(c:TClass):Null<TClass> {
+		var cur = c;
+		while (cur != null && !isExtern(cur)) {
+			if (cur.arrayAccess != null) return cur;
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		return null;
+	}
+
+	static function noGet(c:TClass):Unsupported {
+		var n = DotnetTypes.haxePath(TClassDecl(c));
+		return Unsupported.error("a[i] on " + n + " needs " + n + ".__get, which dead code elimination removed: mark it @:keep");
+	}
+
+	static function noSet(c:TClass):Unsupported {
+		return Unsupported.error(DotnetTypes.haxePath(TClassDecl(c)) + " has no __set: a[i] on it cannot be assigned");
+	}
+
+	// The indexer gencs gives a Haxe class with __get and __set (IndexerToIl) that `e1[i]` goes through, for an
+	// access that `reads` or `writes`: on a value typed as a companion interface the companion's, else for
+	// each accessor the one of the nearest class up from `e1`'s that declares it (a subclass that overrides
+	// only __get has a get-only indexer, whose class's base class's setter a store calls, where gencs's C#
+	// fails with CS0200). Null when `e1` is no Haxe class with array access (Array has its own lowering);
+	// an access whose accessor DCE removed, or that has none, is refused, as gencs's C# fails.
+	function haxeIndexer(e1:TExpr, reads:Bool, writes:Bool):Null<NetIndexer> {
+		if (isNativeArray(e1.type)) return null;
+		var rc:TClass, params:Array<T>;
+		switch (TypeFunctions.follow(e1.type)) {
+			case TInst(c, p) if (!c.kind.match(KTypeParameter(_)) && !isExtern(c)):
+				rc = c;
+				params = p;
+			case _:
+				return null;
+		}
+		var aa = arrayAccessClass(rc);
+		if (aa == null) return null;
+		if (g.types.isCompanionTyped(e1.type)) return companionIndexer(rc, aa, reads, writes);
+		if (arrayOf(e1.type) != null) return null;
+		var getAt:Null<{owner:IlSigNorm, inst:Array<IlSigNorm>, plan:ClassPlan, m:MethodPlan, depth:Int}> = null, setAt = null;
+		var cur = rc, args = params, depth = 0;
+		while (cur != null) {
+			// A .NET base class's indexer, which no Haxe class below it hides, is TexprCalls.netIndexer's.
+			if (isExtern(cur)) {
+				if (getAt == null && setAt == null) return null;
+				break;
+			}
+			var plan = g.planOf.get(cur);
+			if (plan != null) for (p in plan.properties) if (p.name == IndexerToIl.itemName && p.index.length == 1 && isIntLike(p.index[0])) {
+				var inst = g.types.classArgs(cur, args);
+				var owner = DotnetCtx.instanceOf(plan, inst);
+				if (getAt == null && p.getter != null) getAt = {owner: owner, inst: inst, plan: plan, m: p.getter, depth: depth};
+				if (setAt == null && p.setter != null) setAt = {owner: owner, inst: inst, plan: plan, m: p.setter, depth: depth};
+			}
+			var sup = cur.superClass;
+			if (sup == null) break;
+			var cparams = cur.params, cargs = args;
+			args = [for (p in sup.params) TypeFunctions.applyParams(cparams, cargs, p)];
+			cur = sup.c;
+			depth++;
+		}
+		if (reads && getAt == null) throw noGet(aa);
+		if (writes && setAt == null) throw noSet(rc);
+		var getValue = getAt == null ? null : DotnetTypes.substitute(getAt.m.ret, getAt.inst, []);
+		var setValue = setAt == null ? null : DotnetTypes.substitute(setAt.m.args[1], setAt.inst, []);
+		if (reads && writes && !IlPaths.sigEq(getValue, setValue))
+			throw new Unsupported("read-modify-write through indexers of different element types", false);
+		var main = !reads ? setAt : !writes ? getAt : getAt.depth <= setAt.depth ? getAt : setAt;
+		return {
+			parent: main.owner,
+			index: DotnetTypes.substitute(main.m.args[0], main.inst, []),
+			value: reads ? getValue : setValue,
+			isStruct: DotnetTypes.isValueType(main.owner),
+			getToken: () -> g.methodOf(getAt.plan, getAt.owner, getAt.m),
+			setToken: () -> g.methodOf(setAt.plan, setAt.owner, setAt.m)
+		};
+	}
+
+	// The indexer of the companion interface of `c` or of the nearest generic superclass whose companion has
+	// one, `object this[int key]` (IndexerToIl.companionMembers); `aa` is the class with array access.
+	function companionIndexer(c:TClass, aa:TClass, reads:Bool, writes:Bool):NetIndexer {
+		var cur = c;
+		var found:Null<{sig:IlSigNorm, p:PropertyPlan}> = null;
+		while (cur != null && found == null && !isExtern(cur) && g.hasCompanion(cur)) {
+			var cp = g.companionPlans.get(cur);
+			if (cp != null) for (p in cp.properties) if (p.name == IndexerToIl.itemName) found = {sig: CompanionToIl.companionSig(cur), p: p};
+			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		if (found == null) {
+			if (aa.fields.get("__get") == null) throw noGet(aa);
+			throw new Unsupported("a[i] through a Dynamic instantiation of a class whose indexer its companion interface does not declare", false);
+		}
+		var p = found.p;
+		if (reads && p.getter == null) throw noGet(aa);
+		if (writes && p.setter == null) throw noSet(c);
+		return {
+			parent: found.sig,
+			index: LInt32,
+			value: p.sig,
+			isStruct: false,
+			getToken: () -> p.getter.token,
+			setToken: () -> p.setter.token
+		};
 	}
 
 	// Whether `e` is a native array field read through Runtime from a value typed as a companion interface,
@@ -1634,8 +1752,9 @@ class TexprCalls {
 		};
 	}
 
-	// a[i]: ldelem on a native array, Array's __get on an Array, get_Item on a .NET class's indexer, and on a
-	// Dynamic or an Array<Dynamic> gencs's Runtime.callField(a, "__get", hash, new object[]{i}).
+	// a[i]: ldelem on a native array, Array's __get on an Array, get_Item on a .NET class's indexer, on the
+	// indexer of a Haxe class with __get or of a companion interface (an Array<Dynamic>'s), and on a Dynamic
+	// gencs's Runtime.callField(a, "__get", hash, new object[]{i}).
 	function arrayRead(ret:Ret, e:TExpr, e1:TExpr, e2:TExpr):Void {
 		if (tl.sig(e1.type).match(LString)) {
 			// s[i] on a String is C#'s indexer, a Char16.
@@ -1659,6 +1778,16 @@ class TexprCalls {
 		}
 		if (isDynamicArrayAccess(e1)) {
 			tl.dyn.fieldCall(ret, e, e1, "__get", [e2]);
+			return;
+		}
+		var hx = haxeIndexer(e1, true, false);
+		if (hx != null) {
+			// get_Item: the companion's `object this[int key]`, or a Haxe class's indexer.
+			var get = hx.getToken();
+			receiver(e1, hx.parent);
+			tl.nullOperand(RValue(hx.index), e2, false);
+			code.opToken(hx.isStruct ? IlOps.CALL : IlOps.CALLVIRT, get, 2, 1);
+			tl.coerce(hx.value, ret);
 			return;
 		}
 		if (isNetIndexer(e1, e2)) {

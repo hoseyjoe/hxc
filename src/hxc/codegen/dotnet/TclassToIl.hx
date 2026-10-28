@@ -54,6 +54,10 @@ enum MethodKind {
 	MCompanionMember;
 	// The public accessor of a CLR property (PropertyPlan), its getter or (`isSet`) its setter.
 	MPropertyAccessor(p:PropertyPlan, isSet:Bool);
+	// An accessor of an indexer gencs gives a class with `__get` and `__set` (IndexerToIl), its getter or
+	// (`isSet`) its setter, which calls `get` or `set`; `explicit` the element type of the explicit
+	// implementation of the companion interface's indexer, null for the class's own.
+	MIndexer(get:Null<TClassField>, set:Null<TClassField>, isSet:Bool, explicit:Null<IlSigNorm>);
 }
 
 // How an override takes the slot of the method it overrides, as gencs's FixOverrides fixes one whose
@@ -93,11 +97,14 @@ typedef FieldPlan = {cf:Null<TClassField>, name:String, flags:Int, sig:IlSigNorm
 // the class does not declare), the public accessors that call them and that every Haxe use of
 // get_X/set_X calls, and its Property row's token, set when the row is written. A physical @:property var,
 // which gencs writes as a C# auto-property (`{ get; set; }`), has no bodies: its accessors read and write
-// its private backing field `backing` (planVarProperty), and it is static when the var is.
+// its private backing field `backing` (planVarProperty), and it is static when the var is. An indexer
+// (IndexerToIl) has the types of its index parameters in `index`, which is empty for any other property,
+// and `cf` its `__get` (or `__set`).
 typedef PropertyPlan = {
 	cf:TClassField,
 	name:String,
 	sig:IlSigNorm,
+	index:Array<IlSigNorm>,
 	getBody:Null<MethodPlan>,
 	setBody:Null<MethodPlan>,
 	getter:Null<MethodPlan>,
@@ -215,8 +222,9 @@ class FieldAttrs {
 
 // A Haxe class as a TypeDef with its fields and methods. Every member is public, as gencs makes
 // them. Members come as instance fields, static fields, .ctor (for a class in gencs's model the
-// EmptyObject one first), the cast members of a generic class (CompanionToIl), instance methods,
-// ToString, the static constructors, static methods, each in declaration order, then Main() and .cctor.
+// EmptyObject one first), the cast members of a generic class (CompanionToIl), instance methods, the
+// reflection members, the indexers' accessors (IndexerToIl), ToString, the static constructors, static
+// methods, each in declaration order, then Main() and .cctor.
 
 class TclassToIl {
 	static final objectPath:IlPath = {ns: ["System"], nested: [], name: "Object"};
@@ -545,6 +553,12 @@ class TclassToIl {
 		for (m in casts) if (m.hasThis) methods.push(m);
 		for (cf in c.orderedFields) addMethod(cf, false, false);
 		for (r in ReflectionMembers.members(g, c)) methods.push(ReflectionMembers.plan(g, c, r));
+		// gencs's indexers, after the reflection members and before ToString.
+		var indexers = IndexerToIl.plan(g, c, methods);
+		for (p in indexers) {
+			if (p.getter != null) methods.push(p.getter);
+			if (p.setter != null) methods.push(p.setter);
+		}
 		var toString = isInterface ? null : c.fields.get("toString");
 		if (toString != null && wrapsToString(g, c, toString)) {
 			methods.push({
@@ -616,7 +630,7 @@ class TclassToIl {
 			initFlag: hasCctor && c.params.length > 0,
 			ctors: ctors,
 			emptyCtor: emptyCtor,
-			properties: staticProps.concat(props == null ? [] : props.list).concat(instanceProps),
+			properties: staticProps.concat(props == null ? [] : props.list).concat(instanceProps).concat(indexers),
 			token: 0
 		};
 	}
@@ -637,6 +651,7 @@ class TclassToIl {
 			cf: cf,
 			name: name,
 			sig: sig,
+			index: [],
 			getBody: null,
 			setBody: null,
 			getter: null,
@@ -1025,6 +1040,7 @@ class TclassToIl {
 				cf: e.v.cf,
 				name: name,
 				sig: sig,
+				index: [],
 				getBody: null,
 				setBody: null,
 				getter: null,
@@ -1176,7 +1192,7 @@ class TclassToIl {
 
 	// A type as the C# compiler names it in an explicit implementation's name: `pack.I`, its type
 	// arguments in angle brackets, a class's type parameters by name.
-	static function displayName(c:TClass, s:IlSigNorm):String {
+	public static function displayName(c:TClass, s:IlSigNorm):String {
 		return switch (s) {
 			case LClass(p, args) | LValueType(p, args):
 				var parts = p.ns.concat(p.nested);
@@ -1623,8 +1639,10 @@ class TclassToIl {
 				case _:
 			}
 		}
+		var indexer = false;
 		for (p in plan.properties) {
-			p.token = mb.property(plan.token, p.name, g.sigs.property(p.sig, p.isStatic != true));
+			if (p.name == IndexerToIl.itemName && p.index.length > 0) indexer = true;
+			p.token = mb.property(plan.token, p.name, g.sigs.property(p.sig, p.isStatic != true, p.index));
 			if (p.getter != null) mb.methodSemantics(SemanticsAttrs.GETTER, p.getter.token, p.token);
 			if (p.setter != null) mb.methodSemantics(SemanticsAttrs.SETTER, p.setter.token, p.token);
 			// Every Haxe use of get_X and set_X calls the public accessor, as gencs writes `o.X` and `o.X = v`.
@@ -1639,6 +1657,8 @@ class TclassToIl {
 				g.methodSigs.set(cf, {ret: pair.accessor.ret, args: pair.accessor.args});
 			}
 		}
+		// C#'s [DefaultMember("Item")] on a type that declares an indexer.
+		if (indexer) IndexerToIl.defaultMember(g, plan.token);
 	}
 
 	// A TypeDefOrRef coded index for a class signature.
@@ -1675,6 +1695,7 @@ class TclassToIl {
 			case MCast(_, _): m.name;
 			case MCompanionMember: m.name;
 			case MPropertyAccessor(_, _): m.name;
+			case MIndexer(_, _, _, _): m.name;
 		}
 	}
 
@@ -2061,6 +2082,8 @@ class TclassToIl {
 					throw "internal error: a companion member with a body";
 				case MPropertyAccessor(p, isSet):
 					if (p.backing != null) backingAccessorBody(g, plan, p, isSet, code) else accessorBody(p, isSet, code);
+				case MIndexer(get, set, isSet, explicit):
+					IndexerToIl.emit(g, plan, m, get, set, isSet, explicit, code);
 				case MEntryPoint:
 					var boot = g.bootInit();
 					if (boot != null) code.opToken(IlOps.CALL, boot, 0, 0);
