@@ -232,12 +232,12 @@ a static `@:property` var with get or set accessors,
 a .NET method, an overloaded method, a struct's method or a method reached through a `Dynamic`
 receiver as a delegate, and a .NET base class's non-virtual method or property implementing an
 interface method or property for a Haxe subclass (C# adds a forwarding stub there; a public virtual
-one works). Some interop is not written yet, with no error: attributes (`@:meta`, `@:strict`), events
-defined in Haxe (an `@:event` var's `add_` and `remove_` methods are compiled, but no event), and
-nullability metadata, so .NET reflection sees no attribute and no event. The next steps for the .NET
-generator bring these. Milestones 4a (referenced-assembly interop) and 4b (inline C#, gencs's indexers,
-`IntPtr` members, `CompilerGeneratedAttribute` on `@:property` vars) are done; 4c (attributes,
-nullability metadata, events, `@:nativeGen` details and embedded resources) is left.
+one works). Some interop is not written yet, with no error: events defined in Haxe (an `@:event` var's
+`add_` and `remove_` methods are compiled, but no event), and nullability metadata, so .NET reflection
+sees no event and no nullability. The next steps for the .NET generator bring these. Milestones 4a
+(referenced-assembly interop) and 4b (inline C#, gencs's indexers, `IntPtr` members,
+`CompilerGeneratedAttribute` on `@:property` vars) are done; 4c has begun with attributes (`@:meta`,
+`@:strict`), and nullability metadata, events, `@:nativeGen` details and embedded resources are left.
 A field-level `addMetadata` or `addTypePatch` aimed at a class the core types load before the init macros
 run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7 applies it; class-level
 metadata, such as an added `@:build`, is applied, though a late patch aimed at an abstract reaches its impl

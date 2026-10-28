@@ -83,6 +83,11 @@ class ModuleBuilder {
 		return token;
 	}
 
+	// Whether the assembly being written defines the type.
+	public function definesType(path:IlPath):Bool {
+		return typeDefs.exists(IlPaths.key(path));
+	}
+
 	public function setExtends(typeDefToken:Int, typeDefOrRef:Int):Void {
 		tables.typeDef[row(typeDefToken) - 1][3] = typeDefOrRef;
 	}
@@ -102,6 +107,11 @@ class ModuleBuilder {
 	// (a MethodDef or MemberRef token) and its value blob. The table is sorted when it is written.
 	public function customAttribute(parent:Int, ctor:Int, value:Bytes):Void {
 		tables.customAttribute.push([coded(T.IHasCustomAttribute, parent), coded(T.ICustomAttributeType, ctor), heaps.blobs.add(value)]);
+	}
+
+	// The Param row `method` (a MethodDef token) made for its parameter `index`, 0 for the first.
+	public function paramToken(method:Int, index:Int):Int {
+		return (T.IParam << 24) | (tables.methodDef[row(method) - 1][5] + index);
 	}
 
 	public function field(owner:Int, flags:Int, name:String, sig:Bytes):Int {
@@ -202,6 +212,25 @@ class ModuleBuilder {
 			tables.typeRef.push([scope, heaps.strings.add(path.name), heaps.strings.add(path.nested.length > 0 ? "" : path.ns.join("."))]);
 			r = (T.ITypeRef << 24) | tables.typeRef.length;
 			typeRefs.set(key, r);
+		}
+		return coded(T.ITypeDefOrRef, r);
+	}
+
+	// A TypeRef of a top-level type in the assembly `scope`, whatever externScope says defines it: the
+	// attributes the backend writes on its own are System.Runtime's (AttributesToIl.runtimeAttr). The TypeRef
+	// typeToken made already is reused when it has that scope.
+	public function typeTokenIn(path:IlPath, scope:AssemblyIdentity):Int {
+		var key = IlPaths.key(path);
+		var resolution = CodedIndex.resolutionScope(T.IAssemblyRef, assemblyRef(scope));
+		var r = typeRefs.get(key);
+		if (r != null && tables.typeRef[row(r) - 1][0] == resolution) return coded(T.ITypeDefOrRef, r);
+		var pinned = scope.name + "\n" + key;
+		r = typeRefs.get(pinned);
+		if (r == null) {
+			tables.typeRef.push([resolution, heaps.strings.add(path.name), heaps.strings.add(path.ns.join("."))]);
+			r = (T.ITypeRef << 24) | tables.typeRef.length;
+			typeRefs.set(pinned, r);
+			if (!typeRefs.exists(key)) typeRefs.set(key, r);
 		}
 		return coded(T.ITypeDefOrRef, r);
 	}

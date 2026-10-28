@@ -4,7 +4,7 @@ import haxe.Int64;
 import haxe.io.Bytes;
 
 // A growable little-endian byte buffer for metadata, signatures, IL and the PE image, with the
-// ECMA-335 II.23.2 compressed integers.
+// ECMA-335 II.23.2 compressed integers and II.23.3's SerString.
 
 class IlBytes {
 	var buf:Bytes;
@@ -79,6 +79,17 @@ class IlBytes {
 			u8((v >> 8) & 0xFF);
 			u8(v & 0xFF);
 		}
+	}
+
+	// A SerString (II.23.3): the UTF-8 bytes after their compressed length; 0xFF for null.
+	public function serString(s:Null<String>):Void {
+		if (s == null) {
+			u8(0xFF);
+			return;
+		}
+		var b = haxe.io.Bytes.ofString(s);
+		compressedU32(b.length);
+		bytes(b);
 	}
 
 	// The value's bits rotated left by one within the width, so the sign bit comes last.

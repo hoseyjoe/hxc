@@ -853,9 +853,16 @@ and `List` copy, and two threads casting one array at once.
    - **4c:** `@:nativeGen` details, attributes (`@:strict`, `@:meta`), nullability metadata for the AI
      tool schemas, events defined in Haxe (`@:event` vars), manifest resources (`-resource`,
      `Context.addResource`, `-D dotnet-embed`), milestone 4's exit below, and the carried items.
-     Attributes, nullability metadata and events are not written yet, with no error: hxc compiles the
-     class without them (an `@:event` var's `add_` and `remove_` methods are plain methods), where
-     gencs writes the attributes and a C# `event`, so .NET reflection sees no attribute and no event.
+     Attributes are written: each `@:meta` entry (StrictMeta rewrites `@:strict` into one, and its
+     `@:cs.assemblyStrict` into `@:cs.assemblyMeta`) is a CustomAttribute row on the member gencs's C# puts
+     it on, in meta order, with C#'s type lookup, constructor choice and Roslyn's blob, Type and enum names
+     assembly-qualified as Roslyn writes them (4c rulings 3 and 4). `@:meta` with several parameters or with
+     C# text, an attribute on a var that is not physical and an argument's `@:strict` are errors, where
+     gencs drops or misplaces them, and C#'s attribute errors (CS0579, CS0592, CS0246, CS0616, CS1503,
+     CS0182, CS0121) are `dotnet:` errors that name them. The attributes the backend writes itself come from
+     System.Runtime. Nullability metadata and events are not written yet, with no error: hxc compiles the
+     class without them (an `@:event` var's `add_` and `remove_` methods are plain methods), where gencs
+     writes a C# `event`, so .NET reflection sees no event.
      The carried items:
      - covariant-return `@:overload` overrides, and gencs's `T1` renaming of a shadowing method type
        parameter;

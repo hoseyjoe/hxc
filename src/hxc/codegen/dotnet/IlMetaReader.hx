@@ -708,10 +708,26 @@ class IlMetaReader {
 			case isig:
 				fixed.push(readInstance(isig));
 		}
-		var nnamed = readCompressedI32(c);
-		if (nnamed > 0) c.pos++;
-		// named arguments are not read
-		return {fixed: fixed, named: []};
+		// The named arguments (AttributeUsage's AllowMultiple, for AttributesToIl): FIELD 0x53 or PROPERTY 0x54,
+		// the type, the name and the value. They are read as far as they can be: an enum of another assembly,
+		// whose width is not known here, ends them.
+		var named:Array<NamedAttribute> = [];
+		try {
+			var nnamed = sreadUi16(c);
+			for (_ in 0...nnamed) {
+				var isProp = sreadUi8(c) == 0x54;
+				var t = readIlsig(c);
+				var name = readInlineStr(c).toString();
+				var inst = switch (t) {
+					case SVector(e):
+						var nelem = sreadRealI32(c);
+						nelem == -1 ? InstConstant(INull) : InstArray([for (_ in 0...nelem) readInstance(e)]);
+					case _: readInstance(t);
+				}
+				named.push({isProp: isProp, name: name, inst: inst});
+			}
+		} catch (_:Dynamic) {}
+		return {fixed: fixed, named: named};
 	}
 
 	function readCustomAttrIdx(ca:MetaCustomAttribute, attrType:ClrMeta, c:Cur):Void {

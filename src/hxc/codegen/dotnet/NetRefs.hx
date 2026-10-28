@@ -66,6 +66,16 @@ class NetRefs {
 		return "no referenced assembly defines the .NET type " + s + why;
 	}
 
+	// System.Runtime, which the attributes the backend writes on its own come from (AttributesToIl.runtimeAttr):
+	// a loaded library of that name, else the reference pack's; null when neither is there.
+	public function runtimeLibrary():Null<NetLibrary> {
+		for (lib in ctx.netLibs) if (fileName(lib.filePath).toLowerCase() == "system.runtime.dll") return lib;
+		var rp = referencePack();
+		if (rp == null) return null;
+		var f = rp + "/System.Runtime.dll";
+		return FileSystem.exists(f) ? read(f) : null;
+	}
+
 	function referencePack():Null<String> {
 		if (!packSearched) {
 			packSearched = true;

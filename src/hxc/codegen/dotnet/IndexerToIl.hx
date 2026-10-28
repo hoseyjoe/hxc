@@ -1,8 +1,9 @@
 package hxc.codegen.dotnet;
 
-import haxe.io.Bytes;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.codegen.dotnet.AttributesToIl.AttrType;
+import hxc.codegen.dotnet.AttributesToIl.AttrValue;
 import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.codegen.dotnet.IlCode;
@@ -30,8 +31,6 @@ import hxc.codegen.dotnet.TclassToIl;
 // accessor of the same signature implements it, virtual and sealed as C# makes it.
 class IndexerToIl {
 	public static inline final itemName = "Item";
-
-	static final defaultMemberPath:IlPath = {ns: ["System", "Reflection"], nested: [], name: "DefaultMemberAttribute"};
 
 	// The class's indexers, and its explicit implementation of its companion's, as PropertyPlans whose
 	// accessors (kind MIndexer) `planClass` adds to its methods. `methods` are the class's methods so far,
@@ -244,14 +243,8 @@ class IndexerToIl {
 
 	// [DefaultMember("Item")] on the TypeDef `token`, as C# puts it on a type that declares an indexer.
 	public static function defaultMember(g:DotnetCtx, token:Int):Void {
-		var ctor = g.mb.memberRef(g.typeTokenOf(LClass(defaultMemberPath, [])), ".ctor", g.sigs.method(true, LVoid, [LString], 0));
-		var b = new IlBytes();
-		b.u16(1);
-		var s = Bytes.ofString(itemName);
-		b.compressedU32(s.length);
-		b.bytes(s);
-		b.u16(0);
-		g.mb.customAttribute(token, ctor, b.getBytes());
+		var ctor = AttributesToIl.runtimeAttr(g, "System.Reflection", "DefaultMemberAttribute", [ATString]);
+		AttributesToIl.write(g, token, ctor, [AString(itemName)], []);
 	}
 
 	// An indexer's accessor (MIndexer), as C# compiles gencs's: `return this.__get(index);` and

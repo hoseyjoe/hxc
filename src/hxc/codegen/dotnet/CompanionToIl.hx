@@ -1,8 +1,8 @@
 package hxc.codegen.dotnet;
 
-import haxe.io.Bytes;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.codegen.dotnet.AttributesToIl.AttrValue;
 import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.codegen.dotnet.IlCode;
@@ -358,7 +358,8 @@ class CompanionToIl {
 	}
 
 	// What comes after the TypeDef rows are written: the companion's GenericInterface attribute, whose
-	// argument is `typeof(X<object…>)`, serialized by name as a System.Type argument is.
+	// argument is `typeof(X<object…>)`, serialized by name as a System.Type argument is: X`n[[System.Object,
+	// System.Runtime, …]], the type arguments assembly-qualified as Roslyn writes them.
 	public static function emit(g:DotnetCtx, c:TClass):Void {
 		var companion = g.companionPlans.get(c);
 		if (companion == null) return;
@@ -367,17 +368,10 @@ class CompanionToIl {
 		var ctor = null;
 		if (gaPlan != null) for (m in gaPlan.methods) if (m.name == ".ctor" && m.args.length == 1) ctor = m;
 		if (ctor == null) throw "internal error: haxe.lang.GenericInterface has no constructor";
-		var p = DotnetNames.typePath(TClassDecl(c));
-		var name = (p.ns.length > 0 ? p.ns.join(".") + "." : "") + p.name + "[" + [for (_ in c.params) "System.Object"].join(",") + "]";
-		var b = new IlBytes();
-		b.u16(1);
-		// An object parameter takes the argument's type first: 0x50, System.Type.
-		if (ctor.args[0].match(LObject)) b.u8(0x50);
-		var s = Bytes.ofString(name);
-		b.compressedU32(s.length);
-		b.bytes(s);
-		b.u16(0);
-		g.mb.customAttribute(companion.token, ctor.token, b.getBytes());
+		var name = AttributesToIl.serializedName(g, LClass(DotnetNames.typePath(TClassDecl(c)), [for (_ in c.params) LObject]));
+		var param = AttributesToIl.attrTypeOf(g, ctor.args[0]);
+		if (param == null) throw "internal error: haxe.lang.GenericInterface's constructor takes no Type";
+		AttributesToIl.write(g, companion.token, {token: ctor.token, params: [param]}, [AType(name)], []);
 	}
 
 	// The token code calls a class's or interface's `__hx_cast<…>` with (a MethodSpec of it gives the

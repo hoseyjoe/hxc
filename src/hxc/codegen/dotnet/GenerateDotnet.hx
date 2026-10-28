@@ -14,6 +14,10 @@ import hxc.codegen.dotnet.IlMeta.IlConstant;
 import hxc.codegen.dotnet.IlMeta.TableIdx;
 import hxc.codegen.dotnet.TclassToIl;
 
+// AttributesToIl's targets, written AttrTarget.TField: imported, its constructors would hide hxc.core.Type's
+// TType and TField.
+private typedef AttrTarget = AttributesToIl.AttrTarget;
+
 // The state of one generation: the module being built, member tokens keyed by field identity, and
 // what the stub rule recorded.
 class DotnetCtx {
@@ -40,8 +44,8 @@ class DotnetCtx {
 	public final records:Array<String> = [];
 	public var mainClass:Null<TClass> = null;
 	public var entryPoint = 0;
-	// The MemberRef of CompilerGeneratedAttribute's constructor, once a @:property var asks for it.
-	public var compilerGeneratedCtor = 0;
+	// AttributesToIl's state, made on first use.
+	public var attributes:Null<AttributesToIl> = null;
 	public var diagnostics = 0;
 	// gencommon's mk_temp counter, which numbers FixOverrides's `__temp_` parameters across the program.
 	public var tempCount = 0;
@@ -556,6 +560,12 @@ class GenerateDotnet {
 		for (c in g.companionOrder) CompanionToIl.emit(g, c);
 		EnumToIl.written(g);
 		for (i in 0...enums.length) writeEnum(g, enums[i], enumTokens[i]);
+		// The attribute rows, now that every constructor they name has its token.
+		for (p in plans) TclassToIl.writeAttributes(g, p);
+		for (i in 0...enums.length) {
+			var e = enums[i];
+			AttributesToIl.forMember(g, enumTokens[i], e.meta, AttrTarget.TClrEnum, e.pos, {name: e.path.name, ns: DotnetNames.typePath(TEnumDecl(e)).ns});
+		}
 		// GenericParam rows go in owner order, a TypeDef's before its methods'.
 		var generics = [];
 		for (p in plans) {

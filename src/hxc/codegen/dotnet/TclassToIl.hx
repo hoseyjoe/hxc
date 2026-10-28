@@ -1,7 +1,6 @@
 package hxc.codegen.dotnet;
 
 import haxe.ds.ObjectMap;
-import haxe.io.Bytes;
 import hxc.ast.Position;
 import hxc.core.Globals;
 import hxc.core.TexprTools;
@@ -17,6 +16,10 @@ import hxc.codegen.dotnet.IlCode;
 import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.ReflectionMembers;
 import hxc.codegen.dotnet.TexprToIl;
+
+// AttributesToIl's targets, written AttrTarget.TField: imported, its constructors would hide hxc.core.Type's
+// TType and TField.
+private typedef AttrTarget = AttributesToIl.AttrTarget;
 
 enum MethodKind {
 	MField(cf:TClassField);
@@ -1640,19 +1643,12 @@ class TclassToIl {
 				case _:
 			}
 		}
-		var indexer = false;
 		for (p in plan.properties) {
-			if (p.name == IndexerToIl.itemName && p.index.length > 0) indexer = true;
 			p.token = mb.property(plan.token, p.name, g.sigs.property(p.sig, p.isStatic != true, p.index));
 			// Roslyn marks an auto-property's backing field and both accessors CompilerGenerated.
 			if (p.backing != null) {
-				if (g.compilerGeneratedCtor == 0)
-					g.compilerGeneratedCtor = mb.memberRef(g.typeTokenOf(LClass({ns: ["System", "Runtime", "CompilerServices"], nested: [], name: "CompilerGeneratedAttribute"}, [])),
-						".ctor", g.sigs.method(true, LVoid, [], 0));
-				var blob = Bytes.ofHex("01000000");
-				mb.customAttribute(p.backing.token, g.compilerGeneratedCtor, blob);
-				mb.customAttribute(p.getter.token, g.compilerGeneratedCtor, blob);
-				mb.customAttribute(p.setter.token, g.compilerGeneratedCtor, blob);
+				var ctor = AttributesToIl.runtimeAttr(g, "System.Runtime.CompilerServices", "CompilerGeneratedAttribute", []);
+				for (token in [p.backing.token, p.getter.token, p.setter.token]) AttributesToIl.write(g, token, ctor, [], []);
 			}
 			if (p.getter != null) mb.methodSemantics(SemanticsAttrs.GETTER, p.getter.token, p.token);
 			if (p.setter != null) mb.methodSemantics(SemanticsAttrs.SETTER, p.setter.token, p.token);
@@ -1668,8 +1664,101 @@ class TclassToIl {
 				g.methodSigs.set(cf, {ret: pair.accessor.ret, args: pair.accessor.args});
 			}
 		}
-		// C#'s [DefaultMember("Item")] on a type that declares an indexer.
-		if (indexer) IndexerToIl.defaultMember(g, plan.token);
+	}
+
+	// The class's attribute rows, after every row they name exists (an attribute class's constructor may come
+	// later): the @:meta attributes where gencs's C# puts them (AttributesToIl), then C#'s
+	// [DefaultMember("Item")] on a type that declares an indexer, which Roslyn writes after the type's own.
+	// gencs puts an hxgen class's constructor's attributes on its (haxe.lang.EmptyObject) constructor, a
+	// @:property var's on its property, and a parameter's typedef's on the parameter; a generic interface's
+	// members that mention no type parameter are its companion's (CompanionToIl), and so are their
+	// attributes. The attributes of a var with no field or property are refused, where gencs's land on the
+	// next C# member, and so is an argument's @:strict, which gencs drops.
+	public static function writeAttributes(g:DotnetCtx, plan:ClassPlan):Void {
+		var c = plan.c;
+		var ns = plan.path.ns;
+		inline function site(name:String):AttributesToIl.AttrSite return {name: name, ns: ns};
+		var done = new ObjectMap<TClassField, Bool>();
+		if (c != null) {
+			var target = plan.flags & TypeAttrs.INTERFACE != 0 ? AttrTarget.TInterface : plan.isStruct ? AttrTarget.TStruct : AttrTarget.TType;
+			AttributesToIl.forMember(g, plan.token, c.meta, target, c.pos, site(c.path.name));
+			if (plan.emptyCtor != null && c.constructor != null)
+				AttributesToIl.forMember(g, plan.emptyCtor.token, c.constructor.meta, AttrTarget.TCtor, c.constructor.pos, site("new"));
+			inline function declares(cf:TClassField) return c.fields.get(cf.name) == cf || c.statics.get(cf.name) == cf;
+			for (f in plan.fields) if (f.cf != null && f.property == null && !done.exists(f.cf) && declares(f.cf)) {
+				done.set(f.cf, true);
+				AttributesToIl.forMember(g, f.token, f.cf.meta, AttrTarget.TField, f.cf.pos, site(f.cf.name));
+			}
+			for (p in plan.properties) if (p.index.length == 0 && !done.exists(p.cf) && declares(p.cf)) {
+				done.set(p.cf, true);
+				AttributesToIl.forMember(g, p.token, p.cf.meta, AttrTarget.TProperty, p.cf.pos, site(p.cf.name));
+			}
+		}
+		for (m in plan.methods) switch (m.kind) {
+			case MField(cf) if (!done.exists(cf)):
+				var isCtor = m.name == ".ctor";
+				if (isCtor && plan.emptyCtor != null) continue;
+				done.set(cf, true);
+				AttributesToIl.forMember(g, m.token, cf.meta, isCtor ? AttrTarget.TCtor : AttrTarget.TMethod, cf.pos, site(isCtor ? "new" : cf.name));
+				var args = signatureArgs(cf.type);
+				if (args != null) for (i in 0...args.length) {
+					var meta = typedefMeta(args[i].t);
+					if (meta.length > 0 && i < m.argNames.length)
+						AttributesToIl.forMember(g, g.mb.paramToken(m.token, i), meta, AttrTarget.TParam, cf.pos, site(args[i].name));
+				}
+			case _:
+		}
+		if (c != null) {
+			for (cf in c.orderedFields.concat(c.orderedStatics)) {
+				if (!cf.kind.match(Var(_)) || done.exists(cf) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
+				var m = TypeFunctions.getMetaOpt(":meta", cf.meta);
+				if (m == null) continue;
+				var accessor = switch (cf.kind) {
+					case Var(k) if (k.read != AccCall && k.write == AccCall): "set_" + cf.name;
+					case _: "get_" + cf.name;
+				}
+				g.error(cf.name + " has no field or property in .NET (it is not physical), so its @:meta has nothing to go on; put it on " + accessor
+					+ ", or make " + cf.name + " @:isVar or @:property", m.params.length > 0 ? m.params[0].pos : m.pos);
+			}
+			var fields = c.orderedFields.concat(c.orderedStatics);
+			if (c.constructor != null) fields.push(c.constructor);
+			for (cf in fields) for (f in [cf].concat(cf.overloads)) switch (f.expr) {
+				case {expr: TFunction(tf)}:
+					for (a in tf.args) for (m in a.v.meta) if (m.name == ":strict")
+						g.error("@:strict on a function argument is not written (gencs drops it too); put the attribute on a typedef of the argument's type",
+							m.params.length > 0 ? m.params[0].pos : m.pos);
+				case _:
+			}
+		}
+		for (p in plan.properties) if (p.name == IndexerToIl.itemName && p.index.length > 0) {
+			IndexerToIl.defaultMember(g, plan.token);
+			break;
+		}
+	}
+
+	// A method type's arguments, the typedefs in their types kept, or null.
+	static function signatureArgs(t:T):Null<Array<TSignatureArg>> {
+		while (true) switch (t) {
+			case TFun(sig): return sig.args;
+			case TLazy(f): t = TypeFunctions.lazyType(f);
+			case TMono(m) if (m.type != null): t = m.type;
+			case _: return null;
+		}
+	}
+
+	// The @:meta of each typedef a parameter's type goes through, outermost first, as gencs's argt_s writes
+	// them on the parameter.
+	static function typedefMeta(t:T):Array<hxc.ast.Ast.MetadataEntry> {
+		var r = [];
+		for (_ in 0...64) switch (t) {
+			case TType(td, _):
+				for (m in td.meta) if (m.name == ":meta") r.push(m);
+				t = TypeFunctions.followOnce(t);
+			case TLazy(f): t = TypeFunctions.lazyType(f);
+			case TMono(m) if (m.type != null): t = m.type;
+			case _: break;
+		}
+		return r;
 	}
 
 	// A TypeDefOrRef coded index for a class signature.
