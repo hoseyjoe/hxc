@@ -830,8 +830,8 @@ and `List` copy, and two threads casting one array at once.
      - ILVerify of the server DLL against the deployed assemblies gives only the line gencs's DLL gives
        (`haxe.lang.BoxedPointer`'s unmanaged pointer). The server app's own no-browser export check, run on
        gencs's DLL and on hxc's, prints the same results. The CLR shape of the 24 classes 4a measured and of
-       the AI tool models has the same members as gencs's; only their order differs, as hxc writes a
-       type's static members after its instance methods and gencs before them.
+       the AI tool models has the same members as gencs's; only their order differs (static members, a
+       recorded divergence in *Interop divergences from gencs*).
      - Known limit: a field-level `addMetadata`/`addTypePatch` aimed at a class the core types load before
        the init macros run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7
        applies it. Only class-level metadata (an added `@:build`) is applied late.
@@ -932,6 +932,10 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   compile: `CS1061` for the missing `__set`, `CS0535` for the missing implementation, and `CS0111: Type
   'IVec' already defines a member called 'this' with the same parameter types` where the companion also
   declares `__get` and `__set`.
+- Member order within a type: gencs writes the static members (`__hx_ctor_*`, static methods, `.cctor`, static
+  fields) right after the constructors, while hxc writes them after the instance methods, in the order milestone 3
+  pinned. The members and the instance methods' order are identical; only reflection's enumeration order can see
+  the difference. Matching gencs's order is an optional 4c item.
 
 ## Left to the builder
 
