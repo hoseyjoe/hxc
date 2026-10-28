@@ -105,13 +105,19 @@ private enum Applies {
 	AUnknown;
 }
 
-// A method `resolve` binds: the index of its link in the chain and in that class's methods.
-private typedef Bound = {link:Int, index:Int, typeArgs:Null<Array<IlSigNorm>>};
+// A method `resolve` binds: the index of its link in the chain and in that class's methods; `params`, its
+// parameters as `applies` compared them (with the call's and the inferred type arguments), null where it
+// may apply.
+private typedef Bound = {link:Int, index:Int, typeArgs:Null<Array<IlSigNorm>>, params:Null<Array<IlSigNorm>>};
 
 private enum Resolution {
 	RBound(b:Bound);
-	// More than one method applies.
+	// More than one method applies, and hxc cannot tell which one C# picks (C#'s betterness, which hxc models
+	// only for a null argument, `betterForNull`).
 	RAmbiguous;
+	// More than one method applies to a call with a null argument, and C# finds none of them better than every
+	// other one (CS0121, `betterForNull`).
+	RNullAmbiguous;
 	// Some method may apply, where hxc cannot tell; `candidates` methods apply or may apply.
 	RUnknown(candidates:Int);
 	RNone;
@@ -131,8 +137,9 @@ class ExternMembers {
 	// The namespaces of the program's classes and interfaces, and those enclosing them, dotted.
 	var compiledNamespaces:Null<Map<String, Bool>> = null;
 	// Set when ruling X decides a conversion by an argument's value rather than its type, for the note a
-	// refusal then carries (`byValueNote`).
+	// refusal then carries (`byValueNote`): `byValue` for an integer constant, `byNull` for a null literal.
 	var byValue = false;
+	var byNull = false;
 
 	public function new(ctx:Context, types:DotnetTypes) {
 		this.ctx = ctx;
@@ -344,19 +351,24 @@ class ExternMembers {
 		var overloaded = isOverloaded(c, cf, isStatic, isCtor);
 		// Ruling X: integer constants and null literals as gencs writes them. It casts the arguments of an
 		// @:overload extern to the declared types, which keeps a constant one and types a null; it writes a null
-		// into a value type as default(T).
+		// into a value type as default(T), System.Nullable<T> included, which C# binds by that type.
 		var kinds:Null<Array<ArgKind>> = call == null ? null : [
 			for (i in 0...want.length) {
 				var k = i < call.args.length ? argKind(call.args[i]) : KPlain;
-				k.match(KNull) && (overloaded || !takesNull(want[i])) ? KPlain : k;
+				k.match(KNull) && (overloaded || !takesNull(want[i]) || DotnetTypes.isSystemNullable(want[i])) ? KPlain : k;
 			}
 		];
 		byValue = false;
+		byNull = false;
 		var what = isCtor ? "constructor of " + typeS(start) : "overload of " + typeS(start) + "." + name;
 		inline function list(l:Array<IlSigNorm>) return "(" + [for (s in l) sigS(s)].join(", ") + ")";
 		var found = switch (resolve(links, name, isStatic, want, cf.params.length, caller, receiverStatic, candInst, kinds)) {
 			case RBound(b):
 				b;
+			case RNullAmbiguous:
+				throw Unsupported.error("more than one .NET " + what + " accepts " + list(want) + nullAmbiguousText);
+			case RAmbiguous if (hasNull(kinds)):
+				throw Unsupported.error("more than one .NET " + what + " accepts " + list(want) + nullUnknownText);
 			case RAmbiguous:
 				throw Unsupported.error("more than one .NET " + what + " accepts " + list(want) + byValueNote());
 			case RUnknown(1):
@@ -384,12 +396,13 @@ class ExternMembers {
 				// Ruling F′: both bind the same method; its type arguments are the arguments' own, as C# infers
 				// them, and `bound` checks the return with them.
 				byValue = false;
+				byNull = false;
 				switch (resolve(links, name, isStatic, byArgs, cf.params.length, caller, receiverStatic, candInst, kinds)) {
 					case RBound(b) if (b.link == found.link && b.index == found.index):
 						found = b;
 					case _:
 						throw Unsupported.error("the .NET " + what + " depends on the argument types " + list(byArgs)
-							+ (byValue ? ", and " + byValueText : "; declare it with @:overload"));
+							+ (byValue ? ", and " + byValueText : byNull ? ", and " + byNullText : "; declare it with @:overload"));
 				}
 			}
 		}
@@ -398,10 +411,19 @@ class ExternMembers {
 	}
 
 	static final byValueText = "C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload";
+	// For a null, the declared type does not help: gencs writes `null` whatever it is. A typed variable does, which
+	// gencs passes as itself and C# binds by its type, and so does @:overload, whose arguments gencs casts.
+	static final byNullText = "C# converts a null argument to every reference type and Nullable<T>; pass a variable of the parameter's type, or use @:overload";
+	static final nullAmbiguousText = ", and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload";
+	static final nullUnknownText = ", and hxc cannot tell which one C# picks for a null argument; pass a variable of the parameter's type, or use @:overload";
 
 	// The note a refusal carries when ruling X decided a conversion by an argument's value.
 	function byValueNote():String {
-		return byValue ? " (" + byValueText + ")" : "";
+		return byValue ? " (" + byValueText + ")" : byNull ? " (" + byNullText + ")" : "";
+	}
+
+	static function hasNull(kinds:Null<Array<ArgKind>>):Bool {
+		return kinds != null && Lambda.exists(kinds, k -> k.match(KNull));
 	}
 
 	// How C# sees the argument `e` besides its type (ruling X): the null literal, or an integer constant (an Int
@@ -465,7 +487,7 @@ class ExternMembers {
 	function convertsArg(k:ArgKind, from:IlSigNorm, to:IlSigNorm):Applies {
 		switch (k) {
 			case KNull:
-				byValue = true;
+				byNull = true;
 				return switch (norm(to)) {
 					case _ if (takesNull(to)): AYes;
 					case LPointer(_) | LTypeParam(_) | LMethodTypeParam(_): AUnknown;
@@ -691,7 +713,7 @@ class ExternMembers {
 				}
 				var a = applies(m, link, want, typeParams, isStatic, inst, kinds, closed);
 				if (a.applies == ANo) continue;
-				var b:Bound = {link: li, index: idx, typeArgs: a.typeArgs};
+				var b:Bound = {link: li, index: idx, typeArgs: a.typeArgs, params: a.params};
 				if (isProtected && !protectedOk(caller, link.cls.cpath, receiverStatic, isStatic)) unknown++;
 				else if (a.applies == AUnknown) unknown++;
 				else {
@@ -702,9 +724,60 @@ class ExternMembers {
 			if (exact.length == 1) return RBound(exact[0]);
 			if (yes.length == 1 && unknown == 0) return RBound(yes[0]);
 			if (unknown > 0) return RUnknown(unknown + yes.length);
-			if (yes.length > 1) return RAmbiguous;
+			if (yes.length > 1) return betterForNull(yes, want.length, kinds);
 		}
 		return RNone;
+	}
+
+	// Ruling Z: C#'s betterness (C# 12.6.4) among the methods `yes` that apply to a call with a null literal
+	// argument, where gencs writes the bare `null` and C# finds the better parameter type there: T1 is better
+	// than T2 when T1 converts implicitly to T2 and T2 does not to T1, as a null matches neither exactly. A
+	// method better than every other one binds; one is better than another when no given argument's position
+	// is worse and one is better (the leftover parameters, omitted optionals and params, are not compared, as in
+	// C#). Positions where the two take the same type are neutral. hxc does not model C#'s betterness for a
+	// typed argument, so one whose parameters differ cannot be decided, nor can a conversion `converts` calls
+	// unknown. RNullAmbiguous where every comparison that matters is decided and no method is better than every
+	// other one (CS0121); RAmbiguous where one is undecidable, or the call has no null argument.
+	function betterForNull(yes:Array<Bound>, wantLength:Int, kinds:Null<Array<ArgKind>>):Resolution {
+		if (!hasNull(kinds) || Lambda.exists(yes, b -> b.params == null)) return RAmbiguous;
+		// Whether `c` is better than `o`: yes, no, or null where hxc cannot tell.
+		function beats(c:Array<IlSigNorm>, o:Array<IlSigNorm>):Null<Bool> {
+			var strict = false, unknown = false;
+			for (i in 0...wantLength) {
+				var pc = norm(c[i]), po = norm(o[i]);
+				if (IlPaths.sigEq(pc, po)) continue;
+				if (i >= kinds.length || !kinds[i].match(KNull)) {
+					unknown = true;
+					continue;
+				}
+				var cToO = converts(pc, po), oToC = converts(po, pc);
+				if (cToO == AUnknown || oToC == AUnknown) {
+					unknown = true;
+					continue;
+				}
+				// `o`'s parameter is the better one here: `c` is worse, so not better than `o`.
+				if (oToC == AYes && cToO == ANo) return false;
+				if (cToO == AYes && oToC == ANo) strict = true;
+			}
+			return unknown ? null : strict;
+		}
+		var best = [], undecided = false;
+		for (c in yes) {
+			var all:Null<Bool> = true;
+			for (o in yes) {
+				if (o == c) continue;
+				var r = beats(c.params, o.params);
+				if (r == false) {
+					all = false;
+					break;
+				}
+				if (r == null) all = null;
+			}
+			if (all == true) best.push(c);
+			if (all == null) undecided = true;
+		}
+		if (best.length == 1) return RBound(best[0]);
+		return undecided ? RAmbiguous : RNullAmbiguous;
 	}
 
 	// An override, which C# looks for where the method was first declared.
@@ -756,8 +829,9 @@ class ExternMembers {
 	// `closed`: the links' type arguments are the receiver's own (inline C#, `bindCs`), which a static
 	// method's parameters take too, rather than the converter's erasure.
 	function applies(m:IlMethod, link:{cls:IlClass, parent:IlSigNorm}, want:Array<IlSigNorm>, typeParams:Int, isStatic:Bool,
-			inst:Null<Inst>, kinds:Null<Array<ArgKind>>, closed = false):{applies:Applies, typeArgs:Null<Array<IlSigNorm>>, exact:Bool} {
-		var no = {applies: ANo, typeArgs: null, exact: false};
+			inst:Null<Inst>, kinds:Null<Array<ArgKind>>, closed = false):{applies:Applies, typeArgs:Null<Array<IlSigNorm>>, exact:Bool,
+				params:Null<Array<IlSigNorm>>} {
+		var no = {applies: ANo, typeArgs: null, exact: false, params: null};
 		inline function kind(i:Int) return kinds == null || i >= kinds.length ? KPlain : kinds[i];
 		var args = linkArgs(link);
 		var n = m.margs.length;
@@ -769,12 +843,18 @@ class ExternMembers {
 		var result = AYes;
 		if (m.mtypes.length != typeParams) {
 			if (typeParams != 0) return no;
+			// Ruling Z (d): C# infers a type parameter only from a typed argument (or a lambda or method group,
+			// which neither an extern call nor inline C# passes), so one that occurs only at null positions, or at
+			// none of the given ones, fails its inference and the method does not apply.
+			for (j in 0...m.mtypes.length)
+				if (!Lambda.exists([for (i in 0...want.length) i], i -> i < n && !kind(i).match(KNull) && mentionsMethodParam(got[i], j)))
+					return no;
 			typeArgs = inferTypeArgs(m, got, [for (i in 0...want.length) kind(i).match(KNull) ? null : want[i]]);
 			if (typeArgs == null) {
 				// Positions without the method's type parameters may still rule it out.
 				for (i in 0...want.length)
 					if (i < n && !hasMethodParam(got[i]) && convertsArg(kind(i), want[i], got[i]) == ANo) return no;
-				return {applies: AUnknown, typeArgs: null, exact: false};
+				return {applies: AUnknown, typeArgs: null, exact: false, params: null};
 			}
 			got = [for (s in got) DotnetTypes.substitute(s, [], typeArgs)];
 		}
@@ -799,7 +879,7 @@ class ExternMembers {
 		if (result == ANo) return no;
 		var exact = result == AYes && typeArgs == null && want.length == n && IlPaths.sigsEq(got, want)
 			&& !Lambda.exists([for (i in 0...want.length) i], i -> kind(i).match(KNull));
-		return {applies: result, typeArgs: typeArgs, exact: exact};
+		return {applies: result, typeArgs: typeArgs, exact: exact, params: got};
 	}
 
 	// `s` with the call's type arguments `inst`, the method's own ones when `withMethod`.
@@ -813,6 +893,17 @@ class ExternMembers {
 			case LPointer(t) | LManagedPointer(t) | LVector(t) | LArray(t, _): hasMethodParam(t);
 			case LValueType(_, l) | LClass(_, l): Lambda.exists(l, hasMethodParam);
 			case LMethod(_, r, l): hasMethodParam(r) || Lambda.exists(l, hasMethodParam);
+			case _: false;
+		}
+	}
+
+	// Whether `s` mentions the method type parameter `j`.
+	static function mentionsMethodParam(s:IlSigNorm, j:Int):Bool {
+		return switch (s) {
+			case LMethodTypeParam(i): i == j;
+			case LPointer(t) | LManagedPointer(t) | LVector(t) | LArray(t, _): mentionsMethodParam(t, j);
+			case LValueType(_, l) | LClass(_, l): Lambda.exists(l, a -> mentionsMethodParam(a, j));
+			case LMethod(_, r, l): mentionsMethodParam(r, j) || Lambda.exists(l, a -> mentionsMethodParam(a, j));
 			case _: false;
 		}
 	}
@@ -896,9 +987,10 @@ class ExternMembers {
 	// identity, a reference upcast along the metadata's superclasses and interfaces, anything to object,
 	// boxing to a superclass or interface of the value type, the implicit numeric conversions between
 	// primitives, and A to Nullable<A>; a Haxe-compiled class as ruling J says. Unknown where hxc does
-	// not model C#'s rules: Span and ReadOnlySpan, decimal, nint and nuint, Nullable<B> from another type,
-	// a type declaring op_Implicit, an array to a generic interface or another array, and a variant
-	// generic target. A by-reference type converts by identity only.
+	// not model C#'s rules: Span and ReadOnlySpan, decimal, nint and nuint, Nullable<B> from a value type, a
+	// user-defined conversion that may apply (`implicitMayReach`), an array to a generic interface or another
+	// array, and a variant generic target. A reference type converts to Nullable<B> only by a user-defined
+	// conversion (ruling Z). A by-reference type converts by identity only.
 	function converts(from:IlSigNorm, to:IlSigNorm):Applies {
 		from = norm(from);
 		to = norm(to);
@@ -927,6 +1019,8 @@ class ExternMembers {
 		if (widens(from, to)) return AYes;
 		if (DotnetTypes.isSystemNullable(to)) return switch (to) {
 			case LValueType(_, [a]) if (IlPaths.sigEq(from, norm(a))): AYes;
+			// Ruling Z (b): a reference type converts to Nullable<T> only by a user-defined conversion.
+			case LValueType(_, [a]) if (isReference(from) && !implicitMayReach(norm(a), to) && !implicitMayReach(from, to)): ANo;
 			case _: AUnknown;
 		}
 		if (from.match(LTypeParam(_) | LMethodTypeParam(_))) return ANo;
@@ -943,8 +1037,71 @@ class ExternMembers {
 			case _:
 		}
 		if (to.match(LClass(_, _)) && reaches(from, to)) return AYes;
-		if (isVariant(to) || declaresImplicit(from) || declaresImplicit(to)) return AUnknown;
+		if (isVariant(to) || implicitMayReach(from, to) || implicitMayReach(to, to)) return AUnknown;
 		return r;
+	}
+
+	// A reference type's signature: object, string, a class or interface, or an array.
+	static function isReference(s:IlSigNorm):Bool {
+		return s.match(LObject | LString | LClass(_, _) | LVector(_) | LArray(_, _));
+	}
+
+	// Whether a user-defined implicit conversion that `s`'s .NET class or a superclass declares (or, for a
+	// Nullable<S>, S's, which C# lifts) may convert to `to`: one whose result may convert to `to` by a standard
+	// conversion (`standardMayReach`).
+	function implicitMayReach(s:IlSigNorm, to:IlSigNorm):Bool {
+		switch (s) {
+			case LValueType(_, [a]) if (DotnetTypes.isSystemNullable(s) && implicitMayReach(norm(a), to)):
+				return true;
+			case _:
+		}
+		var cls = classOf(s);
+		var args = switch (s) {
+			case LClass(_, l) | LValueType(_, l): l;
+			case _: [];
+		}
+		for (_ in 0...64) {
+			if (cls == null) return false;
+			for (m in cls.cmethods) if (m.mname == "op_Implicit" && standardMayReach(subst(m.mret.snorm, args), to)) return true;
+			if (cls.csuper == null) return false;
+			// A superclass's result is in terms of its own type parameters, which `standardMayReach` takes as
+			// anything.
+			args = [];
+			cls = classOf(cls.csuper.snorm);
+		}
+		return false;
+	}
+
+	// Whether a `from` may convert to `to` by a standard implicit conversion, where hxc can rule it out: a value
+	// type converts to a reference type only by boxing (to object, System.ValueType, System.Enum or an
+	// interface), and to a value type only by identity, a numeric widening, or wrapping into a Nullable; a ref
+	// struct (Span) not even by boxing, though hxc does not rule that out for an interface. A reference type,
+	// or a type mentioning a type parameter, may convert to anything here.
+	function standardMayReach(from:IlSigNorm, to:IlSigNorm):Bool {
+		from = norm(from);
+		to = norm(to);
+		if (IlPaths.sigEq(from, to) || hasTypeParam(from) || hasTypeParam(to) || !DotnetTypes.isValueType(from)) return true;
+		inline function unmodelled(s:IlSigNorm)
+			return s.match(LIntPtr | LUIntPtr) || isSystemNamed(s, "Decimal") || isSystemNamed(s, "Span`1") || isSystemNamed(s, "ReadOnlySpan`1");
+		if (unmodelled(to)) return true;
+		if (to.match(LObject) || isSystemNamed(to, "ValueType") || isSystemNamed(to, "Enum") || isInterface(to)) return true;
+		if (DotnetTypes.isSystemNullable(to)) return switch (to) {
+			case LValueType(_, [a]): DotnetTypes.isSystemNullable(from) || standardMayReach(from, a);
+			case _: true;
+		}
+		if (!DotnetTypes.isValueType(to)) return false;
+		return widens(from, to) || from.match(LIntPtr | LUIntPtr) || isSystemNamed(from, "Decimal");
+	}
+
+	// Whether `s` mentions a class's or a method's type parameter.
+	static function hasTypeParam(s:IlSigNorm):Bool {
+		return switch (s) {
+			case LTypeParam(_) | LMethodTypeParam(_): true;
+			case LPointer(t) | LManagedPointer(t) | LVector(t) | LArray(t, _): hasTypeParam(t);
+			case LValueType(_, l) | LClass(_, l): Lambda.exists(l, hasTypeParam);
+			case LMethod(_, r, l): hasTypeParam(r) || Lambda.exists(l, hasTypeParam);
+			case _: false;
+		}
 	}
 
 	// A type of the program being compiled (no referenced assembly defines it), but haxe.lang.Null<T>.
@@ -1015,18 +1172,6 @@ class ExternMembers {
 		var cls = classOf(s);
 		if (cls == null) return false;
 		for (tp in cls.ctypes) if (tp.tflags.variance != VNone) return true;
-		return false;
-	}
-
-	// Whether `s`'s .NET class or a superclass declares a user-defined implicit conversion.
-	function declaresImplicit(s:IlSigNorm):Bool {
-		var cls = classOf(s);
-		for (_ in 0...64) {
-			if (cls == null) return false;
-			for (m in cls.cmethods) if (m.mname == "op_Implicit") return true;
-			if (cls.csuper == null) return false;
-			cls = classOf(cls.csuper.snorm);
-		}
 		return false;
 	}
 
@@ -1590,9 +1735,16 @@ class ExternMembers {
 		if (!Lambda.exists(links, l -> Lambda.exists(l.cls.cmethods, m -> m.mname == name))) return null;
 		var receiver:Null<Receiver> = isStatic ? null : {cls: null, opaque: true};
 		byValue = false;
+		byNull = false;
 		var list = "(" + [for (i in 0...args.length) argKinds[i].match(KNull) ? "null" : sigS(args[i])].join(", ") + ")";
 		var found:Bound = switch (resolve(links, name, isStatic, args, 0, null, receiver, null, argKinds, true)) {
 			case RBound(b): b;
+			case RNullAmbiguous:
+				fail("more than one .NET " + what + " accepts " + list
+					+ ", and for a null argument C# finds none of them better than the others (C# error CS0121); cast the null to the parameter's type");
+			case RAmbiguous if (hasNull(argKinds)):
+				fail("more than one .NET " + what + " accepts " + list
+					+ ", and hxc cannot tell which one C# picks for a null argument; cast the null to the parameter's type");
 			case RAmbiguous: fail("more than one .NET " + what + " accepts " + list);
 			case RUnknown(1):
 				fail("hxc cannot tell whether the .NET " + (isCtor ? "constructor of " + sigS(recv) : "method " + sigS(recv) + "." + name) + " accepts "

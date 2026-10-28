@@ -17337,48 +17337,179 @@ class P {
 ===
 [compile]
 P.hx:6: characters 9-19 : dotnet: more than one .NET overload of ValLib.ByVal.S may accept (int) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
-# Ruling X: a null literal converts to every reference type and is never an exact match, so N(null) declared Dynamic
-# takes both N(Thing) and N(object), and C# (gencs) binds N(Thing): refused. hxc bound N(object) before.
---- netlib-extern-null-to-class-or-object-refused @netlib
+# Ruling Z: gencs writes a null into a reference-typed parameter as the literal `null`, so C# picks among the
+# applicable overloads by betterness: at a null position T1 is the better parameter type when T1 converts implicitly
+# to T2 and T2 does not to T1; an overload better than every other one binds. S2(string)/S2(object): string
+# (declared String or Dynamic alike); H(NBase)/H(NDerived)/H(object): NDerived; I(IDisposable)/I(object):
+# IDisposable; T2(string,string)/T2(object,object) with two nulls: both strings; U(string,int)/U(object,int) with
+# (null, 5): the typed position is the same type in both; X(string,string)/X(Thing,object): string and Thing are
+# neither better at the first null, string is at the second, so X(string,string) is better; Q(string)/Q(object,
+# int x = 0): only the given argument counts; a constructor alike. ByVal's N(null), P(null) and a padded O(1) bind
+# as C# does: N(Thing), P(params object[]) with a null array, O(int,Thing). hxc refused all 12 before.
+--- netlib-extern-null-betterness @gencs @netlib
+@:native("ValLib.ByNull") extern class ByNull {
+	static function S2(s:String):String;
+	@:native("S2") static function S2D(x:Dynamic):String;
+	static function H(x:Dynamic):String;
+	static function I(x:Dynamic):String;
+	static function T2(a:String, b:String):String;
+	static function U(a:String, b:Int):String;
+	static function X(a:Dynamic, b:Dynamic):String;
+	static function Q(s:String):String;
+}
+@:native("ValLib.NCtor") extern class NCtor {
+	function new(s:String):Void;
+	var Which:String;
+}
 @:native("ValLib.ByVal") extern class ByVal {
 	static function N(x:Dynamic):String;
-}
-class P {
-	static function main() {
-		trace(ByVal.N(null));
-	}
-}
-===
-[compile]
-P.hx:6: characters 9-22 : dotnet: more than one .NET overload of ValLib.ByVal.N accepts (object) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
-# Ruling X: a null literal converts to a params array in its normal form, so P(null) takes both P(params object[])
-# and P(object), and C# (gencs) binds P(params) with a null array: refused. hxc bound P(object) before.
---- netlib-extern-null-to-params-or-object-refused @netlib
-@:native("ValLib.ByVal") extern class ByVal {
 	static function P(x:Dynamic):String;
-}
-class P {
-	static function main() {
-		trace(ByVal.P(null));
-	}
-}
-===
-[compile]
-P.hx:6: characters 9-22 : dotnet: more than one .NET overload of ValLib.ByVal.P accepts (object) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
-# Ruling X: the null the typer pads a left-out optional argument with is a null literal in gencs's C#, so O(1) takes
-# both O(int, Thing) and O(int, object), and C# (gencs) binds O(int, Thing): refused. hxc bound O(int, object) before.
---- netlib-extern-padded-optional-null-refused @netlib
-@:native("ValLib.ByVal") extern class ByVal {
 	static function O(a:Int, ?o:Dynamic):String;
 }
 class P {
 	static function main() {
+		trace(ByNull.S2(null));
+		trace(ByNull.S2D(null));
+		trace(ByNull.H(null));
+		trace(ByNull.I(null));
+		trace(ByNull.T2(null, null));
+		trace(ByNull.U(null, 5));
+		trace(ByNull.X(null, null));
+		trace(ByNull.Q(null));
+		trace(new NCtor(null).Which);
+		trace(ByVal.N(null));
+		trace(ByVal.P(null));
 		trace(ByVal.O(1));
 	}
 }
 ===
+[run]
+P.hx:22: S2(string)
+P.hx:23: S2(string)
+P.hx:24: H(NDerived)
+P.hx:25: I(IDisposable)
+P.hx:26: T2(string,string)
+P.hx:27: U(string,int 5)
+P.hx:28: X(string,string)
+P.hx:29: Q(string)
+P.hx:30: NCtor(string)
+P.hx:31: N(Thing)
+P.hx:32: P(params null)
+P.hx:33: O(int,Thing)
+# Ruling Z where the comparison needs what ExternMembers.converts learnt for it: a reference type converts to no
+# Nullable<T> unless a user-defined conversion may apply (object to int? does not, so N2(int?) beats N2(object)), and
+# a generic method whose type parameter a null gives no type argument does not apply, as C#'s inference fails
+# (G<T>(T) with G(string)). hxc refused both before.
+--- netlib-extern-null-betterness-conversions @gencs @netlib
+@:native("ValLib.ByNull") extern class ByNull {
+	static function N2(x:Dynamic):String;
+	static function G(s:String):String;
+}
+class P {
+	static function main() {
+		trace(ByNull.N2(null));
+		trace(ByNull.G(null));
+	}
+}
+===
+[run]
+P.hx:7: N2(int?)
+P.hx:8: G(string)
+# Ruling Z where the comparison needs a conversion hxc does not model yet, so it cannot tell what C# picks and
+# refuses where gencs's C# compiles: Nullable<A> to Nullable<B> (int? to long? converts, so C# binds N3(int?) over
+# N3(long?)), and array covariance (string[] to object[] converts, so C# binds P2(params string[]) over
+# P2(params object[]) in their normal forms, with a null array).
+--- netlib-extern-null-betterness-unmodelled-refused @netlib
+@:native("ValLib.ByNull") extern class ByNull {
+	@:native("N3") static function N3D(x:Dynamic):String;
+	static function P2(a:cs.NativeArray<String>):String;
+}
+class P {
+	static function main() {
+		trace(ByNull.N3D(null));
+		trace(ByNull.P2(null));
+	}
+}
+===
 [compile]
-P.hx:6: characters 9-19 : dotnet: more than one .NET overload of ValLib.ByVal.O accepts (int, object) (C# converts an integer constant or null argument by its value; declare the parameter's exact type, or use @:overload)
+P.hx:7: characters 9-25 : dotnet: more than one .NET overload of ValLib.ByNull.N3 accepts (object), and hxc cannot tell which one C# picks for a null argument; pass a variable of the parameter's type, or use @:overload
+P.hx:8: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.P2 accepts (string[]), and hxc cannot tell which one C# picks for a null argument; pass a variable of the parameter's type, or use @:overload
+# A null into a declared Nullable<T> is no null literal in gencs's C#: gencs writes a null into a value type as
+# default(T), here `N4(default(global::System.Nullable<int>))`, so C# binds by the type int?, exactly. hxc took it
+# for a null literal, which applies to every reference type too, and refused all three before.
+--- netlib-extern-null-to-declared-nullable @gencs @netlib
+import cs.system.Nullable_1;
+@:native("ValLib.ByNull") extern class ByNull {
+	static function N4(x:Nullable_1<Int>):String;
+	static function N3(x:Nullable_1<Int>):String;
+	static function N2(x:Nullable_1<Int>):String;
+}
+class P {
+	static function main() {
+		trace(ByNull.N4(null));
+		trace(ByNull.N3(null));
+		trace(ByNull.N2(null));
+	}
+}
+===
+[run]
+P.hx:9: N4(int?)
+P.hx:10: N3(int?)
+P.hx:11: N2(int?)
+# The same mistake the other way: R takes only a string, and the extern declares Nullable<Int>. gencs's C# fails
+# (CS1503: Argument 1: cannot convert from 'int?' to 'string'), as R(default(int?)) has no conversion; hxc refuses
+# it as for any declared type no overload takes. hxc bound R(string) and passed a null before.
+--- netlib-extern-null-to-declared-nullable-mismatch-is-an-error @netlib
+import cs.system.Nullable_1;
+@:native("ValLib.ByVal") extern class ByVal {
+	static function R(x:Nullable_1<Int>):String;
+}
+class P {
+	static function main() {
+		trace(ByVal.R(null));
+	}
+}
+===
+[compile]
+P.hx:7: characters 9-22 : dotnet: no .NET overload of ValLib.ByVal.R takes (System.Nullable<int>)
+# Ruling Z: where no overload is better than every other one for a null, C# reports CS0121 and gencs's C# does not
+# compile: two unrelated reference types S3(string)/S3(Thing), declared String or Dynamic; two siblings each better
+# than object H2(NDerived)/H2(NDerivedB)/H2(object); two nulls each better in one position T(string,object)/
+# T(object,string); Nullable<int> and string N4; Nullable<int> and a params array NP. gencs: "error CS0121: The call
+# is ambiguous between the following methods or properties: 'ValLib.ByNull.S3(string)' and
+# 'ValLib.ByNull.S3(ValLib.Thing)'", and likewise for each line. A lasting error. Where a comparison is undecidable,
+# the text says hxc cannot tell: V(string,object)/V(object,string) with (null, "s"), whose typed position differs
+# (hxc does not model C#'s betterness for a typed argument).
+--- netlib-extern-null-ambiguous-is-an-error @netlib
+@:native("ValLib.ByNull") extern class ByNull {
+	static function S3(s:String):String;
+	@:native("S3") static function S3D(x:Dynamic):String;
+	static function H2(x:Dynamic):String;
+	static function T(a:Dynamic, b:Dynamic):String;
+	static function V(a:Dynamic, b:String):String;
+	static function N4(x:Dynamic):String;
+	static function NP(x:Dynamic):String;
+}
+class P {
+	static function main() {
+		trace(ByNull.S3(null));
+		trace(ByNull.S3D(null));
+		trace(ByNull.H2(null));
+		trace(ByNull.T(null, null));
+		trace(ByNull.V(null, "s"));
+		trace(ByNull.N4(null));
+		trace(ByNull.NP(null));
+	}
+}
+===
+[compile]
+P.hx:12: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.S3 accepts (string), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:13: characters 9-25 : dotnet: more than one .NET overload of ValLib.ByNull.S3 accepts (object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:14: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.H2 accepts (object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:15: characters 9-29 : dotnet: more than one .NET overload of ValLib.ByNull.T accepts (object, object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:16: characters 9-28 : dotnet: more than one .NET overload of ValLib.ByNull.V accepts (object, string), and hxc cannot tell which one C# picks for a null argument; pass a variable of the parameter's type, or use @:overload
+P.hx:17: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.N4 accepts (object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
+P.hx:18: characters 9-24 : dotnet: more than one .NET overload of ValLib.ByNull.NP accepts (object), and for a null argument C# finds none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's type, or use @:overload
 # Ruling X for a constructor: new ByValCtor(5) takes both ByValCtor(byte) and ByValCtor(object), and C# (gencs) binds
 # ByValCtor(byte): refused. hxc bound ByValCtor(object) before.
 --- netlib-extern-int-constant-constructor-refused @netlib
@@ -18515,6 +18646,45 @@ class P {
 304 102 506
 set 7,8=9
 23 23 b
+# Ruling Z in inline C#: a null literal argument binds by C#'s betterness, as for an extern (the C# text is the
+# user's, so a null there is always a null literal): S2(string) over S2(object), the most derived H(NDerived),
+# N2(int?) over N2(object), whose null is the Nullable's default, G(string) as a null gives G<T>(T) no type argument,
+# P(params object[]) with a null array, and X(string,string). A cast null is typed, so S3((string)null) binds
+# S3(string).
+--- inline-cs-null-betterness @gencs @netlib
+class P {
+	static function main() {
+		Sys.println(cs.Syntax.code("ValLib.ByNull.S2(null)"));
+		Sys.println(cs.Syntax.code("ValLib.ByNull.H(null)"));
+		Sys.println(cs.Syntax.code("ValLib.ByNull.N2(null)"));
+		Sys.println(cs.Syntax.code("ValLib.ByNull.G(null)"));
+		Sys.println(cs.Syntax.code("ValLib.ByVal.P(null)"));
+		Sys.println(cs.Syntax.code("ValLib.ByNull.X(null, null)"));
+		Sys.println(cs.Syntax.code("ValLib.ByNull.S3((string)null)"));
+	}
+}
+===
+[run]
+S2(string)
+H(NDerived)
+N2(int?)
+G(string)
+P(params null)
+X(string,string)
+S3(string)
+# Ruling Z in inline C#: where C# finds no overload better than every other one for a null, the user's C# fails
+# (CS0121), and where hxc cannot tell (a typed argument whose parameters differ), it refuses too.
+--- inline-cs-null-ambiguous-is-an-error @netlib
+class P {
+	static function main() {
+		Sys.println(cs.Syntax.code("ValLib.ByNull.S3(null)"));
+		Sys.println(cs.Syntax.code("ValLib.ByNull.V(null, \"s\")"));
+	}
+}
+===
+[compile]
+P.hx:3: characters 15-55 : dotnet: more than one .NET overload of ValLib.ByNull.S3 accepts (null), and for a null argument C# finds none of them better than the others (C# error CS0121); cast the null to the parameter's type
+P.hx:4: characters 15-61 : dotnet: more than one .NET overload of ValLib.ByNull.V accepts (null, string), and hxc cannot tell which one C# picks for a null argument; cast the null to the parameter's type
 # The server app's four reachable patterns, as written there.
 --- inline-cs-serverapp-patterns @gencs @netlib
 // The server app's inline C# shapes, unchanged: a bare `throw` after cleanup in a catch of cs.system.Exception,

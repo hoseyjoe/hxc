@@ -130,11 +130,13 @@ only the assemblies passed, and a type defined only in one of them is "Type not 
   arguments filled as C# fills them. Its fields and properties are looked up from the receiver's type,
   as C# looks them up, so a derived class's `new` member hides the base's. Where two overloads apply,
   or hxc cannot tell whether one does, the call is a compile error rather than a guess, even where C#
-  would pick the more specific one. So is a call where C# picks the overload by an argument's value:
-  an integer constant, which C# also converts to a narrower integer type it fits and, if 0, to an enum
-  (`B(5)` with `B(byte)` and `B(object)`), or `null`, which C# converts to every reference type
-  (`N(null)` with `N(Thing)` and `N(object)`, or a left-out optional argument, which gencs passes as
-  `null`). Declare the parameter's exact type, or use `@:overload`.
+  would pick the more specific one. So is a call where C# picks the overload by an integer constant's
+  value, which C# also converts to a narrower integer type it fits and, if 0, to an enum (`B(5)` with
+  `B(byte)` and `B(object)`); declare the parameter's exact type, or use `@:overload`. A `null`
+  argument, or a left-out optional argument, which gencs passes as `null`, binds the overload C# picks
+  for it: the one whose parameter at the null converts to the others' (`N(null)` with `N(Thing)` and
+  `N(object)` is `N(Thing)`). Where C# finds none of them better, or hxc cannot tell which one it picks,
+  the call is a compile error; pass a variable of the parameter's type, or use `@:overload`.
 - **Value types:** `System.Nullable<T>` works, through `HasValue`, `Value`, `== null` and string
   concatenation. `null` passed or assigned where a .NET struct is expected is that struct's
   `default(T)`, as under gencs, so a `Nullable<DateTime>` built from a `null` `DateTime` has a value,

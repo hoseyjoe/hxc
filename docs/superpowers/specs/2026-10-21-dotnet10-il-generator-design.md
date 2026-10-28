@@ -647,21 +647,39 @@ and `List` copy, and two threads casting one array at once.
          keeps an integer constant one, and writes a `null` into a value type as `default(T)`. In both
          bindings, an integer constant (an `Int` literal or a fold of them) may also take a narrower
          integral parameter it fits (`sbyte`, `byte`, `short`, `ushort`, `uint`, `ulong`), and a 0 an enum,
-         both unknown, while identity with `int` stays exact and a widening applies. A `null` literal, the
-         typer's padding of a left-out optional argument included, applies to every reference type, to
-         `Nullable<T>` and to a `params` array in its normal form, and is never an exact match, even
-         against `object`; it gives a generic method no type argument. So `B(5)` with `B(byte)` and
-         `B(object)`, `S(5)` with `S(short)` and `S(double)`, `E(0)` with `E(Hue)` and `E(object)`,
-         `N(null)` with `N(Thing)` and `N(object)`, `P(null)` with `P(params object[])` and `P(object)`, a
-         padded `O(1)` with `O(int, Thing)` and `O(int, object)`, and the same for a constructor are
-         refused, where C# picks the first of each by betterness, and the message adds "C# converts an
-         integer constant or null argument by its value; declare the parameter's exact type, or use
-         @:overload" (`netlib-extern-int-constant-to-byte-refused`, `…-to-short-refused`,
-         `netlib-extern-zero-to-enum-refused`, `netlib-extern-null-to-class-or-object-refused`,
-         `netlib-extern-null-to-params-or-object-refused`, `netlib-extern-padded-optional-null-refused`,
-         `netlib-extern-int-constant-constructor-refused`). `I(5)` with `I(int)`, `B(300)`, and a `null`
-         into the one reference candidate still bind (`netlib-extern-constant-and-null-arguments`). An
-         indexer's index is such an argument too (`netlib-indexer-zero-to-enum-refused`).
+         both unknown, while identity with `int` stays exact and a widening applies. So `B(5)` with
+         `B(byte)` and `B(object)`, `S(5)` with `S(short)` and `S(double)`, `E(0)` with `E(Hue)` and
+         `E(object)`, and the same for a constructor are refused, where C# picks the first of each by
+         betterness, and the message adds "C# converts an integer constant or null argument by its value;
+         declare the parameter's exact type, or use @:overload"
+         (`netlib-extern-int-constant-to-byte-refused`, `…-to-short-refused`,
+         `netlib-extern-zero-to-enum-refused`, `netlib-extern-int-constant-constructor-refused`). `I(5)`
+         with `I(int)`, `B(300)`, and a `null` into the one reference candidate still bind
+         (`netlib-extern-constant-and-null-arguments`). An indexer's index is such an argument too
+         (`netlib-indexer-zero-to-enum-refused`).
+       - **A `null` argument (ruling Z).** A `null` literal, the typer's padding of a left-out optional
+         argument included, applies to every reference type and to a `params` array in its normal form, and
+         is never an exact match, even against `object`; it gives a generic method no type argument, so one
+         whose type parameter no typed argument gives does not apply, as C#'s inference fails. A `null` into
+         a declared `Nullable<T>` (or any value type) is typed as declared, as gencs's `default(T)` is. Among
+         several applicable overloads, the one better than every other one binds, by C#'s betterness: at a
+         null position a parameter type is better when it converts to the other one's and that one does not
+         convert back (a reference type converts to no `Nullable<T>` unless a user-defined conversion may
+         apply); positions of the same type are neutral, and the leftover parameters are not compared. So
+         `S2(null)` with `S2(string)` and `S2(object)` binds `S2(string)`, `N(null)` with `N(Thing)` and
+         `N(object)` binds `N(Thing)`, `P(null)` with `P(params object[])` and `P(object)` binds the params
+         one with a null array, a padded `O(1)` binds `O(int, Thing)`, and inline C# alike
+         (`netlib-extern-null-betterness`, `…-conversions`, `netlib-extern-null-to-declared-nullable`,
+         `inline-cs-null-betterness`). Where every comparison is known and no overload is better than every
+         other one, C# reports CS0121 and the call is a lasting error ("…, and for a null argument C# finds
+         none of them better than the others (gencs's C# fails, CS0121); pass a variable of the parameter's
+         type, or use @:overload", `netlib-extern-null-ambiguous-is-an-error`). Where one is not, a typed
+         argument whose parameters differ (hxc does not model C#'s betterness for one) or a conversion hxc
+         does not model (`Nullable<A>` to `Nullable<B>`, array covariance), it is refused with "…, and hxc
+         cannot tell which one C# picks for a null argument; …"
+         (`netlib-extern-null-betterness-unmodelled-refused`). A declared `Nullable<Int>` that no overload
+         takes is refused as any declared type is, where gencs's C# fails with CS1503
+         (`netlib-extern-null-to-declared-nullable-mismatch-is-an-error`).
        - **Haxe-compiled types.** A Haxe class or interface keeps its own type in either binding (a
          declared parameter type can be one too): no identity match fires for it but against that very
          type. It converts for certain to `object`, to the classes on its Haxe superclass chain and the
