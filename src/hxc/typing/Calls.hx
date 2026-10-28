@@ -798,7 +798,32 @@ class Calls {
 				Typer.checkDisplayOnAccess(ctx, acc, callee.pos);
 			case _:
 		}
-		return buildCallAccess(ctx, acc, el, withType, p, forceInline, forcePos);
+		var built = buildCallAccess(ctx, acc, el, withType, p, forceInline, forcePos);
+		return ctx.com.platform == Cs && ctx.com.defines.rawDefined("dotnet") ? liftInlineCs(ctx, built) : built;
+	}
+
+	// For .NET, the Haxe names in an inline C# call's constant text (`untyped __cs__`, `cs.Syntax.code`) become
+	// placeholders (CsLift). The call keeps its shape, so `untyped __cs__` stays an unbound identifier to the
+	// analyzer.
+	static function liftInlineCs(ctx:TyperContext, acc:AccessKind):AccessKind {
+		switch (acc) {
+			case AKExpr(e = {expr: TCall(callee, args)}) if (args.length >= 1):
+				var inlineCs = switch (callee.expr) {
+					case TIdent("__cs__"): true;
+					case TField(_, FStatic(c, cf)): hxc.codegen.dotnet.CsToIl.isSyntaxClass(c) && cf.name == "code";
+					case _: false;
+				}
+				var text = switch (args[0].expr) {
+					case TConst(TString(s)) if (inlineCs): s;
+					case _: return acc;
+				}
+				var l = hxc.codegen.dotnet.CsLift.lift(ctx, text, args.slice(1), args[0].pos);
+				if (l == null) return acc;
+				var code = TypeFunctions.mk(TConst(TString(l.code)), args[0].type, args[0].pos);
+				return AKExpr(TypeFunctions.mk(TCall(callee, [code].concat(l.args)), e.type, e.pos));
+			case _:
+				return acc;
+		}
 	}
 
 	// Only a compound expression must be bound to a temp so the null guard evaluates it once; a

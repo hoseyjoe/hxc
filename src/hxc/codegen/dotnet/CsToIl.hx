@@ -447,6 +447,20 @@ class CsToIl {
 					case VType(t): error("the inline C# type " + csName(t) + " is no method");
 					case _: error("the inline C# namespace is no method");
 				}
+			case CPlaceholder(n) if (n < this.args.length):
+				// The lift makes a Haxe method the text calls (`hello(fld)`, `this.b.add(s)`) a placeholder whose
+				// argument is the method's field, which is called directly.
+				switch (strip(this.args[n]).expr) {
+					case TField(_, FStatic(c, cf)) if (cf.kind.match(Method(_))):
+						// A static call does not use its receiver.
+						return programCall(c, cf.name, true, VType(LObject), args);
+					case TField(e1, FInstance(c, _, cf)) if (cf.kind.match(Method(_))):
+						var t = tl.sig(e1.type);
+						tl.texpr(RValue(t), e1);
+						return programCall(c, cf.name, false, VPushed(t), args);
+					case _:
+				}
+				throw new Unsupported("calls of a value (a delegate) in inline C#", true);
 			case _:
 				throw new Unsupported("calls of a value (a delegate) in inline C#", true);
 		}
@@ -728,10 +742,27 @@ class CsToIl {
 		if (n >= args.length)
 			throw Unsupported.haxeError("Out-of-bounds special parameter: " + n, new Position(textPos.file, textPos.min + x.pos, textPos.max));
 		var a = args[n];
-		var t = tl.sig(a.type);
+		var t = argSig(a);
 		if (tl.isHaxeNull(t)) t = LObject;
 		tl.texpr(RValue(t), a);
 		return t;
+	}
+
+	// The CLR type of a placeholder's argument: its Haxe type's, but for a call of Object's own member through
+	// an untyped field (`(s : cs.system.String).GetHashCode()`, of no type yet), which gencs's C# calls directly,
+	// so C# types it as the member returns, and TexprCalls calls it so too.
+	function argSig(a:TExpr):IlSigNorm {
+		switch [TypeFunctions.follow(a.type), strip(a).expr] {
+			case [TMono(_), TCall(callee, cargs)]:
+				switch (strip(callee).expr) {
+					case TField(_, FDynamic(name)):
+						var m = tl.calls.objectMember(name, cargs.length);
+						if (m != null) return m;
+					case _:
+				}
+			case _:
+		}
+		return tl.sig(a.type);
 	}
 
 	function literal(l:CsLiteral):Null<IlSigNorm> {

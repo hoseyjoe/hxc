@@ -440,14 +440,45 @@ and `List` copy, and two threads casting one array at once.
   The server app wraps its `cs/internal/FieldLookup.hx` override in `#if !dotnet`, keeping it for the gencs
   build, so hxc's runtime is free to change its internal API.
 - **Inline C# (`__cs__`, `cs.Syntax.code`, `@:functionCode`, `@:classCode`)** *(my call)*: hxc parses
-  a small subset of C# **expressions** and compiles them like Haxe code, resolving names against
-  the Haxe scope and the referenced assemblies. Anything outside the subset is a compile error that
-  names the replacement. Like gencs, hxc only checks inline code that survives DCE. The subset:
-  - `{N}` placeholders, `this`, local and member identifiers, `global::`-qualified and dotted type
-    names;
-  - member access, method calls, indexers with any number of arguments (`cells[row, col]`);
-  - casts to named types (`(decimal){0}`, `(System.Char)ch`), literals;
-  - a bare `throw`, as `throw` or `throw;`, which emits IL `rethrow` and keeps the stack trace.
+  a subset of C# **expressions** and compiles them with C#'s semantics. Anything outside the subset is a
+  lasting compile error that names the replacement. Like gencs, hxc only checks inline code that survives
+  DCE. The subset is what real code uses: one C# expression, or a bare `throw`.
+  - `{N}` placeholders. A placeholder used twice evaluates its argument twice, as gencs's text substitution
+    does.
+  - `this`, simple names, dotted and `global::` names.
+  - Keyword types (`bool` … `object`), array types `T[]` and generic type names, as cast and `is` targets,
+    `new` targets and static receivers.
+  - Member access (fields, properties, enum members, constants), calls, indexers with any number of
+    arguments (`cells[row, col]`), and `new T(args)`.
+  - Casts (chained, and as a parenthesised receiver: `(decimal){0}`, `(System.Char)ch`), `is`.
+  - Unary `!` and `-`; binary arithmetic, comparisons, `==`/`!=`, `&&` and `||`, with C#'s numeric
+    promotion.
+  - Literals: integer, real (`d`, `f`, `m`), string, char, `true`, `false` and `null`.
+  - A bare `throw`, as `throw` or `throw;`, which emits IL `rethrow` and keeps the stack trace.
+  - Everything else is a lasting error naming the replacement: assignment, lambdas, `typeof`, `as`, `?:`,
+    `ref`/`out`, statements, `throw <value>`, explicit type arguments, array creation, `default`, `?.`,
+    `??`, interpolated strings, a `{N}` inside a string literal, and the like.
+  - `cs.Syntax.plainCode` is parsed the same way, with no placeholders.
+
+  Names. The names the C# text gives are resolved in the Haxe scope, in the typer (`CsLift`), as C#'s
+  simple-name lookup takes them: a simple name in head position that is a Haxe local, `this`, or a member
+  of the current class chain becomes a placeholder whose argument is its typed expression. A `this.`-chain
+  or member chain over non-extern Haxe fields is lifted whole, under `@:privateAccess` (haxe-strings'
+  `this.sb.b`), and a Haxe method the text calls is called directly. A member of a .NET superclass is
+  reached through a lifted `this`. Inlining, loop unrolling, closure capture, boxing and DCE then see
+  ordinary expressions. Type names are not lifted: C# resolves them as CLR names, in the enclosing
+  namespaces and then the global one, over the referenced assemblies and the reference pack. A member the
+  `--net-std` lacks (hxcs's net-20 `StringBuilder` has no `Clear`) is looked up in the reference pack,
+  which gencs's C# is compiled against.
+
+  DCE. A member the lift turns into a placeholder is a real use, so DCE keeps it. A member named only
+  through a qualified type name, if DCE removed it, is a lasting error naming `@:keep` (gencs: CS0117).
+
+  Result conversion is gencs's. `untyped __cs__` takes its use's type through C#'s implicit conversions
+  only, else a lasting error with C#'s code (CS0266/CS0029). `cs.Syntax.code` is `Dynamic`: to `Int`,
+  `Float`, `Bool` and `String` it converts through `Runtime.toInt`/`toDouble`/`toBool`/`toString`, and
+  to anything else by C#'s explicit cast from the expression's own CLR type. A `Null<T>` argument is
+  boxed, as gencs's `toDynamic()` does.
 
   Rethrow rules. Each of these emits IL `rethrow` when the innermost enclosing handler is a catch, in the
   catch body or in a try block inside it:
@@ -469,8 +500,8 @@ and `List` copy, and two threads casting one array at once.
   be forked. Because the server app agreed to small source changes, these first-class forms are offered too,
   and the server app can move to them over time:
   - **rethrow**: `throw e` inside a `catch`, where `e` is the caught value, emits `rethrow`.
-  - **decimal**: a `cs.system.Decimal` from a constant emits a decimal constant.
-  - **multi-argument indexers**: callable through array access on the extern.
+  - **multi-argument indexers**: `x.get_Item(a, b)` and `x.set_Item(a, b, v)`, which compile under both
+    compilers.
   - **`#pragma`** in `@:classCode` is ignored, since C# compiler warnings don't exist at the IL
     level. Other `@:classCode`/`@:functionCode` content is an error.
 - **Nullability metadata**: for types the AI tool schemas see, emit `NullableAttribute` /
@@ -826,6 +857,19 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   trace (`rethrow-throw-caught-value`); gencs's `throw e;` resets it. A closure that only reads `e` leaves
   that unchanged (`rethrow-captured-catch-variable`); one that writes `e` makes it a plain `throw`, as in
   gencs.
+- A name in inline C# means the Haxe local of that name in scope (`inline-cs-names-haxe-scope`). gencs's C#
+  reads what its renamed output has under that name, a silent wrong value in each of the case's lines (its
+  `[gencs]` section): a shadowing local that gencs renamed (`sh1`), so the text reads the outer one; a local a
+  closure captures and writes, which gencs boxes in an array, so the text prints `System.Int32[]`; and an
+  inline function's argument, which the inliner replaced by its value, so the text reads the caller's local
+  of that name.
+- hxc resolves names gencs's C# cannot, in the Haxe scope where the typer met the inline C#
+  (`inline-cs-names-gencs-cannot-resolve`): a local declared in a loop the typer unrolls, the loop variable of
+  an unrolled loop, an outer local only a closure's C# text names, and a Haxe property. gencs's C# does not
+  compile: `CS0103: The name 'col' does not exist in the current context` (and the same for `i`, `outer` and
+  `prop`). Under `-D analyzer-optimize`, gencs's analyzer also removes a local only `cs.Syntax.code` text
+  reads, and a closure's class has no member of the enclosing class
+  (`inline-cs-names-gencs-cannot-resolve-optimized`): CS0103 for `b`, `i` and `fld`.
 
 ## Left to the builder
 

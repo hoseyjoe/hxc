@@ -218,9 +218,10 @@ class ExternMembers {
 	}
 
 	// The supertypes of the .NET class `path` with the type arguments `args`, each with its parent signature
-	// in terms of those arguments.
-	function chainFrom(path:IlPath, args:Array<IlSigNorm>):Array<{cls:IlClass, parent:IlSigNorm}> {
-		var cls = rawClass(path);
+	// in terms of those arguments; each class as `load` reads it (`rawClass` by default).
+	function chainFrom(path:IlPath, args:Array<IlSigNorm>, ?load:IlPath->IlClass):Array<{cls:IlClass, parent:IlSigNorm}> {
+		if (load == null) load = rawClass;
+		var cls = load(path);
 		var parent = LClass(path, args);
 		var r = [];
 		while (true) {
@@ -238,7 +239,7 @@ class ExternMembers {
 				case LObject: {path: ({ns: ["System"], nested: [], name: "Object"} : IlPath), args: []};
 				case _: break;
 			}
-			cls = rawClass(sup.path);
+			cls = load(sup.path);
 			parent = LClass(sup.path, sup.args);
 		}
 		return r;
@@ -1415,6 +1416,19 @@ class ExternMembers {
 		}
 	}
 
+	// Whether the .NET class `c` itself declares a member named `name`.
+	static function declares(c:IlClass, name:String):Bool {
+		return Lambda.exists(c.cmethods, m -> m.mname == name) || Lambda.exists(c.cprops, p -> p.pname == name)
+			|| Lambda.exists(c.cfields, f -> f.fname == name) || Lambda.exists(c.cevents, e -> e.ename == name);
+	}
+
+	// The class `path` as the reference pack defines it, else as the referenced assemblies do.
+	function packClass(path:IlPath):IlClass {
+		var lib = NetRefs.of(ctx).packDefiner(path);
+		var cls = lib == null ? null : lib.rawClass(path);
+		return cls != null ? cls : rawClass(path);
+	}
+
 	// The classes the lookup of the member `name` on a receiver of the type `recv` walks, from its class up.
 	// For an interface, C#'s interface member lookup: the one interface, of `recv`'s and those it extends
 	// (transitively), that declares a member of that name, else Object's members; refused where several do,
@@ -1423,7 +1437,17 @@ class ExternMembers {
 		var start = lookupStart(recv);
 		if (start == null) throw new Unsupported("members of " + sigS(recv) + " in inline C#", true);
 		var cls = rawClass(start.path);
-		if (name == null || cls.cflags.semantics.indexOf(SInterface) < 0) return chainFrom(start.path, start.args);
+		if (name == null || cls.cflags.semantics.indexOf(SInterface) < 0) {
+			var links = chainFrom(start.path, start.args);
+			// A member the referenced assemblies' chain lacks, where the --net-std is older than the target (hxcs's
+			// net-20 StringBuilder has no Clear): C# text compiles against the target's reference pack, as gencs's C#
+			// does, so the member is looked up along the pack's chain.
+			if (name != null && !Lambda.exists(links, l -> declares(l.cls, name))) {
+				var pack = chainFrom(start.path, start.args, packClass);
+				if (Lambda.exists(pack, l -> declares(l.cls, name))) return pack;
+			}
+			return links;
+		}
 		var todo = [{cls: cls, parent: LClass(start.path, start.args)}], seen = new Map<String, Bool>(), declaring = [];
 		while (todo.length > 0) {
 			var link = todo.shift();
@@ -1431,9 +1455,7 @@ class ExternMembers {
 			if (seen.exists(k)) continue;
 			seen.set(k, true);
 			var c = link.cls;
-			if (Lambda.exists(c.cmethods, m -> m.mname == name) || Lambda.exists(c.cprops, p -> p.pname == name)
-				|| Lambda.exists(c.cfields, f -> f.fname == name) || Lambda.exists(c.cevents, e -> e.ename == name))
-				declaring.push(link);
+			if (declares(c, name)) declaring.push(link);
 			for (i in c.cimplements) switch (subst(i.snorm, linkArgs(link))) {
 				case LClass(p, l) if (isDefined(p)): todo.push({cls: rawClass(p), parent: LClass(p, l)});
 				case _:

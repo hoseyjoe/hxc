@@ -17690,6 +17690,8 @@ class P {
 		var r11:Int = cs.Syntax.code("{1} - {0}", 1, 10);
 		Sys.println(r1 + "," + r2 + "," + r3 + "," + r4 + "," + r7 + "," + r8 + "," + r9 + "," + r10 + "," + r11);
 		if (cs.Syntax.code("{0} > 3", i)) Sys.println("gt");
+		var u:Int = untyped __cs__("i + 10");
+		Sys.println(u);
 		var r12:Int = cs.Syntax.code("{0} + {0}", {
 			var t = side();
 			t * 2;
@@ -17705,6 +17707,7 @@ side
 side
 10,5,hi!,5,6,42,18,lit,9
 gt
+15
 side
 side
 12,12
@@ -18330,3 +18333,337 @@ P.hx:10: characters 23-55 : dotnet: more than one .NET overload of System.Math.M
 P.hx:11: characters 23-55 : dotnet: the .NET type System.IO.Stream is abstract or an interface, which `new` cannot create (C# error CS0144)
 P.hx:12: characters 23-67 : dotnet: hxc cannot apply the .NET conversion System.Numerics.BigInteger.op_Implicit in inline C#; convert in Haxe
 P.hx:14: characters 23-56 : dotnet: the .NET member System.Collections.Generic.IList<int>.GetEnumerator is declared on System.Collections.Generic.IEnumerable<int> and on System.Collections.IEnumerable; hxc does not model C#'s interface member lookup
+# Names that resolve the same in gencs's C# and in the Haxe scope.
+--- inline-cs-names @gencs
+// Names in inline C# that gencs's C# resolves as the Haxe code means them: locals, `this`, the class's own
+// fields and statics unqualified, inherited fields, a static through its class's name, a method call, a local
+// read in nested loops (the server app's `cells[row, col]` shape), and a private field of another class
+// reached through a field (haxe-strings' `this.sb.b`).
+class Base {
+	public var inherited:Int = 40;
+	public function new() {}
+}
+class Buf {
+	var sb = new StringBuf();
+	public function new() {}
+	public function add(s:String):Buf { sb.add(s); return this; }
+	public function clear():Buf { untyped __cs__("this.sb.b.Clear()"); return this; }
+	public function insert(pos:Int, item:String):Buf { untyped __cs__("this.sb.b.Insert(pos, item)"); return this; }
+	public function insertChar(pos:Int, ch:Int):Buf { untyped __cs__("this.sb.b.Insert(pos, (System.Char)ch)"); return this; }
+	public function toString() return sb.toString();
+}
+class P extends Base {
+	var fld:Int = 7;
+	static var sfld:Int = 8;
+	static function hello(x:Int) return "hello" + x;
+	function inst():Void {
+		Sys.println(untyped __cs__("fld + sfld + inherited"));
+		Sys.println(untyped __cs__("this.fld + P.sfld"));
+		Sys.println(untyped __cs__("hello(fld)"));
+	}
+	static function hashOf(str:String):Bool return untyped __cs__("str.GetHashCode() == {0}", (str : cs.system.String).GetHashCode());
+	static function main() {
+		var row = 0;
+		var total = 0;
+		var items = [1, 2, 3];
+		for (item in items) {
+			row++;
+			var col = 0;
+			while (col < item) {
+				col++;
+				total += untyped __cs__("row * 10 + col");
+			}
+		}
+		Sys.println(total);
+		new P().inst();
+		var b = new Buf().add("held");
+		b.insert(1, "XY").insertChar(0, 65);
+		Sys.println(b.toString());
+		Sys.println(b.clear().add("z").toString());
+		Sys.println(hashOf("abc"));
+	}
+}
+===
+[run]
+150
+55
+15
+hello7
+AhXYeld
+z
+True
+# hxc resolves a name by the Haxe scope at the inline C#; gencs's C# reads what its renamed output has under
+# that name (each [gencs] line is a silent wrong value).
+--- inline-cs-names-haxe-scope @gencs
+// A name in inline C# means the Haxe local of that name in scope, where gencs's C# can mean something else:
+// a shadowing local that gencs renamed (`sh1`), so the text reads the outer one; a local captured and written
+// by a closure, which gencs boxes in an array, so the text reads the array; and an inline function's
+// argument, which the inliner replaced by its value, so the text reads the caller's local of that name.
+class P {
+	static inline function lengthOf(str:String):Int {
+		return untyped __cs__("str.Length");
+	}
+	static function main() {
+		var sh = 5;
+		{
+			var sh = 6;
+			Sys.println(untyped __cs__("sh"));
+		}
+		var w = 4;
+		var g = () -> w++;
+		g();
+		Sys.println(untyped __cs__("w"));
+		var str = "outer!";
+		Sys.println(lengthOf("abc"));
+	}
+}
+===
+[run]
+6
+5
+3
+[gencs]
+5
+System.Int32[]
+6
+# Not @gencs: gencs's C# does not compile (CS0103 for `prop`, `col`, `i` and `outer`, NOTES section 2.3). The
+# [run] is what hxc should print, resolving each name in the Haxe scope where the typer met the inline C#.
+--- inline-cs-names-gencs-cannot-resolve
+// Names gencs's C# cannot resolve, which hxc resolves in the Haxe scope: a local declared in a loop the typer
+// unrolls (each copy's local is renamed, `col1`, `col2`), a loop variable the unrolling replaces by its
+// values, an outer local only the C# text of a closure names (so the closure does not capture it), and a
+// Haxe property, which has no C# member of its name. gencs: CS0103.
+class P {
+	var _p = 9;
+	var prop(get, never):Int;
+	function get_prop() return _p;
+	public function new() {}
+	function readProp():Int return untyped __cs__("prop");
+	static function main() {
+		var total = 0;
+		for (r in 0...3) {
+			var col = r * 10;
+			total += untyped __cs__("col");
+		}
+		Sys.println(total);
+		for (i in 0...2) Sys.println(untyped __cs__("i"));
+		var outer = 11;
+		var h = () -> Sys.println(untyped __cs__("outer"));
+		h();
+		Sys.println(new P().readProp());
+	}
+}
+===
+[run]
+30
+0
+1
+11
+9
+# A two-argument .NET indexer in inline C# is get_Item(int, int); the explicit get_Item/set_Item calls are
+# the first-class form (Haxe 4.3.7 gives a multi-argument indexer no array access).
+--- inline-cs-indexer-multi-arg @gencs @netlib
+// A multi-argument .NET indexer in inline C# (`cells[row, col]` with locals, and through placeholders), and
+// the explicit get_Item/set_Item calls that already compile under both compilers.
+class P {
+	static function main() {
+		var cells = new vallib.Cells();
+		var row = 3, col = 4;
+		var a:Int = untyped __cs__("cells[row, col]");
+		var b:Int = cs.Syntax.code("{0}[{1}, {2}]", cells, 1, 2);
+		Sys.println(a + " " + b + " " + cells.get_Item(5, 6));
+		cells.set_Item(7, 8, 9);
+		var g = new vallib.Grid();
+		var gi:Int = untyped __cs__("g[2, 3]");
+		Sys.println(gi + " " + g.get_Item(2, 3) + " " + g.get_Item(1));
+	}
+}
+===
+[run]
+304 102 506
+set 7,8=9
+23 23 b
+# The server app's four reachable patterns, as written there.
+--- inline-cs-serverapp-patterns @gencs @netlib
+// The server app's inline C# shapes, unchanged: a bare `throw` after cleanup in a catch of cs.system.Exception,
+// `cells[row, col]` on locals in nested loops (ValLib.Cells stands in for EPPlus's ExcelRange), `(decimal){0}`
+// as a @:property var's initializer, and `new` of a .NET class with an enum member, as Zlib's stream does.
+import cs.system.Decimal;
+@:nativeGen
+class CostBenefit {
+	@:property
+	public var value:Decimal = untyped __cs__("(decimal){0}", 0);
+	public function new() {}
+}
+class Transaction {
+	public function new() {}
+	public function release() Sys.println("released");
+}
+class P {
+	static function work(t:Transaction):Void {
+		throw new cs.system.InvalidOperationException("failed");
+	}
+	static function handle() {
+		var transaction:Transaction = null;
+		try {
+			transaction = new Transaction();
+			work(transaction);
+		} catch (e:cs.system.Exception) {
+			if (transaction != null) transaction.release();
+			untyped __cs__("throw"); // Throw the original exception to avoid lost stack trace
+		}
+	}
+	static function sheet(rows:Array<Array<String>>):Int {
+		var cells = new vallib.Cells();
+		var sum = 0;
+		var row = 0;
+		for (r in rows) {
+			row++;
+			var col = 0;
+			for (c in r) {
+				col++;
+				var cell:Int = untyped __cs__('cells[row, col]');
+				sum += cell;
+			}
+		}
+		return sum;
+	}
+	static function main() {
+		try handle() catch (e:cs.system.Exception) Sys.println(e.Message + ", work in trace " + (e.StackTrace.indexOf("work") >= 0));
+		Sys.println(sheet([["a", "b"], ["c"]]));
+		Sys.println(new CostBenefit().value);
+		var ms = new cs.system.io.MemoryStream();
+		var z:cs.system.io.Stream = untyped __cs__("new global::System.IO.Compression.ZLibStream({0}, global::System.IO.Compression.CompressionLevel.Optimal, true)", ms);
+		var data = haxe.io.Bytes.ofString("aaaaaaaaaaaaaaaaaaaa").getData();
+		z.Write(data, 0, data.Length);
+		z.Dispose();
+		var out = ms.ToArray();
+		Sys.println(out.Length + " bytes, header " + StringTools.hex(out[0], 2));
+	}
+}
+===
+[run]
+released
+failed, work in trace true
+404
+0
+11 bytes, header 78
+# C#'s simple-name lookup takes a local before a type or namespace of that name, and so does the lift; a
+# `global::` name still reaches the type when a local is named like its namespace (Review Focus 2).
+--- inline-cs-local-shadows-type-name @gencs
+// A Haxe local named like a type (`Math`) is the local in inline C#, and `global::System.Math` is still the
+// .NET type when a local is named `System`.
+class P {
+	static function main() {
+		var Math = 3;
+		Sys.println(cs.Syntax.code("Math + 1"));
+		var System = 1;
+		Sys.println(cs.Syntax.code("global::System.Math.Abs(-2)"));
+		Sys.println(System);
+	}
+}
+===
+[run]
+4
+2
+1
+# More forms of the lift, which gencs's C# also resolves as the Haxe code means them: instance methods called by
+# their simple name, through `this` and through a field, a static a Haxe superclass declares, a member of the
+# .NET superclass, a local shadowing a field, a verbatim `@name`, and lifted names numbered after the call's own
+# placeholders.
+--- inline-cs-names-lifted-forms @gencs
+class Base {
+	static var baseStatic:Int = 5;
+	public function new() {}
+}
+class Holder {
+	public var count:Int = 2;
+	public function new() {}
+	public function twice(x:Int):Int return x * 2;
+}
+class Failure extends cs.system.Exception {
+	public function new() super("lifted");
+	public function describe():String return untyped __cs__("Message + \"!\"");
+}
+class P extends Base {
+	var fld:Int = 7;
+	var h = new Holder();
+	function bump(x:Int):Int return x + 1;
+	function inst():Void {
+		Sys.println(untyped __cs__("bump(3) + this.bump(4)"));
+		Sys.println(untyped __cs__("h.twice(h.count) + this.h.count"));
+		Sys.println(untyped __cs__("baseStatic + fld"));
+	}
+	function shadow():Void {
+		var fld = 100;
+		Sys.println(untyped __cs__("fld"));
+	}
+	static function main() {
+		var p = new P();
+		p.inst();
+		p.shadow();
+		Sys.println(new Failure().describe());
+		var event = 4;
+		Sys.println(cs.Syntax.code("@event * 2"));
+		var n = 2;
+		Sys.println(cs.Syntax.code("{0} + n * {1}", 1, 10));
+	}
+}
+===
+[run]
+9
+6
+12
+100
+lifted!
+8
+21
+# Not @gencs: gencs's C# does not compile (CS0103 for `b`, `i` and `fld`). With the analyzer on, a function whose
+# inline C# is cs.Syntax.code is optimized (it has no unbound identifier), and gencs's analyzer removes a local only
+# the text reads and unrolls the loop; and a closure's class has no member of the enclosing class. hxc's names are
+# ordinary uses of the locals and of `this`, so their values reach the text.
+--- inline-cs-names-gencs-cannot-resolve-optimized + -D analyzer-optimize
+class P {
+	var fld:Int = 7;
+	public function new() {}
+	function inst():Int {
+		var f = () -> (untyped __cs__("fld + 1") : Int);
+		return f();
+	}
+	static function main() {
+		var a = 1;
+		var b = a + 1;
+		Sys.println(cs.Syntax.code("b * 10"));
+		var total = 0;
+		for (i in 0...3) total += cs.Syntax.code("i");
+		Sys.println(total);
+		Sys.println(new P().inst());
+	}
+}
+===
+[run]
+20
+3
+8
+# A Haxe method the C# text names without calling it is a method group, which C# converts to no value here
+# (gencs: CS0428): an instance one, by its simple name or through `this`, gets CsToIl's method-group refusal; a
+# static one, which the lift leaves as it is, is an unknown name.
+--- inline-cs-method-group-is-an-error
+class P {
+	function bump(x:Int):Int return x + 1;
+	static function hello(x:Int):Int return x;
+	public function new() {}
+	function inst():Void {
+		Sys.println(untyped __cs__("bump"));
+		Sys.println(untyped __cs__("this.bump"));
+	}
+	static function main() {
+		new P().inst();
+		Sys.println(untyped __cs__("hello"));
+	}
+}
+===
+[compile]
+P.hx:6: characters 23-37 : dotnet: a method group is not part of the inline C# subset; call the method, or write a Haxe function
+P.hx:7: characters 23-42 : dotnet: a method group is not part of the inline C# subset; call the method, or write a Haxe function
+P.hx:11: characters 23-38 : dotnet: the inline C# name hello is no local, member or type here (C# error CS0103)

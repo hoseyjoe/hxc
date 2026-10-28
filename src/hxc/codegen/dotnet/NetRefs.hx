@@ -206,10 +206,8 @@ class NetRefs {
 			}
 		}
 		// a hand-written extern that no assembly references
-		var top:IlPath = path.nested.length > 0 ? {ns: path.ns, nested: [], name: path.nested[0]} : path;
-		var file = indexPack().get(IlPaths.key(top));
-		var lib = file == null ? null : read(file);
-		if (lib != null && lib.definesType(path)) return lib;
+		var lib = packDefiner(path);
+		if (lib != null) return lib;
 		// the types of a pack assembly that could not be read are missing from the index
 		var rp = referencePack();
 		if (rp != null) {
@@ -218,6 +216,14 @@ class NetRefs {
 			for (note in bad) if (notes.indexOf(note) < 0) notes.push(note);
 		}
 		return null;
+	}
+
+	// The reference pack's assembly defining `path`, or null when the pack (or the type in it) is missing.
+	public function packDefiner(path:IlPath):Null<NetLibrary> {
+		var top:IlPath = path.nested.length > 0 ? {ns: path.ns, nested: [], name: path.nested[0]} : path;
+		var file = indexPack().get(IlPaths.key(top));
+		var lib = file == null ? null : read(file);
+		return lib != null && lib.definesType(path) ? lib : null;
 	}
 
 	static function addNamespaces(to:Map<String, Bool>, p:IlPath):Void {
