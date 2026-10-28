@@ -20872,9 +20872,10 @@ class P {
 [compile]
 P.hx:2: characters 9-122 : dotnet: System.Runtime.CompilerServices.MethodImplAttribute is a pseudo-attribute (a flag, not an attribute row) and is not supported
 --- attrs-pseudo-layout-two-structs @gencs
-// Two explicit-layout structs, declared against name order, so their ClassLayout and FieldLayout rows are
-// sorted by parent; ZWide's Pack and Size make its ClassLayout row. Bytes and FPHelper reinterpret a value's
-// bits through std's own explicit-layout helpers.
+// Two explicit-layout structs, declared against name order; ZWide's Pack and Size make its ClassLayout row.
+// Their rows are pushed in TypeDef order, so the ClassLayout and FieldLayout sort by parent is defensive and
+// this case does not exercise it. Bytes and FPHelper reinterpret a value's bits through std's own
+// explicit-layout helpers.
 import cs.system.runtime.interopservices.Marshal;
 @:meta(System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit, Pack = 1, Size = 16))
 @:struct @:nativeGen class ZWide {

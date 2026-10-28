@@ -964,6 +964,10 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   fields) right after the constructors, while hxc writes them after the instance methods, in the order milestone 3
   pinned. The members and the instance methods' order are identical; only reflection's enumeration order can see
   the difference. Matching gencs's order is an optional 4c item.
+- A `@:struct` with no instance fields: Roslyn gives gencs's struct a ClassLayout row of size 1, and hxc
+  writes no row. The runtime sizes both at 1 byte, so only metadata sees it: `Type.StructLayoutAttribute.Size`
+  is 1 for gencs's struct and 0 for hxc's. hxc keeps this so that a DLL without explicit layout is unchanged
+  by 4c's pseudo-attributes.
 
 ## Left to the builder
 

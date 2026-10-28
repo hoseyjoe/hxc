@@ -162,8 +162,8 @@ class AttributesToIl {
 	// The program's @:nativeGen enums, by IlPaths.key.
 	var clrEnums:Null<Map<String, TEnum>> = null;
 	var runtimeId:Null<ModuleBuilder.AssemblyIdentity> = null;
-	// pseudo's answers, by the meta they read.
-	final pseudoDone = new haxe.ds.ObjectMap<Metadata, PseudoAttrs>();
+	// pseudo's answers, by the meta they read and then by the target and the site's namespace.
+	final pseudoDone = new haxe.ds.ObjectMap<Metadata, Map<String, PseudoAttrs>>();
 	// While a member is planned (pseudo), before any TypeDef row is written: lookupPath finds a program class
 	// by g.classAt and keeps no answer.
 	var planning = false;
@@ -338,31 +338,48 @@ class AttributesToIl {
 	// row, and FieldOffset a field's FieldLayout row. `layout` is null without a StructLayout, and `offset`
 	// without a FieldOffset. An entry that is not valid on the target, or is there twice, gives its error when
 	// the member's rows are written (forMember), as any attribute does; an argument C# would refuse gives it
-	// here. Each meta is read once, as a leave-out round plans the classes again.
+	// here. Each meta is read once per target and namespace, as a leave-out round plans the classes again.
 	public static function pseudo(g:DotnetCtx, meta:Metadata, target:AttrTarget, pos:Position, ?site:AttrSite):PseudoAttrs {
 		var a = of(g);
-		var r = a.pseudoDone.get(meta);
+		if (site == null) site = {name: "", ns: []};
+		var byUse = a.pseudoDone.get(meta);
+		if (byUse == null) {
+			byUse = new Map();
+			a.pseudoDone.set(meta, byUse);
+		}
+		var key = Std.string(target) + " " + site.ns.join(".");
+		var r = byUse.get(key);
 		if (r == null) {
-			r = a.pseudoOf(meta, target, pos, site == null ? {name: "", ns: []} : site);
-			a.pseudoDone.set(meta, r);
+			r = a.pseudoOf(meta, target, pos, site);
+			byUse.set(key, r);
 		}
 		return r;
+	}
+
+	// `f`'s result, with lookupPath in planning mode while it runs: the types are not declared yet, so it
+	// finds the program's classes by their paths and keeps none of its answers. The mode is restored however
+	// `f` ends.
+	function planned<R>(f:() -> R):R {
+		var was = planning;
+		planning = true;
+		try {
+			var r = f();
+			planning = was;
+			return r;
+		} catch (e:Dynamic) {
+			planning = was;
+			throw e;
+		}
 	}
 
 	function pseudoOf(meta:Metadata, target:AttrTarget, pos:Position, site:AttrSite):PseudoAttrs {
 		var r:PseudoAttrs = {typeFlags: 0, fieldFlags: 0, layout: null, offset: null};
 		for (m in meta) {
 			if (m.name != ":meta" || m.params.length != 1 || !maybePseudo(m.params[0])) continue;
-			// The types are not declared yet: lookupPath finds the program's classes by their paths, and keeps
-			// none of its answers.
-			planning = true;
-			var a = try parse(m, site) catch (_:AttrError) null;
-			planning = false;
+			var a = try planned(() -> parse(m, site)) catch (_:AttrError) null;
 			if (a == null || pseudoNames.indexOf(a.cls.name) < 0 || usageOf(a.cls).validOn & targetBit(target) == 0) continue;
 			try {
-				planning = true;
-				var args = arguments(a.cls, a.args, site.ns, a.e.pos);
-				planning = false;
+				var args = planned(() -> arguments(a.cls, a.args, site.ns, a.e.pos));
 				function int(v:AttrValue):Int return switch (v) {
 					case AInt(_, i) | AEnum(_, _, i): i.low;
 					case _: throw "internal error: a pseudo-attribute argument that is not an integer";
@@ -411,10 +428,8 @@ class AttributesToIl {
 						}
 				}
 			} catch (e:AttrError) {
-				planning = false;
 				g.error(e.msg, e.pos == null ? pos : e.pos);
 			} catch (u:Unsupported) {
-				planning = false;
 				if (u.pos == null) u.pos = m.params[0].pos;
 				g.report(u);
 			}
