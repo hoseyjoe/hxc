@@ -273,8 +273,7 @@ class TclassToIl {
 		while (i < text.length) {
 			var ch = text.charAt(i), next = text.charAt(i + 1);
 			if (ch == "/" && next == "/") {
-				while (i < text.length && text.charAt(i) != "
-") i++;
+				while (i < text.length && text.charAt(i) != "\n") i++;
 			} else if (ch == "/" && next == "*") {
 				var end = text.indexOf("*/", i + 2);
 				i = end < 0 ? text.length : end + 2;
@@ -284,8 +283,7 @@ class TclassToIl {
 				i++;
 			}
 		}
-		for (line in b.toString().split("
-")) {
+		for (line in b.toString().split("\n")) {
 			var t = StringTools.trim(line);
 			if (t != "" && !StringTools.startsWith(t, "#pragma")) return false;
 		}

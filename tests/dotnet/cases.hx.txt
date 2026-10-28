@@ -18976,3 +18976,58 @@ class P {
 new ResizableTextArea: raw=null text= tag=tag guid=haxe-guid
 createEmptyInstance BaseTextArea: raw=null text=null tag=null guid=haxe-guid
 cy17:ResizableTextAreay1:wi3y3:tagR2y1:xzy4:texty0:y5:_guidny4:guidy9:haxe-guidg
+
+# A #pragma first line does not make the text pragma-only when a member follows.
+--- classcode-pragma-then-member-is-an-error
+@:classCode("#pragma warning disable 628
+static int helper() { return 1; }
+")
+class CC {
+	public var k:Int = 1;
+	public function new() {}
+}
+
+class P {
+	static function main() trace(new CC().k);
+}
+===
+[compile]
+P.hx:4: lines 4-7 : dotnet: @:classCode is C# source, which hxc does not compile: declare the members in Haxe, calling .NET through extern classes (a @:classCode of #pragma lines only is ignored)
+# Comments, blank lines and several pragmas together are still pragma-only.
+--- classcode-pragma-with-comments-ignored
+@:classCode("// leading
+
+#pragma warning disable 1
+/* block
+   over lines */
+  #pragma warning restore 1 // trailing
+/* a */ #pragma x
+")
+class Q {
+	public var n = 5;
+	public function new() {}
+}
+
+class P {
+	static function main() trace(new Q().n);
+}
+===
+[run]
+P.hx:15: 5
+# A comment between the pragma and a member does not hide the member.
+--- classcode-pragma-comment-member-is-an-error
+@:classCode("#pragma warning disable 628
+// a comment
+static int helper() { return 1; }
+")
+class CC {
+	public var k:Int = 1;
+	public function new() {}
+}
+
+class P {
+	static function main() trace(new CC().k);
+}
+===
+[compile]
+P.hx:5: lines 5-8 : dotnet: @:classCode is C# source, which hxc does not compile: declare the members in Haxe, calling .NET through extern classes (a @:classCode of #pragma lines only is ignored)
