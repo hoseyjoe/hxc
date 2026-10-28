@@ -67,6 +67,16 @@ class CsToIl {
 		}
 	}
 
+	// A Haxe method inline C# calls directly: a normal one, or an inline one with a body (not extern). A dynamic
+	// method is a variable's value.
+	public static function directMethod(c:TClass, cf:TClassField):Bool {
+		return switch (cf.kind) {
+			case Method(MethNormal): true;
+			case Method(MethInline): !TypeFunctions.hasClassFieldFlag(cf, CfExtern) && !TypeFunctions.hasClassFlag(c, CExtern);
+			case _: false;
+		}
+	}
+
 	public static function isSyntaxClass(c:TClass):Bool return c.path.pack.length == 1 && c.path.pack[0] == "cs" && c.path.name == "Syntax";
 
 	// The inline C# call `e`, whose code string is `text` and whose placeholders' arguments are `args`,
@@ -120,6 +130,11 @@ class CsToIl {
 			case PError(reason, _):
 				error("inline C# does not parse: " + reason);
 			case PExpr(x):
+				// gencs reports the first out-of-bounds placeholder whatever the text holds before it.
+				for (ph in CsSyntax.placeholdersOf(x)) switch (ph.def) {
+					case CPlaceholder(n) if (n >= args.length): outOfBounds(n, ph);
+					case _:
+				}
 				var t = value(x);
 				switch (ret) {
 					case RVoid | RReturn:
@@ -451,10 +466,10 @@ class CsToIl {
 				// The lift makes a Haxe method the text calls (`hello(fld)`, `this.b.add(s)`) a placeholder whose
 				// argument is the method's field, which is called directly.
 				switch (strip(this.args[n]).expr) {
-					case TField(_, FStatic(c, cf)) if (cf.kind.match(Method(_))):
+					case TField(_, FStatic(c, cf)) if (directMethod(c, cf)):
 						// A static call does not use its receiver.
 						return programCall(c, cf.name, true, VType(LObject), args);
-					case TField(e1, FInstance(c, _, cf)) if (cf.kind.match(Method(_))):
+					case TField(e1, FInstance(c, _, cf)) if (directMethod(c, cf)):
 						var t = tl.sig(e1.type);
 						tl.texpr(RValue(t), e1);
 						return programCall(c, cf.name, false, VPushed(t), args);
@@ -738,9 +753,12 @@ class CsToIl {
 
 	// Argument `n`, evaluated at each use as gencs's text substitution does, in its own type; a
 	// haxe.lang.Null<T> goes as gencs's `toDynamic()`, an object.
+	function outOfBounds(n:Int, x:CsExpr):Dynamic {
+		throw Unsupported.haxeError("Out-of-bounds special parameter: " + n, new Position(textPos.file, textPos.min + x.pos, textPos.max));
+	}
+
 	function placeholder(n:Int, x:CsExpr):IlSigNorm {
-		if (n >= args.length)
-			throw Unsupported.haxeError("Out-of-bounds special parameter: " + n, new Position(textPos.file, textPos.min + x.pos, textPos.max));
+		if (n >= args.length) outOfBounds(n, x);
 		var a = args[n];
 		var t = argSig(a);
 		if (tl.isHaxeNull(t)) t = LObject;

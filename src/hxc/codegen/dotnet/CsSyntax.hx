@@ -124,6 +124,30 @@ class CsSyntax {
 		}
 	}
 
+	// The `{N}` placeholders of `x`, in text order.
+	public static function placeholdersOf(x:CsExpr):Array<CsExpr> {
+		var r = [];
+		function walk(x:CsExpr):Void {
+			switch (x.def) {
+				case CPlaceholder(_):
+					r.push(x);
+				case CMember(e1, _) | CCast(_, e1) | CIs(e1, _) | CUnop(_, e1) | CParen(e1):
+					walk(e1);
+				case CCall(e1, args) | CIndex(e1, args):
+					walk(e1);
+					for (a in args) walk(a);
+				case CNew(_, args):
+					for (a in args) walk(a);
+				case CBinop(_, a, b):
+					walk(a);
+					walk(b);
+				case CThis | CIdent(_) | CGlobal(_) | CKeywordType(_) | CLiteral(_):
+			}
+		}
+		walk(x);
+		return r;
+	}
+
 	static function refuse(what:String, replacement:String, pos:Int):Dynamic throw new CsStop(PRefused(what, replacement, pos));
 
 	static function fail(reason:String, pos:Int):Dynamic throw new CsStop(PError(reason, pos));

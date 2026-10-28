@@ -45,6 +45,12 @@ class CsLift {
 			case PExpr(x): x;
 			case _: return null;
 		}
+		// With a placeholder out of bounds nothing is lifted, so CsToIl reports it as gencs does, rather than
+		// that placeholder reading a lifted name.
+		for (ph in CsSyntax.placeholdersOf(x)) switch (ph.def) {
+			case CPlaceholder(n) if (n >= args.length): return null;
+			case _:
+		}
 		var l = new CsLift(ctx, args.length, p);
 		l.walk(x, false);
 		if (l.edits.length == 0) return null;
@@ -112,8 +118,11 @@ class CsLift {
 
 	static function isExtern(c:TClass):Bool return TypeFunctions.hasClassFlag(c, CExtern);
 
-	// A method a lifted callee calls directly (CsToIl): not a dynamic or macro one.
-	static function isMethod(cf:TClassField):Bool return cf.kind.match(Method(MethNormal | MethInline));
+	// A method a lifted callee calls directly (CsToIl.directMethod): not a dynamic, macro or extern inline one.
+	// Its class is a non-extern Haxe class wherever the lift asks.
+	static function isMethod(cf:TClassField):Bool {
+		return cf.kind.match(Method(MethNormal)) || cf.kind.match(Method(MethInline)) && !TypeFunctions.hasClassFieldFlag(cf, CfExtern);
+	}
 
 	// A method named but not called, which C# does not convert to a value here (CS0428): it is not lifted as a
 	// value, and CsToIl refuses it.
@@ -190,6 +199,9 @@ class CsLift {
 		return switch (acc) {
 			case AKField(fa) if (callee && isMethod(fa.field)):
 				{te: FieldAccessTools.getFieldExpr(fa, FCall), e: null, suffix: ""};
+			case AKField(fa) if (fa.field.kind.match(Method(MethInline | MethMacro))):
+				// An extern inline or macro method has no value to call; the name stays, unknown to CsToIl.
+				null;
 			case AKExpr(_) | AKField(_) | AKAccessor(_):
 				{te: Typer.accGet(ctx, acc), e: e, suffix: ""};
 			case _:

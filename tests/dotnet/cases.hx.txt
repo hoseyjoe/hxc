@@ -18053,11 +18053,17 @@ class P {
 		var s = "x";
 		var b:Dynamic = cs.Syntax.code("{0} + {1}", 1);
 		Sys.println(b);
+		var x = 5;
+		var r:Int = cs.Syntax.code("{1} + x", 100);
+		var q:Int = untyped __cs__("x + {2}", 100);
+		Sys.println(r + q);
 	}
 }
 ===
 [compile]
 P.hx:4: characters 40-45 : Out-of-bounds special parameter: 1
+P.hx:7: characters 30-39 : Out-of-bounds special parameter: 1
+P.hx:8: characters 34-39 : Out-of-bounds special parameter: 2
 # What C#'s compiler refuses in inline C#, refused here too: a cast with no conversion (CS0030), a constant
 # expression that overflows (CS0220), divides by zero (CS0020) or casts out of range (CS0221), with a constant
 # argument counting as the literal gencs prints, and null as a type parameter's value (CS0403).
@@ -18667,3 +18673,30 @@ class P {
 P.hx:6: characters 23-37 : dotnet: a method group is not part of the inline C# subset; call the method, or write a Haxe function
 P.hx:7: characters 23-42 : dotnet: a method group is not part of the inline C# subset; call the method, or write a Haxe function
 P.hx:11: characters 23-38 : dotnet: the inline C# name hello is no local, member or type here (C# error CS0103)
+# A dynamic method is a variable's value (gencs: a haxe.lang.Function field, so its C# `f(1)` is CS1955), which
+# inline C# does not call.
+--- inline-cs-dynamic-method-call-is-an-error
+class P {
+	dynamic function f(x:Int):Int return x + 1;
+	public function new() {}
+	function inst():Void Sys.println(untyped __cs__("f(1)"));
+	static function main() new P().inst();
+}
+===
+[compile]
+P.hx:4: characters 43-57 : dotnet: calls of a value (a delegate) in inline C# are not supported yet
+# Not @gencs: gencs writes an abstract's instance method as a static one, so `this` in its C# text is CS0026. In
+# hxc, `this` in an abstract's method is the abstract's underlying value.
+--- inline-cs-abstract-this
+abstract Meters(Int) from Int {
+	public function twice():Int return untyped __cs__("this * 2");
+}
+class P {
+	static function main() {
+		var m:Meters = 21;
+		Sys.println(m.twice());
+	}
+}
+===
+[run]
+42
