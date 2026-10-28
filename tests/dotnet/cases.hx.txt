@@ -18224,8 +18224,12 @@ P.hx:6: characters 11-46 : dotnet: no .NET overload of System.Collections.Generi
 # and an instance's, a struct placeholder that a mutating call reaches through its variable, a struct a call
 # returns, `new` of a struct without arguments (its default), a string and an array indexed, a static call with
 # an int constant, ToString and GetHashCode bound where they are first declared, a virtual call through a
-# property's value, and casts between an enum and int.
+# property's value, casts between an enum and int or decimal, members a Haxe class inherits from its .NET
+# superclass, a member of a base interface and Object's through an interface, and a ushort enum's literal.
 --- inline-cs-members @gencs
+class MyEx extends cs.system.Exception {
+	public function new() super("boom");
+}
 class Counter {
 	public static var total:Int = 40;
 	public var n:Int = 0;
@@ -18261,6 +18265,14 @@ class P {
 		Sys.println(cs.Syntax.code("System.String.Concat({0}, {1})", "a", "b"));
 		Sys.println(cs.Syntax.code("(int)System.StringComparison.Ordinal + 1"));
 		Sys.println(cs.Syntax.code("(System.StringComparison){0}", 5));
+		var ex = new MyEx();
+		var m:String = cs.Syntax.code("{0}.Message", ex);
+		Sys.println(m + " " + cs.Syntax.code("{0}.GetType().Name", ex));
+		var il:cs.system.collections.generic.IList_1<Int> = list;
+		Sys.println(cs.Syntax.code("{0}.Count + 1", il) + " " + cs.Syntax.code("{0}.ToString()", il));
+		Sys.println(cs.Syntax.code("(int)System.Reflection.Metadata.ILOpCode.Arglist"));
+		Sys.println(cs.Syntax.code("(decimal)System.StringComparison.Ordinal + 0.5m"));
+		Sys.println(cs.Syntax.code("(System.StringComparison)2m"));
 	}
 }
 ===
@@ -18279,10 +18291,16 @@ True
 ab
 5
 OrdinalIgnoreCase
+boom MyEx
+3 System.Collections.Generic.List`1[System.Int32]
+65024
+4.5
+InvariantCulture
 # Member lookups C# rejects or that hxc cannot bind as C# would, refused: an instance member through its type
 # (CS0120), a static one through a value (CS0176), unknown members (CS1061, CS0117), a namespace as a type
 # (CS0118), a method group, an overload C# picks by betterness, which hxc does not model, and `new` of an
-# abstract class (CS0144), and a user-defined conversion, which hxc does not apply.
+# abstract class (CS0144), a user-defined conversion, which hxc does not apply, and a member two base
+# interfaces declare.
 --- inline-cs-member-errors-is-an-error
 class P {
 	static function main() {
@@ -18296,6 +18314,8 @@ class P {
 		Sys.println(untyped __cs__("System.Math.Max(1, 2L)"));
 		Sys.println(untyped __cs__("new System.IO.Stream()"));
 		Sys.println(untyped __cs__("(System.Numerics.BigInteger){0}", 5));
+		var il:cs.system.collections.generic.IList_1<Int> = null;
+		Sys.println(untyped __cs__("{0}.GetEnumerator()", il));
 	}
 }
 ===
@@ -18309,3 +18329,4 @@ P.hx:9: characters 23-44 : dotnet: a method group is not part of the inline C# s
 P.hx:10: characters 23-55 : dotnet: more than one .NET overload of System.Math.Max may accept (int, long)
 P.hx:11: characters 23-55 : dotnet: the .NET type System.IO.Stream is abstract or an interface, which `new` cannot create (C# error CS0144)
 P.hx:12: characters 23-67 : dotnet: hxc cannot apply the .NET conversion System.Numerics.BigInteger.op_Implicit in inline C#; convert in Haxe
+P.hx:14: characters 23-56 : dotnet: the .NET member System.Collections.Generic.IList<int>.GetEnumerator is declared on System.Collections.Generic.IEnumerable<int> and on System.Collections.IEnumerable; hxc does not model C#'s interface member lookup

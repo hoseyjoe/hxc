@@ -51,7 +51,7 @@ enum SpillMode {
 // Unsupported naming it.
 
 @:allow(hxc.codegen.dotnet.TexprOps, hxc.codegen.dotnet.TexprFlow, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.TexprDynamic,
-	hxc.codegen.dotnet.CsToIl)
+	hxc.codegen.dotnet.CsToIl, hxc.codegen.dotnet.CsNames)
 class TexprToIl {
 	final g:DotnetCtx;
 	final code:IlCode;

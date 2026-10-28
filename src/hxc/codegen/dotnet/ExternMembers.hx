@@ -1415,10 +1415,35 @@ class ExternMembers {
 		}
 	}
 
-	function csChain(recv:IlSigNorm):Array<{cls:IlClass, parent:IlSigNorm}> {
+	// The classes the lookup of the member `name` on a receiver of the type `recv` walks, from its class up.
+	// For an interface, C#'s interface member lookup: the one interface, of `recv`'s and those it extends
+	// (transitively), that declares a member of that name, else Object's members; refused where several do,
+	// as hxc does not model which hides which (4a's ruling O).
+	function csChain(recv:IlSigNorm, ?name:String):Array<{cls:IlClass, parent:IlSigNorm}> {
 		var start = lookupStart(recv);
 		if (start == null) throw new Unsupported("members of " + sigS(recv) + " in inline C#", true);
-		return chainFrom(start.path, start.args);
+		var cls = rawClass(start.path);
+		if (name == null || cls.cflags.semantics.indexOf(SInterface) < 0) return chainFrom(start.path, start.args);
+		var todo = [{cls: cls, parent: LClass(start.path, start.args)}], seen = new Map<String, Bool>(), declaring = [];
+		while (todo.length > 0) {
+			var link = todo.shift();
+			var k = sigKey(link.parent);
+			if (seen.exists(k)) continue;
+			seen.set(k, true);
+			var c = link.cls;
+			if (Lambda.exists(c.cmethods, m -> m.mname == name) || Lambda.exists(c.cprops, p -> p.pname == name)
+				|| Lambda.exists(c.cfields, f -> f.fname == name) || Lambda.exists(c.cevents, e -> e.ename == name))
+				declaring.push(link);
+			for (i in c.cimplements) switch (subst(i.snorm, linkArgs(link))) {
+				case LClass(p, l) if (isDefined(p)): todo.push({cls: rawClass(p), parent: LClass(p, l)});
+				case _:
+			}
+		}
+		if (declaring.length > 1)
+			throw Unsupported.error("the .NET member " + sigS(recv) + "." + name + " is declared on " + sigS(declaring[0].parent) + " and on "
+				+ sigS(declaring[1].parent) + "; hxc does not model C#'s interface member lookup");
+		if (declaring.length == 1) return declaring;
+		return chainFrom({ns: ["System"], nested: [], name: "Object"}, []);
 	}
 
 	// The signature C# gives the .NET type `path` with the type arguments `args`: a primitive's, a value
@@ -1460,7 +1485,7 @@ class ExternMembers {
 					+ (isStatic ? "its type" : "a value") + " (C# error " + (isStatic ? "CS0120" : "CS0176") + ")");
 			return true;
 		}
-		for (link in csChain(recv)) {
+		for (link in csChain(recv, name)) {
 			for (f in link.cls.cfields) if (f.fname == name && check(f.fflags.access, link, f.fflags.contract.indexOf(CStatic) >= 0)) {
 				var member = f.fconstant != null ? XConstant(f.fconstant, f.fsig.snorm) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
 				return {member: member, parent: link.parent};
@@ -1484,7 +1509,7 @@ class ExternMembers {
 
 	// Whether some class along `recv`'s chain declares a method named `name`.
 	public function hasMethodCs(recv:IlSigNorm, name:String):Bool {
-		for (link in csChain(recv)) for (m in link.cls.cmethods) if (m.mname == name) return true;
+		for (link in csChain(recv, name)) for (m in link.cls.cmethods) if (m.mname == name) return true;
 		return false;
 	}
 
@@ -1516,7 +1541,7 @@ class ExternMembers {
 	// class along the chain declares a method of that name.
 	public function bindCs(recv:IlSigNorm, name:String, isStatic:Bool, args:Array<IlSigNorm>, argKinds:Array<ArgKind>, pos:hxc.ast.Position):Null<CsMethod> {
 		var isCtor = name == ".ctor";
-		var links = csChain(recv);
+		var links = isCtor ? csChain(recv) : csChain(recv, name);
 		var what = isCtor ? "constructor of " + sigS(recv) : "overload of " + sigS(recv) + "." + name;
 		function fail(text:String):Dynamic {
 			var u = Unsupported.error(text);

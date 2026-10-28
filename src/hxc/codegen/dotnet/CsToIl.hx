@@ -36,11 +36,13 @@ private typedef DecimalConst = {mantissa:haxe.Int64, negative:Bool, scale:Int};
 // Inline C# (`untyped __cs__`, `cs.Syntax.code`, `cs.Syntax.plainCode`) as IL: CsSyntax's expression, its
 // names resolved over CLR types and lowered with C#'s semantics (csexpr §6). Shares its state through the
 // TexprToIl that owns it.
-@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprCalls)
+@:allow(hxc.codegen.dotnet.TexprToIl, hxc.codegen.dotnet.TexprCalls, hxc.codegen.dotnet.CsNames)
 class CsToIl {
 	final tl:TexprToIl;
 	final g:DotnetCtx;
 	final il:IlCode;
+	// The type names of the text (CsNames).
+	final names:CsNames;
 
 	// The call being lowered: its placeholders' arguments, its position (where errors go) and the position of
 	// its code string (where gencs puts a placeholder's error).
@@ -54,6 +56,7 @@ class CsToIl {
 		this.tl = tl;
 		g = tl.g;
 		il = tl.code;
+		names = new CsNames(this);
 	}
 
 	// The code string of an inline C# call, which must be a constant (gencs's error, at the argument).
@@ -229,7 +232,7 @@ class CsToIl {
 	// of a type or of a value, a call, an indexer or `new`, pushed. A simple name that is neither is unknown
 	// (the typer lifts the Haxe names the text uses into placeholders).
 	function resolveName(x:CsExpr):CsValue {
-		var tn = typeOrNamespace(x);
+		var tn = names.typeOrNamespace(x);
 		if (tn != null) return tn;
 		return switch (x.def) {
 			case CIdent(name): unknownName(name, "CS0103");
@@ -247,107 +250,6 @@ class CsToIl {
 		return error("the inline C# name " + name + " is no local, member or type here (C# error " + csError + ")");
 	}
 
-	// The type or namespace `x` names, with nothing pushed, or null when it names neither (the head of a
-	// member access names a type; what follows is a member). A name a namespace does not have is the
-	// unknown-name error.
-	function typeOrNamespace(x:CsExpr):Null<CsValue> {
-		switch (x.def) {
-			case CKeywordType(name):
-				return VType(keywordType(name));
-			case CIdent(name):
-				return simpleName(name, []);
-			case CGlobal(name):
-				return lookupIn(VNamespace([]), name, []);
-			case CMember(e1, name):
-				var head = typeOrNamespace(e1);
-				return switch (head) {
-					case VNamespace(path):
-						var r = lookupIn(head, name, []);
-						if (r == null) unknownName(path.concat([name]).join("."), "CS0234");
-						r;
-					case VType(_): lookupIn(head, name, []);
-					case _: null;
-				}
-			case _:
-				return null;
-		}
-	}
-
-	// The namespace of the class whose code the text is in, where C# starts looking a simple name up.
-	function classNamespace():Array<String> {
-		return tl.cls == null ? [] : DotnetNames.typePath(TClassDecl(tl.cls)).ns;
-	}
-
-	// A simple name, with the type arguments `args`, as C# looks it up: a type or namespace of that name in
-	// the class's namespace, then in each enclosing one, then in the global namespace.
-	function simpleName(name:String, args:Array<IlSigNorm>):Null<CsValue> {
-		var ns = classNamespace();
-		var k = ns.length;
-		while (k >= 0) {
-			var r = lookupIn(VNamespace(ns.slice(0, k)), name, args);
-			if (r != null) return r;
-			k--;
-		}
-		return null;
-	}
-
-	// The type (with the type arguments `args`) or, without type arguments, the namespace named `name` in the
-	// namespace `scope`, or the type nested in the type `scope`; null when there is none.
-	function lookupIn(scope:CsValue, name:String, args:Array<IlSigNorm>):Null<CsValue> {
-		var clrName = args.length > 0 ? name + "`" + args.length : name;
-		switch (scope) {
-			case VNamespace(ns):
-				var inner = ns.concat([name]);
-				if (args.length == 0 && g.externs.namespaceExists(inner)) return VNamespace(inner);
-				var t = typeAt({ns: ns, nested: [], name: clrName}, args);
-				return t == null ? null : VType(t);
-			case VType(LClass(p, outer) | LValueType(p, outer)) if (programClass(LClass(p, outer)) == null):
-				// A nested type takes the enclosing type's type arguments first.
-				var t = typeAt({ns: p.ns, nested: p.nested.concat([p.name]), name: clrName}, outer.concat(args));
-				return t == null ? null : VType(t);
-			case _:
-				return null;
-		}
-	}
-
-	// The type whose CLR path is `path`, with the type arguments `args`: a class of the program, or a public
-	// type of an assembly NetRefs finds (a loaded library, an assembly one references, the reference pack).
-	function typeAt(path:IlPath, args:Array<IlSigNorm>):Null<IlSigNorm> {
-		var c = path.nested.length == 0 ? g.externs.compiledClass(path) : null;
-		if (c != null) {
-			if (args.length > 0) throw new Unsupported("generic Haxe classes named in inline C#", true);
-			return tl.sig(TInst(c, []));
-		}
-		var defined = try NetRefs.of(g.ctx).definer(path) != null catch (_:Unsupported) false;
-		if (!defined || !g.externs.isVisibleType(path)) return null;
-		return g.externs.csType(path, args);
-	}
-
-	// A type the C# text names, as a cast, `is` or `new` target.
-	function resolveType(t:CsType):IlSigNorm {
-		switch (t) {
-			case CTKeyword(name):
-				return keywordType(name);
-			case CTArray(t1):
-				return LVector(resolveType(t1));
-			case CTNamed(global, segments, targs):
-				var args = [for (a in targs) resolveType(a)];
-				var last = segments.length - 1;
-				var headArgs = last == 0 ? args : [];
-				var r = global ? lookupIn(VNamespace([]), segments[0], headArgs) : simpleName(segments[0], headArgs);
-				if (r == null) unknownName((global ? "global::" : "") + segments[0], global ? "CS0400" : "CS0246");
-				for (i in 1...segments.length) {
-					var next = lookupIn(r, segments[i], i == last ? args : []);
-					if (next == null) unknownName(segments.slice(0, i + 1).join("."), r.match(VNamespace(_)) ? "CS0234" : "CS0426");
-					r = next;
-				}
-				return switch (r) {
-					case VType(s): s;
-					case _: error("the inline C# name " + segments.join(".") + " is a namespace, not a type (C# error CS0118)");
-				}
-		}
-	}
-
 	// ---- members (csexpr §6.2, §6.3)
 
 	// The program's class a type is, or null for a .NET type.
@@ -362,7 +264,7 @@ class CsToIl {
 	// value type goes as its address (VAddress), as C# reaches a member through a variable: the variable's own
 	// for a placeholder whose argument is one, else a temporary's (a call's result, say).
 	function receiver(e1:CsExpr):CsValue {
-		var tn = typeOrNamespace(e1);
+		var tn = names.typeOrNamespace(e1);
 		if (tn != null) return tn;
 		switch (e1.def) {
 			case CPlaceholder(n) if (n < args.length):
@@ -431,7 +333,11 @@ class CsToIl {
 		var r = receiver(e1);
 		var rt = receiverType(r, name);
 		var c = programClass(rt.t);
-		if (c != null) return programField(c, name, rt.isStatic, r);
+		if (c != null) {
+			var base = netBaseFor(c, name, rt.isStatic);
+			if (base == null) return programField(c, name, rt.isStatic, r);
+			rt = {t: base, isStatic: rt.isStatic};
+		}
 		var b = atPos(() -> g.externs.memberCs(rt.t, name, rt.isStatic));
 		if (b == null) {
 			if (atPos(() -> g.externs.hasMethodCs(rt.t, name)))
@@ -441,7 +347,9 @@ class CsToIl {
 		var parent = b.parent;
 		switch (b.member) {
 			case XConstant(k, declared):
-				var s = tl.calls.constant(k, declared);
+				// An enum's literal loads as its underlying type, which says whether it is signed.
+				var under = enumUnderlying(declared);
+				var s = tl.calls.constant(k, under != null ? under : declared);
 				// An enum's literal is of the enum type; a null one, of its declared type.
 				return s == null || !(isNumber(declared) || declared.match(LBool | LChar | LString)) ? declared : s;
 			case XField(open, _):
@@ -545,7 +453,11 @@ class CsToIl {
 		var r = receiver(e1);
 		var rt = receiverType(r, name);
 		var c = programClass(rt.t);
-		if (c != null) return programCall(c, name, rt.isStatic, r, args);
+		if (c != null) {
+			var base = netBaseFor(c, name, rt.isStatic);
+			if (base == null) return programCall(c, name, rt.isStatic, r, args);
+			rt = {t: base, isStatic: rt.isStatic};
+		}
 		var pushed = pushArgs(args);
 		var m = bind(rt.t, name, rt.isStatic, pushed);
 		if (m == null) {
@@ -582,7 +494,7 @@ class CsToIl {
 
 	// `new T(args)`: the .NET constructor bound as a call; a struct's `new T()` without one is its default.
 	function newObject(t:CsType, args:Array<CsExpr>):IlSigNorm {
-		var s = resolveType(t);
+		var s = names.resolveType(t);
 		if (programClass(s) != null) throw new Unsupported("`new` of a Haxe class in inline C#", false);
 		if (DotnetTypes.isValueType(s) && args.length == 0 && !atPos(() -> g.externs.hasParameterlessCtor(s))) {
 			tl.pushDefault(s);
@@ -624,10 +536,25 @@ class CsToIl {
 	// The field named `name` of `c` or of a superclass (static ones with `isStatic`), and the class declaring it.
 	static function findField(c:TClass, name:String, isStatic:Bool):Null<{owner:TClass, cf:TClassField}> {
 		var cur = c;
-		while (cur != null) {
+		while (cur != null && !TypeFunctions.hasClassFlag(cur, CExtern)) {
 			var cf = isStatic ? cur.statics.get(name) : cur.fields.get(name);
 			if (cf != null) return {owner: cur, cf: cf};
 			cur = cur.superClass == null ? null : cur.superClass.c;
+		}
+		return null;
+	}
+
+	// Where the member `name` of the program's class `c` is looked up when `c` and its Haxe superclasses do not
+	// declare it: the .NET class of its nearest extern superclass, with the type arguments the chain gives it
+	// (C# finds the inherited .NET member there); null when `c` declares it or has no extern superclass.
+	function netBaseFor(c:TClass, name:String, isStatic:Bool):Null<IlSigNorm> {
+		if (findField(c, name, isStatic) != null || c.params.length > 0) return null;
+		var cur = c, params:Array<T> = [];
+		while (cur.superClass != null) {
+			var sup = cur.superClass, cparams = cur.params, args = params;
+			params = [for (p in sup.params) TypeFunctions.applyParams(cparams, args, p)];
+			cur = sup.c;
+			if (TypeFunctions.hasClassFlag(cur, CExtern)) return tl.sig(TInst(cur, params));
 		}
 		return null;
 	}
@@ -660,6 +587,7 @@ class CsToIl {
 			return s;
 		}
 		if (f.owner.params.length > 0 || c.params.length > 0) throw new Unsupported("members of generic Haxe classes in inline C#", true);
+		if (g.ownerOf.get(cf) == null) throw new Unsupported("this Haxe variable in inline C#", false);
 		var fld = tl.calls.instanceField(f.owner, [], cf);
 		boxReceiverFor(r, fld.owner);
 		il.opToken(IlOps.LDFLD, fld.token, 1, 1);
@@ -774,11 +702,11 @@ class CsToIl {
 				var ta = value(a);
 				binary(op, a, b, ta, value(b));
 			case CCast(t, e1):
-				var to = resolveType(t);
+				var to = names.resolveType(t);
 				constant(x);
 				castExpr(to, e1);
 			case CIs(e1, t):
-				var to = resolveType(t);
+				var to = names.resolveType(t);
 				box(value(e1));
 				il.opToken(IlOps.ISINST, g.typeTokenOf(to), 1, 1);
 				il.op(IlOps.LDNULL, 0, 1);
@@ -1255,7 +1183,7 @@ class CsToIl {
 				return negateConstant(e1);
 			case CMember(e1, name):
 				// A literal of a .NET type, `int.MinValue`.
-				var t = switch (typeOrNamespace(e1)) {
+				var t = switch (names.typeOrNamespace(e1)) {
 					case VType(t) if (programClass(t) == null): t;
 					case _: return null;
 				}
@@ -1288,7 +1216,7 @@ class CsToIl {
 				}};
 			case CCast(ct, e1):
 				var c = constant(e1);
-				var to = resolveType(ct);
+				var to = names.resolveType(ct);
 				if (c == null || !isNumber(to) || isDecimal(to)) return null;
 				if (isFloat(to)) return {t: to, i: 0, f: asFloat(c)};
 				if (!isFloat(c.t)) {
@@ -1522,12 +1450,13 @@ class CsToIl {
 		}
 		if (IlPaths.sigEq(from, to)) return;
 		if (from.match(LVoid)) error("the inline C# expression has no value (C# error CS0029)");
-		// An enum converts explicitly to and from the numbers (but decimal) and other enums, as its underlying type.
+		// An enum converts explicitly to and from the numbers and other enums, as its underlying type (decimal
+		// through that type).
 		var fromEnum = enumUnderlying(from), toEnum = enumUnderlying(to);
 		if (fromEnum != null || toEnum != null) {
 			var f = fromEnum != null ? fromEnum : from, t = toEnum != null ? toEnum : to;
-			if (isNumber(f) && isNumber(t) && !isDecimal(f) && !isDecimal(t)) {
-				if (!IlPaths.sigEq(f, t)) numericCast(f, t);
+			if (isNumber(f) && isNumber(t)) {
+				explicitCast(f, t);
 				return;
 			}
 		}
