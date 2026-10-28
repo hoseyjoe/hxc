@@ -92,8 +92,9 @@ typedef MethodPlan = {
 };
 
 // `cf` is null for a field of an enum's classes (EnumToIl); `token` is set when the row is written. The
-// backing field of a @:property var has its property (`property`), whose accessors every access calls.
-typedef FieldPlan = {cf:Null<TClassField>, name:String, flags:Int, sig:IlSigNorm, ?token:Int, ?property:PropertyPlan};
+// backing field of a @:property var has its property (`property`), whose accessors every access calls. A
+// field with a FieldOffset has its `offset`, its FieldLayout row.
+typedef FieldPlan = {cf:Null<TClassField>, name:String, flags:Int, sig:IlSigNorm, ?token:Int, ?property:PropertyPlan, ?offset:Int};
 
 // A CLR property of a class, as gencs's gen_prop writes one for a var its InterfaceProps filter marks: the
 // var `cf` (of the class or, for an override of its accessors, a superclass), the property's name and
@@ -152,7 +153,9 @@ typedef ClassPlan = {
 	emptyCtor:Null<MethodPlan>,
 	// The CLR properties, in the order gencs writes them.
 	properties:Array<PropertyPlan>,
-	token:Int
+	token:Int,
+	// A StructLayout's Pack and Size, a ClassLayout row when either is not 0.
+	?layout:{pack:Int, size:Int}
 };
 
 // An interface a class implements, with its type arguments in terms of the class's type parameters.
@@ -187,6 +190,8 @@ private typedef InterfaceImpls = {
 class TypeAttrs {
 	public static inline var PUBLIC = 0x1;
 	public static inline var SEQUENTIAL = 0x8;
+	public static inline var EXPLICIT = 0x10;
+	public static inline var LAYOUT_MASK = 0x18;
 	public static inline var INTERFACE = 0x20;
 	public static inline var ABSTRACT = 0x80;
 	public static inline var SEALED = 0x100;
@@ -336,6 +341,8 @@ class TclassToIl {
 		var impls = isInterface ? null : interfaceImpls(g, c, interfaces);
 		var implementing = impls == null ? new ObjectMap<TClassField, Bool>() : impls.own;
 		var props = isInterface ? null : planProperties(g, c, interfaces, implementing);
+		var path = DotnetNames.typePath(TClassDecl(c));
+		inline function site(name:String):AttributesToIl.AttrSite return {name: name, ns: path.ns};
 
 		var fields:Array<FieldPlan> = [];
 		// The CLR properties of the class's @:property vars (planVarProperty): the statics', then the instance
@@ -373,11 +380,13 @@ class TclassToIl {
 						case Method(_):
 							continue;
 					}
+					var pseudo = AttributesToIl.pseudo(g, cf.meta, AttrTarget.TField, cf.pos, site(cf.name));
 					fields.push({
 						cf: cf,
 						name: DotnetNames.fieldName(c, cf.name),
-						flags: FieldAttrs.PUBLIC | (isStatic ? FieldAttrs.STATIC : 0),
-						sig: g.types.toSig(cf.type)
+						flags: FieldAttrs.PUBLIC | (isStatic ? FieldAttrs.STATIC : 0) | pseudo.fieldFlags,
+						sig: g.types.toSig(cf.type),
+						offset: pseudo.offset
 					});
 				} catch (u:Unsupported) throw at(u, cf.pos);
 			}
@@ -618,10 +627,15 @@ class TclassToIl {
 			if (isStruct) flags |= TypeAttrs.SEQUENTIAL;
 			if (!hasCctor) flags |= TypeAttrs.BEFORE_FIELD_INIT;
 		}
+		var target = isInterface ? AttrTarget.TInterface : isStruct ? AttrTarget.TStruct : AttrTarget.TType;
+		var pseudo = AttributesToIl.pseudo(g, c.meta, target, c.pos, site(c.path.name));
+		// A StructLayout's layout replaces C#'s default: Sequential for a struct, Auto for a class.
+		if (pseudo.layout != null) flags &= ~TypeAttrs.LAYOUT_MASK;
+		flags |= pseudo.typeFlags;
 		return {
 			c: c,
 			hxPath: DotnetTypes.haxePath(TClassDecl(c)),
-			path: DotnetNames.typePath(TClassDecl(c)),
+			path: path,
 			flags: flags,
 			superSig: superSig,
 			interfaces: CompanionToIl.addInterfaces(g, c, [for (i in interfaces) i.c], [for (i in interfaces) i.sig]),
@@ -635,7 +649,8 @@ class TclassToIl {
 			ctors: ctors,
 			emptyCtor: emptyCtor,
 			properties: staticProps.concat(props == null ? [] : props.list).concat(instanceProps).concat(indexers),
-			token: 0
+			token: 0,
+			layout: pseudo.layout
 		};
 	}
 
@@ -1611,8 +1626,11 @@ class TclassToIl {
 		implemented.sort((a, b) -> a - b);
 		for (i in implemented) mb.interfaceImpl(plan.token, i);
 		if (plan.c != null && plan.isStd && TypeFunctions.hasMeta(":classCode", plan.c.meta)) g.records.push("ignored @:classCode in " + plan.hxPath);
+		if (plan.layout != null && (plan.layout.pack != 0 || plan.layout.size != 0)) mb.classLayout(plan.token, plan.layout.pack, plan.layout.size);
+		checkFieldOffsets(g, plan);
 		for (f in plan.fields) {
 			f.token = mb.field(plan.token, f.flags, f.name, g.sigs.field(f.sig));
+			if (f.offset != null && f.flags & FieldAttrs.STATIC == 0) mb.fieldLayout(f.token, f.offset);
 			if (f.cf == null) continue;
 			if (f.property != null) {
 				// A @:property var has no field of its own to Haxe code: every access calls an accessor.
@@ -1662,6 +1680,28 @@ class TclassToIl {
 				g.methodTokens.set(cf, pair.accessor.token);
 				g.methodPlans.set(cf, pair.accessor);
 				g.methodSigs.set(cf, {ret: pair.accessor.ret, args: pair.accessor.args});
+			}
+		}
+	}
+
+	// C#'s rules for FieldOffset, whose errors Roslyn gives: on the instance fields of a type with
+	// StructLayout(LayoutKind.Explicit), every one of them, and on no other field. An auto-property has a
+	// backing field no FieldOffset can name.
+	static function checkFieldOffsets(g:DotnetCtx, plan:ClassPlan):Void {
+		var explicit = plan.flags & TypeAttrs.LAYOUT_MASK == TypeAttrs.EXPLICIT;
+		for (f in plan.fields) {
+			if (f.cf == null) continue;
+			var isStatic = f.flags & FieldAttrs.STATIC != 0;
+			if (f.offset != null) {
+				if (isStatic)
+					g.error("the FieldOffset attribute is not allowed on the static field " + f.cf.name + " (C# error CS0637)", f.cf.pos);
+				else if (!explicit)
+					g.error("the FieldOffset attribute on " + f.cf.name + " needs StructLayout(LayoutKind.Explicit) on its type (C# error CS0636)", f.cf.pos);
+			} else if (explicit && !isStatic) {
+				if (f.property != null)
+					g.error("the @:property variable " + f.cf.name + " cannot be in a type with StructLayout(LayoutKind.Explicit): it has no field to give an offset (C# error CS0842)", f.cf.pos);
+				else
+					g.error(f.cf.name + " needs a FieldOffset attribute, as its type has StructLayout(LayoutKind.Explicit) (C# error CS0625)", f.cf.pos);
 			}
 		}
 	}

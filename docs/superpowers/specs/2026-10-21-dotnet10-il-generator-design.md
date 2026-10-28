@@ -862,7 +862,12 @@ and `List` copy, and two threads casting one array at once.
      CS0182, CS0121, CS1614, CS0617, CS0023, CS1021) are `dotnet:` errors that name them; a literal's Haxe
      suffix types it (`i64` a long, `u32` a uint), and the attribute classes are read from the reference pack,
      which Roslyn compiles gencs's C# against. The attributes the backend writes itself come from
-     System.Runtime. Nullability metadata and events are not written yet, with no error: hxc compiles the
+     System.Runtime. The pseudo-attributes are flags and tables, never rows (ruling 5): `Serializable` and
+     `NonSerialized` the type's and field's flags, `StructLayout` the layout and CharSet flags with a
+     ClassLayout row for its `Pack` and `Size`, and `FieldOffset` a FieldLayout row, with Roslyn's errors
+     (CS0636, CS0625, CS0637, CS0842, CS0591, CS0599); Roslyn's others (`MethodImpl`, `DllImport`,
+     `MarshalAs`, ...) are errors. This fixes std's `haxe.io.FPHelper`, and so `Bytes.getDouble` and its kin,
+     which read and wrote zeros. Nullability metadata and events are not written yet, with no error: hxc compiles the
      class without them (an `@:event` var's `add_` and `remove_` methods are plain methods), where gencs
      writes a C# `event`, so .NET reflection sees no event.
      The carried items:

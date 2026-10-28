@@ -95,6 +95,8 @@ class MetaTables {
 	public final memberRef:Array<Row> = [];
 	public final constant:Array<Row> = [];
 	public final customAttribute:Array<Row> = [];
+	public final classLayout:Array<Row> = [];
+	public final fieldLayout:Array<Row> = [];
 	public final standAloneSig:Array<Row> = [];
 	public final propertyMap:Array<Row> = [];
 	public final property:Array<Row> = [];
@@ -123,6 +125,8 @@ class MetaTables {
 			// The constant's type is one byte followed by a padding byte, written here as one U16.
 			{table: T.IConstant, rows: constant, schema: [U16, T.IHasConstant, BLOB]},
 			{table: T.ICustomAttribute, rows: customAttribute, schema: [T.IHasCustomAttribute, T.ICustomAttributeType, BLOB]},
+			{table: T.IClassLayout, rows: classLayout, schema: [U16, U32, T.ITypeDef]},
+			{table: T.IFieldLayout, rows: fieldLayout, schema: [U32, T.IField]},
 			{table: T.IStandAloneSig, rows: standAloneSig, schema: [BLOB]},
 			{table: T.IPropertyMap, rows: propertyMap, schema: [T.ITypeDef, T.IProperty]},
 			{table: T.IProperty, rows: property, schema: [U16, STR, BLOB]},
@@ -155,10 +159,12 @@ class MetaTables {
 	}
 
 	public function writeMetadata(h:MetaHeaps):{bytes:Bytes, mvidOffset:Int} {
-		// Nothing points at a Constant, CustomAttribute, MethodSemantics or MethodImpl row, so those tables alone
-		// are sorted here.
+		// Nothing points at a Constant, CustomAttribute, ClassLayout, FieldLayout, MethodSemantics or MethodImpl
+		// row, so those tables alone are sorted here.
 		sortBy(constant, [1]);
 		sortBy(customAttribute, [0]);
+		sortBy(classLayout, [2]);
+		sortBy(fieldLayout, [1]);
 		sortBy(methodSemantics, [2]);
 		sortBy(methodImpl, [0]);
 		checkSorted("InterfaceImpl", interfaceImpl, [0, 1]);

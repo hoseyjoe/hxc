@@ -78,6 +78,11 @@ typedef AttrNamed = {isProperty:Bool, name:String, type:AttrType, value:AttrValu
 // namespace of the type that holds it, whose enclosing namespaces C# looks the attribute's name up in.
 typedef AttrSite = {name:String, ns:Array<String>};
 
+// What a member's pseudo-attributes give it (AttributesToIl.pseudo): its TypeDef or Field flags, a
+// StructLayout's Pack and Size (null without a StructLayout; a ClassLayout row when either is not 0) and a
+// FieldOffset's offset (a FieldLayout row).
+typedef PseudoAttrs = {typeFlags:Int, fieldFlags:Int, layout:Null<{pack:Int, size:Int}>, offset:Null<Int>};
+
 // A type an attribute names: an assembly's (`net`), or the program's class (`c`) or @:nativeGen enum (`e`).
 private typedef AttrClass = {path:IlPath, name:String, ?net:IlClass, ?c:TClass, ?e:TEnum};
 
@@ -120,7 +125,8 @@ private class AttrError {
 // CS0182, CS0121) are `dotnet:` errors that name them. The attributes the backend writes on its own
 // (CompilerGenerated, DefaultMember, ...) come from System.Runtime (runtimeAttr), never from another
 // assembly that defines its own copy. The pseudo-attributes (StructLayout, FieldOffset, Serializable,
-// NonSerialized) are flags and tables, not rows; forMember leaves them out.
+// NonSerialized) are flags and tables, not rows: pseudo gives them when the member is planned, and forMember
+// leaves them out. Roslyn's other pseudo-attributes are refused.
 class AttributesToIl {
 	static final systemNs = ["System"];
 	static final attributePath:IlPath = {ns: ["System"], nested: [], name: "Attribute"};
@@ -129,6 +135,14 @@ class AttributesToIl {
 	static final pseudoNames = [
 		"System.Runtime.InteropServices.StructLayoutAttribute", "System.Runtime.InteropServices.FieldOffsetAttribute",
 		"System.SerializableAttribute", "System.NonSerializedAttribute"
+	];
+	// Roslyn's other pseudo-attributes, flags or tables that hxc does not write (ruling 5).
+	static final unsupportedPseudoNames = [
+		"System.Runtime.InteropServices.DllImportAttribute", "System.Runtime.InteropServices.MarshalAsAttribute",
+		"System.Runtime.InteropServices.ComImportAttribute", "System.Runtime.CompilerServices.MethodImplAttribute",
+		"System.Runtime.InteropServices.PreserveSigAttribute", "System.Runtime.InteropServices.InAttribute",
+		"System.Runtime.InteropServices.OutAttribute", "System.Runtime.InteropServices.OptionalAttribute",
+		"System.Runtime.CompilerServices.SpecialNameAttribute"
 	];
 	// C#'s names of AttributeTargets' bits, in bit order, as CS0592 lists them.
 	static final targetNames = [
@@ -148,6 +162,11 @@ class AttributesToIl {
 	// The program's @:nativeGen enums, by IlPaths.key.
 	var clrEnums:Null<Map<String, TEnum>> = null;
 	var runtimeId:Null<ModuleBuilder.AssemblyIdentity> = null;
+	// pseudo's answers, by the meta they read.
+	final pseudoDone = new haxe.ds.ObjectMap<Metadata, PseudoAttrs>();
+	// While a member is planned (pseudo), before any TypeDef row is written: lookupPath finds a program class
+	// by g.classAt and keeps no answer.
+	var planning = false;
 
 	function new(g:DotnetCtx) {
 		this.g = g;
@@ -240,6 +259,28 @@ class AttributesToIl {
 	}
 
 	function entry(owner:Int, m:MetadataEntry, target:AttrTarget, site:AttrSite, seen:Map<String, Bool>):Void {
+		var a = parse(m, site);
+		var cls = a.cls, e = a.e;
+		if (unsupportedPseudoNames.indexOf(cls.name) >= 0)
+			throw new AttrError(cls.name + " is a pseudo-attribute (a flag, not an attribute row) and is not supported", e.pos);
+		if (cls.c != null && cls.c.params.length > 0)
+			throw new AttrError(cls.name + " is generic, and @:meta cannot give an attribute class type arguments (C# error CS0305)", e.pos);
+		var usage = usageOf(cls);
+		var bit = targetBit(target);
+		if (usage.validOn & bit == 0)
+			throw new AttrError(cls.name + " is not valid on " + targetNoun(target) + "; its AttributeUsage allows " + targetList(usage.validOn) + " (C# error CS0592)", e.pos);
+		var key = IlPaths.key(cls.path);
+		if (seen.exists(key) && !usage.multiple)
+			throw new AttrError(cls.name + " is already on " + site.name + ", and its AttributeUsage does not allow it more than once (C# error CS0579)", e.pos);
+		seen.set(key, true);
+		// A pseudo-attribute is a flag or a table, never a row: pseudo() read it when the member was planned.
+		if (pseudoNames.indexOf(cls.name) >= 0) return;
+		var args = arguments(cls, a.args, site.ns, e.pos);
+		write(g, owner, {token: args.ctor.token(), params: args.ctor.params}, args.fixed, args.named);
+	}
+
+	// The attribute a @:meta entry names, and its argument expressions.
+	function parse(m:MetadataEntry, site:AttrSite):{e:Expr, cls:AttrClass, args:Array<Expr>} {
 		// gencs drops a @:meta of several parameters without a word.
 		if (m.params.length != 1) throw new AttrError("@:meta takes one attribute; write one @:meta per attribute", m.params.length > 0 ? m.params[0].pos : m.pos);
 		var e = m.params[0];
@@ -264,19 +305,11 @@ class AttributesToIl {
 		}
 		if (parts == null)
 			throw new AttrError("@:meta's attribute must be a type, or a call of one, like @:meta(System.ObsoleteAttribute(\"why\"))", e.pos);
-		var cls = resolveAttribute(parts, site.ns, e.pos);
-		// A pseudo-attribute is a flag or a table, never a row.
-		if (pseudoNames.indexOf(cls.name) >= 0) return;
-		if (cls.c != null && cls.c.params.length > 0)
-			throw new AttrError(cls.name + " is generic, and @:meta cannot give an attribute class type arguments (C# error CS0305)", e.pos);
-		var usage = usageOf(cls);
-		var bit = targetBit(target);
-		if (usage.validOn & bit == 0)
-			throw new AttrError(cls.name + " is not valid on " + targetNoun(target) + "; its AttributeUsage allows " + targetList(usage.validOn) + " (C# error CS0592)", e.pos);
-		var key = IlPaths.key(cls.path);
-		if (seen.exists(key) && !usage.multiple)
-			throw new AttrError(cls.name + " is already on " + site.name + ", and its AttributeUsage does not allow it more than once (C# error CS0579)", e.pos);
-		seen.set(key, true);
+		return {e: e, cls: resolveAttribute(parts, site.ns, e.pos), args: args};
+	}
+
+	// The constructor C# calls for an attribute's arguments, and their values.
+	function arguments(cls:AttrClass, args:Array<Expr>, ns:Array<String>, pos:Position):{ctor:Candidate, fixed:Array<AttrValue>, named:Array<AttrNamed>} {
 		var positional:Array<Const> = [];
 		var named:Array<AttrNamed> = [];
 		for (a in args) switch (a.expr) {
@@ -285,16 +318,124 @@ class AttributesToIl {
 				if (mem != null && mem.writeOnly)
 					throw new AttrError(name + " is not a valid named argument: a property must have a public getter and setter (C# error CS0617)", a.pos);
 				if (mem == null) throw new AttrError(cls.name + " has no public field or settable property " + name + " (C# error CS0246)", a.pos);
-				var k = constant(v, site.ns);
+				var k = constant(v, ns);
 				if (!converts(k, mem.type))
 					throw new AttrError("the value given to " + name + " does not convert to " + mem.label + " (C# error CS0029)", v.pos);
 				named.push({isProperty: mem.isProperty, name: name, type: mem.type, value: valueOf(k, mem.type)});
 			case _:
 				if (named.length > 0) throw new AttrError("an attribute's named arguments must come after its positional ones (C# error CS1016)", a.pos);
-				positional.push(constant(a, site.ns));
+				positional.push(constant(a, ns));
 		}
-		var ctor = chooseCtor(cls, positional, e.pos);
-		write(g, owner, {token: ctor.token(), params: ctor.params}, [for (i in 0...positional.length) valueOf(positional[i], ctor.params[i])], named);
+		var ctor = chooseCtor(cls, positional, pos);
+		return {ctor: ctor, fixed: [for (i in 0...positional.length) valueOf(positional[i], ctor.params[i])], named: named};
+	}
+
+	// ---- pseudo-attributes
+
+	// The flags and layout `meta`'s pseudo-attributes give a member being planned (ruling 5): Serializable a
+	// type's 0x2000, NonSerialized a field's 0x80, StructLayout a type's layout (Sequential 0x8, Explicit 0x10,
+	// Auto 0) and CharSet (Ansi 0, Unicode 0x10000, Auto 0x20000), with its Pack and Size for a ClassLayout
+	// row, and FieldOffset a field's FieldLayout row. `layout` is null without a StructLayout, and `offset`
+	// without a FieldOffset. An entry that is not valid on the target, or is there twice, gives its error when
+	// the member's rows are written (forMember), as any attribute does; an argument C# would refuse gives it
+	// here. Each meta is read once, as a leave-out round plans the classes again.
+	public static function pseudo(g:DotnetCtx, meta:Metadata, target:AttrTarget, pos:Position, ?site:AttrSite):PseudoAttrs {
+		var a = of(g);
+		var r = a.pseudoDone.get(meta);
+		if (r == null) {
+			r = a.pseudoOf(meta, target, pos, site == null ? {name: "", ns: []} : site);
+			a.pseudoDone.set(meta, r);
+		}
+		return r;
+	}
+
+	function pseudoOf(meta:Metadata, target:AttrTarget, pos:Position, site:AttrSite):PseudoAttrs {
+		var r:PseudoAttrs = {typeFlags: 0, fieldFlags: 0, layout: null, offset: null};
+		for (m in meta) {
+			if (m.name != ":meta" || m.params.length != 1 || !maybePseudo(m.params[0])) continue;
+			// The types are not declared yet: lookupPath finds the program's classes by their paths, and keeps
+			// none of its answers.
+			planning = true;
+			var a = try parse(m, site) catch (_:AttrError) null;
+			planning = false;
+			if (a == null || pseudoNames.indexOf(a.cls.name) < 0 || usageOf(a.cls).validOn & targetBit(target) == 0) continue;
+			try {
+				planning = true;
+				var args = arguments(a.cls, a.args, site.ns, a.e.pos);
+				planning = false;
+				function int(v:AttrValue):Int return switch (v) {
+					case AInt(_, i) | AEnum(_, _, i): i.low;
+					case _: throw "internal error: a pseudo-attribute argument that is not an integer";
+				}
+				switch (a.cls.path.name) {
+					case "SerializableAttribute":
+						r.typeFlags |= 0x2000;
+					case "NonSerializedAttribute":
+						r.fieldFlags |= 0x80;
+					case "FieldOffsetAttribute":
+						var offset = int(args.fixed[0]);
+						// A refused offset still marks the field as having one, so that it is not also missing one.
+						r.offset = offset < 0 ? 0 : offset;
+						if (offset < 0) throw new AttrError("a field's offset cannot be negative (C# error CS0591)", a.args[0].pos);
+					case "StructLayoutAttribute":
+						r.typeFlags &= ~0x30018;
+						// Roslyn takes a value LayoutKind does not name, StructLayout(1) or (5), for Sequential.
+						r.typeFlags |= switch (int(args.fixed[0])) {
+							case 2: 0x10;
+							case 3: 0;
+							case _: 0x8;
+						}
+						// Kept when a named argument is refused, so the type's fields are checked against its layout.
+						var layout = {pack: 0, size: 0};
+						r.layout = layout;
+						for (i in 0...args.named.length) {
+							var n = args.named[i], v = int(args.named[i].value);
+							var at = a.args[a.args.length - args.named.length + i].pos;
+							inline function invalid() return new AttrError("the value given to " + n.name + " is not valid (C# error CS0599)", at);
+							switch (n.name) {
+								case "Pack":
+									if (v != 0 && (v < 0 || v > 128 || v & (v - 1) != 0)) throw invalid();
+									layout.pack = v;
+								case "Size":
+									if (v < 0) throw invalid();
+									layout.size = v;
+								case "CharSet":
+									r.typeFlags |= switch (v) {
+										case 1 | 2: 0;
+										case 3: 0x10000;
+										case 4: 0x20000;
+										case _: throw invalid();
+									}
+								case _:
+							}
+						}
+				}
+			} catch (e:AttrError) {
+				planning = false;
+				g.error(e.msg, e.pos == null ? pos : e.pos);
+			} catch (u:Unsupported) {
+				planning = false;
+				if (u.pos == null) u.pos = m.params[0].pos;
+				g.report(u);
+			}
+		}
+		return r;
+	}
+
+	// Whether the attribute expression's last name is a supported pseudo-attribute's, which is all pseudoOf
+	// needs to look at.
+	static function maybePseudo(e:Expr):Bool {
+		var parts = dotted(switch (e.expr) {
+			case ECall(f, _): f;
+			case _: e;
+		});
+		if (parts == null) return false;
+		var last = parts[parts.length - 1];
+		for (n in pseudoNames) {
+			var short = n.substr(n.lastIndexOf(".") + 1);
+			if (last == short || last + "Attribute" == short) return true;
+		}
+		return false;
 	}
 
 	// The parts of a dotted name, or null.
@@ -318,9 +459,14 @@ class AttributesToIl {
 	// The program's or a referenced assembly's type at `path`, or null.
 	function lookupPath(path:IlPath):Null<AttrClass> {
 		var key = IlPaths.key(path);
-		if (classes.exists(key)) return classes.get(key);
+		if (planning) {
+			var c = g.classAt(path);
+			if (c != null && !TypeFunctions.hasClassFlag(c, CExtern)) return {path: path, name: dottedName(path), c: c};
+		} else if (classes.exists(key)) {
+			return classes.get(key);
+		}
 		var r:Null<AttrClass> = null;
-		if (g.mb.definesType(path)) {
+		if (!planning && g.mb.definesType(path)) {
 			var c = g.classAt(path);
 			if (c != null && !TypeFunctions.hasClassFlag(c, CExtern)) {
 				r = {path: path, name: dottedName(path), c: c};
@@ -345,7 +491,7 @@ class AttributesToIl {
 			var raw = lib == null ? null : lib.rawClass(path);
 			if (raw != null) r = {path: path, name: dottedName(path), net: raw};
 		}
-		classes.set(key, r);
+		if (!planning) classes.set(key, r);
 		return r;
 	}
 

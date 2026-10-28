@@ -555,7 +555,13 @@ class GenerateDotnet {
 
 		for (p in plans) p.token = mb.typeDef(p.flags, p.path);
 		// CLR enums come after the classes, their fields after the classes' fields.
-		var enumTokens = [for (e in enums) mb.typeDef(TypeAttrs.PUBLIC | TypeAttrs.SEALED, DotnetNames.typePath(TEnumDecl(e)))];
+		var enumTokens = [
+			for (e in enums) {
+				var path = DotnetNames.typePath(TEnumDecl(e));
+				var pseudo = AttributesToIl.pseudo(g, e.meta, AttrTarget.TClrEnum, e.pos, {name: e.path.name, ns: path.ns});
+				mb.typeDef(TypeAttrs.PUBLIC | TypeAttrs.SEALED | pseudo.typeFlags, path);
+			}
+		];
 		for (p in plans) TclassToIl.write(g, p);
 		for (c in g.companionOrder) CompanionToIl.emit(g, c);
 		EnumToIl.written(g);

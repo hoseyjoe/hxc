@@ -20821,3 +20821,127 @@ C: __hx_ctor__C __hx_this[] a[System.ComponentModel.DescriptionAttribute] n[]
 D: Void .ctor(System.String, Int32) a[System.ComponentModel.DescriptionAttribute] n[]
 D: Void .ctor(haxe.lang.EmptyObject) empty[]
 D: __hx_ctor__D __hx_this[] a[System.ComponentModel.DescriptionAttribute] n[]
+--- attrs-pseudo-layout-and-serializable @gencs
+// Pseudo-custom attributes become flags and layout rows, not CustomAttribute rows: hxcs's own FPHelper
+// relies on StructLayout(Explicit) and FieldOffset(0) to reinterpret a float's bits.
+@:meta(System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit))
+@:struct @:nativeGen class Overlay {
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public var i:Int;
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public var f:Single;
+	@:meta(System.Runtime.InteropServices.FieldOffset(4)) public var hi:Int;
+	public function new(f:Single) { this.i = 0; this.hi = 7; this.f = f; }
+}
+@:meta(System.Serializable) class Ser {
+	public var a:Int = 1;
+	@:meta(System.NonSerialized) public var b:Int = 2;
+	public function new() {}
+}
+class P {
+	static function main() {
+		var b = haxe.io.Bytes.alloc(16);
+		b.setDouble(0, 1.5);
+		b.setFloat(8, 2.25);
+		Sys.println(b.toHex());
+		Sys.println(b.getDouble(0) + " " + b.getFloat(8));
+		Sys.println(haxe.io.FPHelper.floatToI32(1.0) + " " + haxe.io.FPHelper.i32ToFloat(0x40490fdb));
+		var d = haxe.io.FPHelper.doubleToI64(1.0);
+		Sys.println(d.high + " " + d.low + " " + haxe.io.FPHelper.i64ToDouble(0, 0x3ff00000));
+		var o = new Overlay(1.0);
+		Sys.println(o.i + " " + o.hi);
+		var t = cs.Lib.toNativeType(Overlay);
+		Sys.println("explicit " + t.IsExplicitLayout + ", attributes " + t.GetCustomAttributes(false).Length);
+		var s = cs.Lib.toNativeType(Ser);
+		Sys.println("serializable " + s.IsSerializable + ", b not serialized " + s.GetField("b").IsNotSerialized + ", attributes " + s.GetCustomAttributes(false).Length);
+	}
+}
+===
+[run]
+000000000000f83f0000104000000000
+1.5 2.25
+1065353216 3.1415927410125732
+1072693248 0 1
+1065353216 7
+explicit true, attributes 0
+serializable true, b not serialized true, attributes 1
+--- attrs-refuse-pseudo-attribute
+class P {
+	@:meta(System.Runtime.CompilerServices.MethodImplAttribute(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)) static function f() {}
+	static function main() f();
+}
+===
+[compile]
+P.hx:2: characters 9-122 : dotnet: System.Runtime.CompilerServices.MethodImplAttribute is a pseudo-attribute (a flag, not an attribute row) and is not supported
+--- attrs-pseudo-layout-two-structs @gencs
+// Two explicit-layout structs, declared against name order, so their ClassLayout and FieldLayout rows are
+// sorted by parent; ZWide's Pack and Size make its ClassLayout row. Bytes and FPHelper reinterpret a value's
+// bits through std's own explicit-layout helpers.
+import cs.system.runtime.interopservices.Marshal;
+@:meta(System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit, Pack = 1, Size = 16))
+@:struct @:nativeGen class ZWide {
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public var a:Int;
+	@:meta(System.Runtime.InteropServices.FieldOffset(5)) public var i:Int;
+	@:meta(System.Runtime.InteropServices.FieldOffset(5)) public var f:Single;
+	public function new(f:Single) { this.a = 3; this.i = 0; this.f = f; }
+}
+@:meta(System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit))
+@:struct @:nativeGen class AOverlay {
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public var d:Float;
+	@:meta(System.Runtime.InteropServices.FieldOffset(4)) public var hi:Int;
+	public function new(d:Float) { this.hi = 0; this.d = d; }
+}
+class P {
+	static function main() {
+		var z = new ZWide(1.5);
+		Sys.println(z.a + " " + z.i + " " + z.f);
+		var o = new AOverlay(2.25);
+		Sys.println(o.hi + " " + o.d);
+		var b = haxe.io.Bytes.alloc(16);
+		b.setDouble(0, 1.5);
+		b.setFloat(8, 2.25);
+		Sys.println(b.getDouble(0) + " " + b.getFloat(8));
+		Sys.println(haxe.io.FPHelper.floatToI32(1.5) + " " + haxe.io.FPHelper.i32ToFloat(haxe.io.FPHelper.floatToI32(2.25)));
+		Sys.println(Marshal.SizeOf(cs.Lib.toNativeType(ZWide)) + " " + Marshal.SizeOf(cs.Lib.toNativeType(AOverlay)));
+	}
+}
+===
+[run]
+3 1069547520 1.5
+1073872896 2.25
+1.5 2.25
+1069547520 2.25
+16 8
+--- attrs-refuse-pseudo-layout-rules
+// Roslyn's rules for FieldOffset (CS0636, CS0625, CS0637, CS0591 for a negative offset) and StructLayout's
+// named arguments (CS0599), each of which fails gencs's C#. Roslyn reports CS0625 only once the attribute
+// errors are fixed. A LayoutKind value of no name, StructLayout(1), is Sequential to Roslyn, not an error.
+@:struct @:nativeGen class Seq {
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public var a:Int;
+	public function new(x:Int) { a = x; }
+}
+@:meta(System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit, Pack = 3))
+@:struct @:nativeGen class Exp {
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public var a:Int;
+	public var b:Int;
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public static var s:Int;
+	public function new(x:Int) { a = x; b = x; }
+}
+@:meta(System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit, Size = -1))
+@:struct @:nativeGen class Bad {
+	@:meta(System.Runtime.InteropServices.FieldOffset(-1)) public var a:Int;
+	public function new(x:Int) { a = x; }
+}
+class P {
+	static function main() {
+		new Seq(1);
+		new Exp(1);
+		new Bad(1);
+	}
+}
+===
+[compile]
+P.hx:8: characters 104-112 : dotnet: the value given to Pack is not valid (C# error CS0599)
+P.hx:17: characters 52-54 : dotnet: a field's offset cannot be negative (C# error CS0591)
+P.hx:15: characters 104-113 : dotnet: the value given to Size is not valid (C# error CS0599)
+P.hx:5: characters 56-73 : dotnet: the FieldOffset attribute on a needs StructLayout(LayoutKind.Explicit) on its type (C# error CS0636)
+P.hx:11: characters 2-19 : dotnet: b needs a FieldOffset attribute, as its type has StructLayout(LayoutKind.Explicit) (C# error CS0625)
+P.hx:12: characters 56-80 : dotnet: the FieldOffset attribute is not allowed on the static field s (C# error CS0637)

@@ -119,6 +119,17 @@ class ModuleBuilder {
 		throw "internal error: method " + r + " has no Param row for its parameter " + index;
 	}
 
+	// The ClassLayout row of a type (a TypeDef token): a StructLayout's Pack and Size. The table is sorted
+	// when it is written.
+	public function classLayout(typeDefToken:Int, pack:Int, size:Int):Void {
+		tables.classLayout.push([pack, size, row(typeDefToken)]);
+	}
+
+	// The FieldLayout row of a field (a Field token): its FieldOffset. The table is sorted when it is written.
+	public function fieldLayout(fieldToken:Int, offset:Int):Void {
+		tables.fieldLayout.push([offset, row(fieldToken)]);
+	}
+
 	public function field(owner:Int, flags:Int, name:String, sig:Bytes):Int {
 		tables.field.push([flags, heaps.strings.add(name), heaps.blobs.add(sig)]);
 		fieldOwners.push(row(owner));
