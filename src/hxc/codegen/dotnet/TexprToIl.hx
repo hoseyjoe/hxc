@@ -864,6 +864,15 @@ class TexprToIl {
 			coerce(to, ret);
 			return;
 		}
+		// IntPtr or UIntPtr to or from another value type: gencs casts through object, which always throws.
+		if (from != null && to != null && !IlPaths.sigEq(from, to) && DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)
+			&& (from.match(LIntPtr | LUIntPtr) || to.match(LIntPtr | LUIntPtr))) {
+			function name(s:IlSigNorm, t:T):String return s.match(LIntPtr) ? "System.IntPtr" : s.match(LUIntPtr) ? "System.UIntPtr" : hxc.core.TPrinting.sTypeStr(t);
+			var u = Unsupported.error("a cast between " + name(from, e1.type) + " and " + name(to, e.type)
+				+ " throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()");
+			u.pos = e1.pos;
+			throw u;
+		}
 		var viaOwn = from != null && to != null && !IlPaths.sigEq(from, to) && !to.match(LObject) && (checked
 			|| want != null && !IlPaths.sigEq(want, to) && (to.match(LString) && !inRuntimeClass()
 				|| DotnetTypes.isValueType(from) && DotnetTypes.isValueType(to)

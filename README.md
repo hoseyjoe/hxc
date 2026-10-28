@@ -220,8 +220,8 @@ generator bring these.
 an `Array` and `get_Item`/`set_Item` are missing from `Type.getInstanceFields(Array)`.
 Embedded resources (`-resource` or `Context.addResource`) are not supported yet: with `-D dotnet` they
 are a compile error, since `haxe.Resource` would find nothing.
-Standard-library code that needs a construct not supported yet compiles to a stub: `Socket.select`,
-which calls a method on an `IntPtr`, is the one left.
+Standard-library code that needs a construct not supported yet compiles to a stub: `cs.Pointer.add`
+(the `+` operator on pointers) is the one left, and `haxe.ds.EnumValueMap` is left out of the build.
 
 hxc ships its own copy of the hxcs runtime classes that generated code depends on
 (`haxe.lang.HxObject`, `haxe.lang.DynamicObject`, `haxe.lang.FieldLookup`, `haxe.lang.Runtime`,

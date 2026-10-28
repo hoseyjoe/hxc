@@ -19691,3 +19691,91 @@ class P {
 ===
 [compile]
 P.hx:8: characters 9-13 : dotnet: F has no __get: a[i] on it cannot be read
+# IntPtr and UIntPtr members bind on native int and native unsigned int (the last std stub, Socket.select);
+# a cast between them and a number is gencs's always-throwing cast through object, so it is an error.
+--- netlib-intptr-calls @gencs
+import cs.system.IntPtr;
+import cs.system.UIntPtr;
+class H {
+	public var p:IntPtr = new IntPtr(7);
+	public static var s:IntPtr = new IntPtr(8);
+	public function new() {}
+}
+class P {
+	static function handle(n:Int):IntPtr return new IntPtr(n);
+	static function main() {
+		var a = new IntPtr(5);
+		trace(a.ToInt32(), new IntPtr(6).ToInt32(), handle(42).ToInt64(), handle(43).ToString());
+		var h = new H();
+		trace(h.p.ToInt32(), H.s.ToInt32());
+		h.p = handle(9);
+		trace(h.p.ToInt32());
+		var l = new IntPtr(haxe.Int64.make(0, 10));
+		trace(l.ToInt64());
+		var d:Dynamic = handle(11);
+		trace(d, Std.string(handle(12)), Std.isOfType(d, IntPtr));
+		var back:IntPtr = d;
+		trace(back.ToInt32());
+		var arr = [handle(1), handle(2)];
+		trace(arr[1].ToInt32(), arr.length);
+		trace(handle(3) == new IntPtr(3), handle(3) != IntPtr.Zero, IntPtr.Size > 0);
+		var n:UInt = 13;
+		var u = new UIntPtr(n);
+		trace(u.ToUInt32(), new UIntPtr(n).ToUInt64());
+	}
+}
+===
+[run]
+P.hx:12: 5, 6, 42, 43
+P.hx:14: 7, 8
+P.hx:16: 9
+P.hx:18: 10
+P.hx:20: 11, 12, true
+P.hx:22: 11
+P.hx:24: 2, 2
+P.hx:25: true, true, true
+P.hx:28: 13, 13
+--- socket-select @gencs
+import sys.net.Socket;
+import sys.net.Host;
+class P {
+	static function main() {
+		var server = new Socket();
+		server.bind(new Host("127.0.0.1"), 0);
+		server.listen(1);
+		var port = server.host().port;
+		var client = new Socket();
+		client.connect(new Host("127.0.0.1"), port);
+		var r = Socket.select([server], [client], null, 1.0);
+		trace(r.read.length, r.read[0] == server, r.write.length, r.write[0] == client, r.others.length);
+		var conn = server.accept();
+		client.write("hi");
+		var r2 = Socket.select([conn], null, null, 1.0);
+		trace(r2.read.length, r2.read[0] == conn);
+		var r3 = Socket.select([client], null, null, 0.01);
+		trace(r3.read.length);
+		conn.close();
+		client.close();
+		server.close();
+	}
+}
+===
+[run]
+P.hx:12: 1, true, 1, true, 0
+P.hx:16: 1, true
+P.hx:18: 0
+--- netlib-intptr-number-cast-is-an-error
+import cs.system.IntPtr;
+class P {
+	static function main() {
+		var p:IntPtr = cast 5;
+		var i:Int = cast new IntPtr(6);
+		var l:haxe.Int64 = cast new IntPtr(7);
+		trace(p, i, l);
+	}
+}
+===
+[compile]
+P.hx:4: characters 23-24 : dotnet: a cast between Int and System.IntPtr throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
+P.hx:5: characters 20-33 : dotnet: a cast between System.IntPtr and Int throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()
+P.hx:6: characters 27-40 : dotnet: a cast between System.IntPtr and haxe.Int64 throws at run time in gencs's C#, which casts through object; use new IntPtr(n), or ToInt32() and ToInt64()

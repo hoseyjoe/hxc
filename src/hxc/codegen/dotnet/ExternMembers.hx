@@ -217,6 +217,15 @@ class ExternMembers {
 		return chainFrom(path, [for (i in 0...rawClass(path).ctypes.length) LTypeParam(i)]);
 	}
 
+	// IntPtr, UIntPtr and TypedReference are written as native int, native unsigned int and typedref in
+	// signatures, so a member's receiver and a constructor's result are those, not the System struct.
+	static function nativeParent(path:IlPath, parent:IlSigNorm):IlSigNorm {
+		return switch (DotnetTypes.primitive(path)) {
+			case s = LIntPtr | LUIntPtr | LTypedReference: s;
+			case _: parent;
+		}
+	}
+
 	// The supertypes of the .NET class `path` with the type arguments `args`, each with its parent signature
 	// in terms of those arguments; each class as `load` reads it (`rawClass` by default).
 	function chainFrom(path:IlPath, args:Array<IlSigNorm>, ?load:IlPath->IlClass):Array<{cls:IlClass, parent:IlSigNorm}> {
@@ -229,6 +238,7 @@ class ExternMembers {
 				case LClass(p, l): LValueType(p, l);
 				case s: s;
 			}
+			parent = nativeParent(path, parent);
 			r.push({cls: cls, parent: parent});
 			if (cls.csuper == null) break;
 			var sup = switch (subst(cls.csuper.snorm, switch (parent) {
@@ -241,6 +251,7 @@ class ExternMembers {
 			}
 			cls = load(sup.path);
 			parent = LClass(sup.path, sup.args);
+			path = sup.path;
 		}
 		return r;
 	}
