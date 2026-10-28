@@ -765,15 +765,17 @@ class CsToIl {
 		throw Unsupported.haxeError("Out-of-bounds special parameter: " + n, new Position(textPos.file, textPos.min + x.pos, textPos.max));
 	}
 
-	// A Haxe null is gencs's text `null`, the C# null literal (as `literal(LNull)`).
+	// A Haxe null of a reference type or Dynamic is gencs's text `null`, the C# null literal (as
+	// `literal(LNull)`); one of a Null<T> of a value type or of a type parameter is gencs's
+	// `default(global::haxe.lang.Null<int>)` or `default(T)`, a typed value.
 	function placeholder(n:Int, x:CsExpr):Null<IlSigNorm> {
 		if (n >= args.length) outOfBounds(n, x);
 		var a = args[n];
-		if (isNullConst(a)) {
+		var t = argSig(a);
+		if (isNullConst(a) && !tl.isHaxeNull(t) && !isTypeParam(t) && !DotnetTypes.isValueType(t)) {
 			il.op(IlOps.LDNULL, 0, 1);
 			return null;
 		}
-		var t = argSig(a);
 		if (tl.isHaxeNull(t)) t = LObject;
 		tl.texpr(RValue(t), a);
 		return t;

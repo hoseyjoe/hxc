@@ -455,9 +455,10 @@ and `List` copy, and two threads casting one array at once.
   - Unary `!` and `-`; binary arithmetic, comparisons, `==`/`!=`, `&&` and `||`, with C#'s numeric
     promotion. `==`/`!=` on references calls a user-defined operator that applies, found on either operand's
     class as C# looks it up (`System.Version`'s), and compares by identity where none does; it is refused where
-    more than one applies or hxc cannot tell (`inline-cs-user-equality-operator`). A Haxe `null` as a
-    placeholder's argument is the C# null literal, as gencs's text substitution writes it
-    (`inline-cs-null-placeholder`).
+    more than one applies or hxc cannot tell (`inline-cs-user-equality-operator`). A Haxe `null` of a
+    reference type or `Dynamic` as a placeholder's argument is the C# null literal, as gencs's text
+    substitution writes it; one of a `Null<T>` of a value type or of a type parameter is typed, as gencs's
+    `default(global::haxe.lang.Null<int>)` and `default(T)` are (`inline-cs-null-placeholder`).
   - Literals: integer, real (`d`, `f`, `m`), string, char, `true`, `false` and `null`.
   - A bare `throw`, as `throw` or `throw;`, which emits IL `rethrow` and keeps the stack trace.
   - Everything else is a lasting error naming the replacement: assignment, lambdas, `typeof`, `as`, `?:`,
@@ -482,8 +483,10 @@ and `List` copy, and two threads casting one array at once.
     (`inline-cs-haxe-property-is-an-error`). A physical one (`@:isVar`, or with a default read or write) is
     gencs's plain field, which inline C# reads directly, bypassing the getter (`inline-cs-physical-property`).
   - A .NET call binds past nothing C#'s member lookup would stop at: a derived class's public or protected
-    field, property or event hides the base classes' methods of its name, so a call of it is refused
-    (`inline-cs-hidden-base-method-is-an-error`: a delegate field's value, or C# error CS1955).
+    field, property or event of a delegate type hides the base classes' methods of its name, so a call of it
+    is refused (`inline-cs-hidden-base-method-is-an-error`), as is one past a member of the type object or a
+    type parameter, which may be `dynamic`. A member a call cannot invoke (a `new string Y` property) is left
+    out of the lookup, as Roslyn does, so `Y()` binds the base method (`inline-cs-hidden-not-invocable`).
   - `cs.Syntax.plainCode` is parsed, but its names are not resolved in the Haxe scope.
   - In an abstract's method, `this` is the abstract's underlying value (`inline-cs-abstract-this`), and an
     abstract instance method named by its simple name is not lifted (CS0103).

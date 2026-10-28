@@ -378,18 +378,21 @@ namespace ValLib
     {
         protected new string Name = "HideProt.Name";
     }
-    // A derived field or property hides a base method of its name from C#'s member lookup.
+    // For a call, C#'s member lookup lets only an invocable derived member (of a delegate type) hide a base
+    // method of its name: X does, Y (a string) and Z (private) do not, and W (an object) could be `dynamic`.
     public class CallHideBase
     {
         public string X() { return "CallHideBase.X()"; }
         public string Y() { return "CallHideBase.Y()"; }
         public string Z() { return "CallHideBase.Z()"; }
+        public string W() { return "CallHideBase.W()"; }
     }
     public class CallHideDerived : CallHideBase
     {
         public new System.Func<string> X = () => "CallHideDerived.X delegate";
         public new string Y { get { return "CallHideDerived.Y"; } }
         private new string Z = "CallHideDerived.Z";
+        public new object W = "CallHideDerived.W";
         public static CallHideDerived Make() { return new CallHideDerived(); }
         public string ZField() { return Z; }
     }

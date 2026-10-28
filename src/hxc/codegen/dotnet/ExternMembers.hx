@@ -1762,14 +1762,34 @@ class ExternMembers {
 		return found.length == 0 ? null : found[0];
 	}
 
-	// Whether the .NET class `c` declares a field, property or event named `name` that C# code in another
-	// assembly can see (public or protected).
-	static function hidesByNonMethod(c:IlClass, name:String):Bool {
+	// Whether the class of `link` declares an invocable field, property or event named `name` that C# code in
+	// another assembly can see (public or protected): one of a delegate type, which hides the base classes'
+	// methods of its name from a call. C# leaves a member that cannot be invoked out of a call's lookup before
+	// hiding (Roslyn's MustBeInvocableIfMember), so a `new string Y` property does not hide `Y()`. Refused for
+	// a member of the type object or a type parameter, which may be `dynamic` (a DynamicAttribute hxc does
+	// not read) and so invocable.
+	function hidesForCall(link:{cls:IlClass, parent:IlSigNorm}, name:String):Bool {
 		inline function seen(a:FieldAccess) return a.match(FAPublic | FAFamily | FAFamOrAssem);
 		inline function seenAcc(a:Null<IlAccessor>) return a != null && seen(a.flags.access);
-		return Lambda.exists(c.cfields, f -> f.fname == name && seen(f.fflags.access))
-			|| Lambda.exists(c.cprops, p -> p.pname == name && (seenAcc(p.pget) || seenAcc(p.pset)))
-			|| Lambda.exists(c.cevents, e -> e.ename == name && (seenAcc(e.eadd) || seenAcc(e.eremove)));
+		var largs = linkArgs(link), r = false;
+		function invocable(t:IlSigNorm):Void {
+			switch (norm(subst(t, largs))) {
+				case LObject | LTypeParam(_) | LMethodTypeParam(_):
+					throw Unsupported.error("hxc cannot tell whether C# invokes the .NET member " + sigS(link.parent) + "." + name
+						+ " (an object or a type parameter, which may be `dynamic`) or calls a base class's method " + name);
+				case s if (isDelegateType(s)):
+					r = true;
+				case _:
+			}
+		}
+		for (f in link.cls.cfields) if (f.fname == name && seen(f.fflags.access)) invocable(f.fsig.snorm);
+		for (p in link.cls.cprops) if (p.pname == name && (seenAcc(p.pget) || seenAcc(p.pset))) switch (p.psig.snorm) {
+			case LMethod(_, ret, []): invocable(ret);
+			case LMethod(_, _, _):
+			case t: invocable(t);
+		}
+		for (e in link.cls.cevents) if (e.ename == name && (seenAcc(e.eadd) || seenAcc(e.eremove))) invocable(e.esig.snorm);
+		return r;
 	}
 
 	// The method named `name` (".ctor" for `new`) that C# binds for a call on a receiver of the type `recv`
@@ -1793,10 +1813,11 @@ class ExternMembers {
 			if (sem.indexOf(SAbstract) >= 0 || sem.indexOf(SInterface) >= 0)
 				fail("the .NET type " + sigS(recv) + " is abstract or an interface, which `new` cannot create (C# error CS0144)");
 		}
-		// C#'s member lookup: a field, property or event hides the base classes' members of its name, so the
-		// chain stops at the first class declaring one (a method of a more derived class hides it in turn). A
-		// private or internal one is not found from another assembly, and hides nothing.
-		if (!isCtor) for (li in 0...links.length) if (hidesByNonMethod(links[li].cls, name)) {
+		// C#'s member lookup for a call: an invocable field, property or event (of a delegate type) hides the
+		// base classes' members of its name, so the chain stops at the first class declaring one (a method of a
+		// more derived class hides it in turn). A private or internal one is not found from another assembly,
+		// and one that cannot be invoked is left out of the lookup: neither hides anything.
+		if (!isCtor) for (li in 0...links.length) if (hidesForCall(links[li], name)) {
 			links = links.slice(0, li);
 			break;
 		}

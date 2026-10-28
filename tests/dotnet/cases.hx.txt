@@ -18950,34 +18950,40 @@ class P {
 [run]
 42
 
-# C#'s member lookup in inline C#: a derived class's field or property hides the base class's method of its
-# name, so `Make().X()` invokes the delegate field (refused, as hxc does not call a member's value) and
-# `Make().Y()` names a string property (CS1955), where binding CallHideBase's methods would be a silent wrong
-# call. A private member hides nothing from another assembly: Z() is CallHideBase's (inline-cs-hidden-private).
+# C#'s member lookup for a call in inline C#: a derived class's field of a delegate type hides the base class's
+# method of its name, so `Make().X()` invokes the delegate field (refused, as hxc does not call a member's value),
+# where binding CallHideBase.X() would be a silent wrong call. A field of the type object may be `dynamic`, and
+# so invocable, which hxc cannot tell. Members that do not hide: inline-cs-hidden-not-invocable.
 --- inline-cs-hidden-base-method-is-an-error @netlib
 class P {
 	static function main() {
 		Sys.println(untyped __cs__("ValLib.CallHideDerived.Make().X()"));
-		Sys.println(untyped __cs__("ValLib.CallHideDerived.Make().Y()"));
+		Sys.println(untyped __cs__("ValLib.CallHideDerived.Make().W()"));
 	}
 }
 ===
 [compile]
 P.hx:3: characters 23-66 : dotnet: calls of a .NET field or property's value (a delegate) in inline C# are not supported yet
-P.hx:4: characters 23-66 : dotnet: the .NET member ValLib.CallHideDerived.Y is no method or delegate, which a call cannot invoke (C# error CS1955)
---- inline-cs-hidden-private @gencs @netlib
+P.hx:4: characters 23-66 : dotnet: hxc cannot tell whether C# invokes the .NET member ValLib.CallHideDerived.W (an object or a type parameter, which may be `dynamic`) or calls a base class's method W
+# A derived member a call cannot invoke is left out of C#'s lookup before hiding (Roslyn's
+# MustBeInvocableIfMember): Y() is CallHideBase's past a `new string Y` property. A private member hides nothing
+# from another assembly: Z() is CallHideBase's too.
+--- inline-cs-hidden-not-invocable @gencs @netlib
 class P {
 	static function main() {
-		var s:String = untyped __cs__("ValLib.CallHideDerived.Make().Z()");
-		Sys.println(s);
+		var y:String = untyped __cs__("ValLib.CallHideDerived.Make().Y()");
+		var z:String = untyped __cs__("ValLib.CallHideDerived.Make().Z()");
+		Sys.println(y + " " + z);
 	}
 }
 ===
 [run]
-CallHideBase.Z()
+CallHideBase.Y() CallHideBase.Z()
 # A Haxe null as a placeholder's argument is gencs's text `null`, the C# null literal: Convert.ToString(null)
 # binds ToString(string) by C#'s betterness and returns null, where a typed object would bind ToString(object)
-# and return "". A null variable stays typed: a String binds ToString(string), a Dynamic ToString(object).
+# and return "". A null variable stays typed: a String binds ToString(string), a Dynamic ToString(object). A null
+# of a Null<Int> is gencs's `default(global::haxe.lang.Null<int>)`, typed (the type parameter's null:
+# inline-cs-null-type-param-is-an-error).
 --- inline-cs-null-placeholder @gencs
 class P {
 	static function main() {
@@ -18988,11 +18994,30 @@ class P {
 		var o:Dynamic = null;
 		var d:Bool = untyped __cs__("System.Convert.ToString({0}) == null", o);
 		trace(a, b, c, d);
+		var e:Bool = untyped __cs__("System.Convert.ToString({0}) == null", (null : Null<Int>));
+		var g:String = untyped __cs__("System.Convert.ToString({0})", (null : Null<Int>));
+		trace(e, g == null);
 	}
 }
 ===
 [run]
 P.hx:9: true, true, true, false
+P.hx:12: false, false
+# A null of a type parameter as a placeholder's argument is gencs's `default(T)`, typed, not the null literal. As
+# for any argument of a type parameter, hxc does not bind an overloaded .NET method to it (gencs's C# binds
+# Convert.ToString(object) and prints false for f("s") and f(1)).
+--- inline-cs-null-type-param-is-an-error
+class P {
+	static function f<T>(x:T):Bool {
+		return untyped __cs__("System.Convert.ToString({0}) == null", (null : T));
+	}
+	static function main() {
+		trace(f("s"), f(1));
+	}
+}
+===
+[compile]
+P.hx:3: characters 18-76 : dotnet: more than one .NET overload of System.Convert.ToString may accept (!!0)
 # `==` and `!=` in inline C# call a user-defined operator that applies (System.Version's compares the
 # versions), on either operand's class, and compare references where none does (StringBuilder), as C# does.
 --- inline-cs-user-equality-operator @gencs
