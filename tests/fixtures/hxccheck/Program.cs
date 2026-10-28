@@ -1,6 +1,7 @@
 // Checks assemblies written by hxc's .NET generator.
 //   verify <dll>          ILVerify over method bodies and type definitions
-//   dump <dll> <items>    prints the metadata named by a comma-separated item list
+//   dump <dll> <items>    prints the metadata named by a comma-separated item list (a type name, or
+//                         attrs:<type> for its attribute rows)
 //   stress-fieldlookup <dll>  calls the assembly's haxe.lang.FieldLookup from many threads at once
 //   stress-arrayforward <dll> makes the first cast of one unserialized array from many threads at once
 using System;
@@ -356,6 +357,9 @@ static class Program {
 					}
 					break;
 				}
+				case var a when a.StartsWith("attrs:"):
+					if (!DumpAttributes(md, types, a.Substring(6))) Console.WriteLine("missing " + a);
+					break;
 				default:
 					if (!DumpType(md, types, item)) Console.WriteLine("missing " + item);
 					break;
@@ -398,6 +402,103 @@ static class Program {
 			return true;
 		}
 		return false;
+	}
+
+	// `attrs:<type>`: the CustomAttribute rows of a type and its members, one line per row with its
+	// decoded arguments, so that a dump compares row for row with another compiler's. The type's own rows
+	// come first, then its generic parameters', interface implementations', fields', methods' (each
+	// followed by its generic parameters' and parameters', the return value as #0) and properties', each
+	// kind sorted by name and signature so that member order does not matter; the rows of one parent keep
+	// the table's order.
+	static bool DumpAttributes(MetadataReader md, TypeNames types, string item) {
+		foreach (var h in md.TypeDefinitions) {
+			if (TypeName(md, h) != item) continue;
+			var t = md.GetTypeDefinition(h);
+			var rows = new Dictionary<EntityHandle, List<CustomAttribute>>();
+			foreach (var ch in md.CustomAttributes) {
+				var ca = md.GetCustomAttribute(ch);
+				if (!rows.TryGetValue(ca.Parent, out var l)) rows[ca.Parent] = l = new List<CustomAttribute>();
+				l.Add(ca);
+			}
+			var typeArgs = new GenericContext(t.GetGenericParameters(), default);
+			Console.WriteLine("attrs " + item);
+			void Print(string parent, EntityHandle e) {
+				if (!rows.TryGetValue(e, out var l)) return;
+				foreach (var ca in l) Console.WriteLine("  " + parent + " :: " + AttributeText(md, types, ca));
+			}
+			Print("type", h);
+			foreach (var gh in t.GetGenericParameters()) Print("genericparam " + md.GetString(md.GetGenericParameter(gh).Name), gh);
+			foreach (var ih in t.GetInterfaceImplementations())
+				Print("interfaceimpl " + types.Of(md.GetInterfaceImplementation(ih).Interface, typeArgs), ih);
+			var members = new List<(string key, Action print)>();
+			foreach (var fh in t.GetFields()) {
+				var f = md.GetFieldDefinition(fh);
+				var text = "field " + f.DecodeSignature(types, typeArgs) + " " + md.GetString(f.Name);
+				members.Add(("1 " + md.GetString(f.Name) + " " + text, () => Print(text, fh)));
+			}
+			foreach (var mh in t.GetMethods()) {
+				var m = md.GetMethodDefinition(mh);
+				var sig = m.DecodeSignature(types, new GenericContext(t.GetGenericParameters(), m.GetGenericParameters()));
+				var text = "method " + sig.ReturnType + " " + md.GetString(m.Name) + GenericNames(md, m.GetGenericParameters())
+					+ "(" + string.Join(", ", sig.ParameterTypes) + ")";
+				members.Add(("2 " + md.GetString(m.Name) + " " + text, () => {
+					Print(text, mh);
+					foreach (var gh in m.GetGenericParameters()) Print(text + " genericparam " + md.GetString(md.GetGenericParameter(gh).Name), gh);
+					foreach (var ph in m.GetParameters()) {
+						var p = md.GetParameter(ph);
+						Print(text + " param #" + p.SequenceNumber + (p.Name.IsNil ? "" : " " + md.GetString(p.Name)), ph);
+					}
+				}));
+			}
+			foreach (var ph in t.GetProperties()) {
+				var p = md.GetPropertyDefinition(ph);
+				var text = "property " + p.DecodeSignature(types, typeArgs).ReturnType + " " + md.GetString(p.Name);
+				members.Add(("3 " + md.GetString(p.Name) + " " + text, () => Print(text, ph)));
+			}
+			foreach (var (_, print) in members.OrderBy(x => x.key, StringComparer.Ordinal)) print();
+			return true;
+		}
+		return false;
+	}
+
+	// An attribute row as `[Assembly]Namespace.Type(args)`: its constructor's type, and its fixed and named
+	// arguments.
+	static string AttributeText(MetadataReader md, TypeNames types, CustomAttribute ca) {
+		var type = ca.Constructor.Kind switch {
+			HandleKind.MemberReference => types.Of(md.GetMemberReference((MemberReferenceHandle)ca.Constructor).Parent, default),
+			HandleKind.MethodDefinition => TypeName(md, md.GetMethodDefinition((MethodDefinitionHandle)ca.Constructor).GetDeclaringType()),
+			_ => "?",
+		};
+		string args;
+		try {
+			var v = ca.DecodeValue(new AttributeTypes(types));
+			args = string.Join(", ", v.FixedArguments.Select(a => AttributeValue(a.Type, a.Value))
+				.Concat(v.NamedArguments.Select(a => a.Name + " = " + AttributeValue(a.Type, a.Value))));
+		} catch (Exception e) {
+			args = "undecodable " + e.GetType().Name;
+		}
+		return type + "(" + args + ")";
+	}
+
+	static string AttributeValue(string type, object? value) => value switch {
+		null => type + " null",
+		string s => type + " \"" + s + "\"",
+		bool b => type + (b ? " true" : " false"),
+		ImmutableArray<CustomAttributeTypedArgument<string>> a => type + " [" + string.Join(", ", a.Select(x => x.Value?.ToString() ?? "null")) + "]",
+		_ => type + " " + Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture),
+	};
+
+	// Attribute argument types as ILDasm names them; an enum's underlying type is taken as int32.
+	sealed class AttributeTypes(TypeNames types) : ICustomAttributeTypeProvider<string> {
+		public string GetPrimitiveType(PrimitiveTypeCode code) => types.GetPrimitiveType(code);
+		public string GetSystemType() => "type";
+		public string GetSZArrayType(string elementType) => elementType + "[]";
+		public string GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind) => TypeName(reader, handle);
+		public string GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind) =>
+			types.GetTypeFromReference(reader, handle, rawTypeKind);
+		public string GetTypeFromSerializedName(string name) => name;
+		public PrimitiveTypeCode GetUnderlyingEnumType(string type) => PrimitiveTypeCode.Int32;
+		public bool IsSystemType(string type) => type == "System.Type" || type.EndsWith("]System.Type");
 	}
 
 	static string GenericNames(MetadataReader md, GenericParameterHandleCollection ps) =>

@@ -21355,3 +21355,311 @@ class P {
 ===
 [run]
 described
+# Nullable metadata: the server app's build puts `#nullable enable` before every `namespace ai.tools {` of
+# gencs's output, and SK reads NullabilityInfoContext for the AI tool schemas. -D dotnet-nullable=<package>
+# (proposed) does the same for the modules of that package: every type of the module, other.Plain included
+# (the C# file is enabled from its first `namespace tools {` on). [run] is gencs's output with the server
+# app's patch applied by hand to g/src/tools/P.cs (verified); [gencs] is what the harness's unpatched gencs
+# build prints. Null<Int> (haxe.lang.Null<int>, a struct) and Nullable<int> read the same either way.
+--- attrs-nullable-opt-in @gencs @module=tools.P + -D dotnet-nullable=tools
+package tools;
+
+import cs.system.collections.generic.List_1;
+import cs.system.Nullable_1;
+
+@:native("System.Reflection.NullabilityInfoContext") extern class NullabilityInfoContext {
+	function new();
+	@:overload function Create(p:cs.system.reflection.PropertyInfo):NullabilityInfo;
+	@:overload function Create(p:cs.system.reflection.ParameterInfo):NullabilityInfo;
+	@:overload function Create(f:cs.system.reflection.FieldInfo):NullabilityInfo;
+}
+@:native("System.Reflection.NullabilityInfo") extern class NullabilityInfo {
+	var ReadState(default, never):NullabilityState;
+	var GenericTypeArguments(default, never):cs.NativeArray<NullabilityInfo>;
+	var ElementType(default, never):NullabilityInfo;
+}
+@:native("System.Reflection.NullabilityState") extern enum NullabilityState { Unknown; NotNull; Nullable; }
+
+// The namespace the server app's build patches with `#nullable enable` (here `tools`).
+@:nativeGen class Model {
+	public function new() {}
+	@:property public var name:String = "";
+	@:property public var count:Int = 0;
+	@:property public var maybe:Null<String> = null;
+	@:property public var tags:List_1<String> = new List_1<String>();
+	@:property public var when:Nullable_1<Int> = null;
+	@:property public var boxed:Null<Int> = null;
+	@:property public var any:Dynamic = null;
+	@:property public var arr:cs.NativeArray<String> = null;
+	public var field:String = "";
+	public function run(q:String, n:Null<Int>):String return q;
+}
+@:nativeGen @:native("other.Plain") class Plain {
+	public function new() {}
+	@:property public var name:String = "";
+}
+
+class P {
+	static function state(i:NullabilityInfo):String {
+		if (i == null) return "-";
+		var s = Std.string(i.ReadState);
+		var args = i.GenericTypeArguments;
+		if (args.Length > 0) s += "<" + [for (k in 0...args.Length) state(args[k])].join(",") + ">";
+		if (i.ElementType != null) s += "[" + state(i.ElementType) + "]";
+		return s;
+	}
+	static function main() {
+		var ctx = new NullabilityInfoContext();
+		var t = cs.Lib.toNativeType(Model);
+		for (n in ["name", "count", "maybe", "tags", "when", "boxed", "any", "arr"]) Sys.println(n + " " + state(ctx.Create(t.GetProperty(n))));
+		Sys.println("field " + state(ctx.Create(t.GetField("field"))));
+		var m = t.GetMethod("run");
+		var ps = m.GetParameters();
+		Sys.println("run(q " + state(ctx.Create(ps[0])) + ", n " + state(ctx.Create(ps[1])) + ") returns " + state(ctx.Create(m.ReturnParameter)));
+		Sys.println("Plain.name " + state(ctx.Create(cs.Lib.toNativeType(Plain).GetProperty("name"))));
+	}
+}
+===
+[run]
+name NotNull
+count NotNull
+maybe NotNull
+tags NotNull<NotNull>
+when Nullable
+boxed NotNull<NotNull>
+any NotNull
+arr NotNull[NotNull]
+field NotNull
+run(q NotNull, n NotNull<NotNull>) returns NotNull
+Plain.name NotNull
+[gencs]
+name Unknown
+count NotNull
+maybe Unknown
+tags Unknown<Unknown>
+when Nullable
+boxed NotNull<NotNull>
+any Unknown
+arr Unknown[Unknown]
+field Unknown
+run(q Unknown, n NotNull<NotNull>) returns Unknown
+Plain.name Unknown
+# -D dotnet-nullable's rows, against Roslyn's: the [dump] is the row dump of gencs's C# with the server app's
+# `#nullable enable` patch applied by hand and built with the .NET SDK (as for attrs-nullable-opt-in), in hxc's
+# type spellings (hxc references mscorlib and System where the SDK references System.Runtime,
+# System.Collections and System.ComponentModel.Primitives). The only other difference is the order of
+# Thing's two InterfaceImpl rows for Haxe interfaces (IThing before IHxObject in Roslyn's), which the dump
+# prints in table order. The Nullable* rows come before the parent's other rows, as Roslyn writes them;
+# tools.sub.Q, a module of the sub-package (defined by P's build macro), has none.
+--- attrs-nullable-rows @lib @module=tools.P @dump=attrs:tools.Model,attrs:tools.Tie,attrs:tools.Mixed,attrs:tools.Box`1,attrs:tools.IThing,attrs:tools.Thing,attrs:tools.Sub,attrs:other.Plain,attrs:tools.P,attrs:tools.P_adder_96__Fun,attrs:tools.sub.Q + -D dotnet-nullable=tools
+package tools;
+
+#if macro
+import haxe.macro.Context;
+
+class P {
+	// tools.sub.Q, a module of the sub-package tools.sub, which -D dotnet-nullable=tools leaves out.
+	public static function build():Array<haxe.macro.Expr.Field> {
+		var q = macro class Q {
+			public function new() {}
+			public var name:String = "";
+		}
+		q.pack = ["tools", "sub"];
+		q.meta = [{name: ":nativeGen", pos: Context.currentPos()}];
+		Context.defineModule("tools.sub.Q", [q]);
+		return null;
+	}
+}
+#else
+import cs.system.collections.generic.KeyValuePair_2;
+import cs.system.collections.generic.List_1;
+import cs.system.Nullable_1;
+
+// Every reference type position is 1, a generic struct 0; most members are 1, so the type's context is 1.
+@:meta(System.ComponentModel.DescriptionAttribute("a model"))
+@:nativeGen class Model {
+	public function new() {}
+	@:property public var name:String = "";
+	@:property public var count:Int = 0;
+	@:property public var maybe:Null<String> = null;
+	@:meta(System.ComponentModel.DescriptionAttribute("boxed"))
+	@:property public var boxed:Null<Int> = null;
+	@:property public var list:Array<String> = null;
+	@:property public var when:Nullable_1<Int> = null;
+	@:property public var tags:List_1<String> = null;
+	public var pair:KeyValuePair_2<String, Int>;
+	public var ints:cs.NativeArray<Int> = null;
+	public var ratio:Null<Float> = null;
+	public var fn:String->Int = null;
+	public function run(q:String, n:Null<Int>):String return q;
+	public function boxedOf(a:String, b:String):Null<Int> return null;
+	@:noCompletion public function onlyBoxed(n:Null<Int>):Null<Int> return n;
+	public static function make():Model return new Model();
+}
+
+// Ties go to 0: the base type, a and the property's backing field and accessors against five strings.
+@:nativeGen class Tie {
+	public function new() {}
+	@:property public var a:Null<Int> = null;
+	public var s1:String;
+	public var s2:String;
+	public var s3:String;
+	public var s4:String;
+	public var s5:String;
+}
+
+// A mixed byte array counts for neither.
+@:nativeGen class Mixed {
+	public function new() {}
+	public var s1:String;
+	public var s2:String;
+	public var p1:KeyValuePair_2<String, Int>;
+	public var p2:KeyValuePair_2<String, Int>;
+}
+
+// Type parameters are 2, references to them 1.
+@:nativeGen class Box<T> {
+	public var value:T;
+	public function new(v:T) value = v;
+	public function pick<U>(u:U, t:T):U return u;
+}
+
+// Interfaces and base types are oblivious at the top (0), their type arguments not.
+interface IThing {
+	function label():String;
+}
+@:nativeGen class Thing implements IThing implements cs.system.collections.generic.IComparer_1<String> {
+	public function new() {}
+	public function label():String return "";
+	public function Compare(x:String, y:String):Int return 0;
+}
+@:nativeGen class Sub extends List_1<String> {
+	public function new() super();
+}
+
+// A type of another package, in the module.
+@:nativeGen @:native("other.Plain") class Plain {
+	public function new() {}
+	@:property public var name:String = "";
+}
+
+@:build(tools.P.build())
+class P {
+	// A closure class, of this module.
+	public static function adder(prefix:String):String->String {
+		return function(s:String) return prefix + s;
+	}
+	public static function first<T>(a:Array<T>):T return a[0];
+}
+#end
+===
+[dump]
+attrs tools.Model
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  type :: [System]System.ComponentModel.DescriptionAttribute(string "a model")
+  field haxe.lang.Null`1<int32> <boxed>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  field haxe.lang.Null`1<int32> <boxed>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field int32 <count>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field Array`1<string> <list>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field string <maybe>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field string <name>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field [mscorlib]System.Collections.Generic.List`1<string> <tags>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field [mscorlib]System.Nullable`1<int32> <when>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field [mscorlib]System.Collections.Generic.KeyValuePair`2<string, int32> pair :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8[] [0, 1])
+  field haxe.lang.Null`1<float64> ratio :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  method haxe.lang.Null`1<int32> boxedOf(string, string) param #0 :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  method haxe.lang.Null`1<int32> get_boxed() :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 0)
+  method haxe.lang.Null`1<int32> get_boxed() :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method int32 get_count() :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method Array`1<string> get_list() :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method string get_maybe() :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method string get_name() :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method [mscorlib]System.Collections.Generic.List`1<string> get_tags() :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method [mscorlib]System.Nullable`1<int32> get_when() :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method haxe.lang.Null`1<int32> onlyBoxed(haxe.lang.Null`1<int32>) :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 0)
+  method haxe.lang.Null`1<int32> onlyBoxed(haxe.lang.Null`1<int32>) :: [System.Runtime]System.ComponentModel.EditorBrowsableAttribute([System.Runtime]System.ComponentModel.EditorBrowsableState 1)
+  method string run(string, haxe.lang.Null`1<int32>) param #2 n :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  method void set_boxed(haxe.lang.Null`1<int32>) :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 0)
+  method void set_boxed(haxe.lang.Null`1<int32>) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void set_count(int32) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void set_list(Array`1<string>) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void set_maybe(string) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void set_name(string) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void set_tags([mscorlib]System.Collections.Generic.List`1<string>) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void set_when([mscorlib]System.Nullable`1<int32>) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  property haxe.lang.Null`1<int32> boxed :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  property haxe.lang.Null`1<int32> boxed :: [System]System.ComponentModel.DescriptionAttribute(string "boxed")
+attrs tools.Tie
+  field haxe.lang.Null`1<int32> <a>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field string s1 :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 1)
+  field string s2 :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 1)
+  field string s3 :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 1)
+  field string s4 :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 1)
+  field string s5 :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 1)
+  method haxe.lang.Null`1<int32> get_a() :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void set_a(haxe.lang.Null`1<int32>) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+attrs tools.Mixed
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  field [mscorlib]System.Collections.Generic.KeyValuePair`2<string, int32> p1 :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8[] [0, 1])
+  field [mscorlib]System.Collections.Generic.KeyValuePair`2<string, int32> p2 :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8[] [0, 1])
+attrs tools.Box`1
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  genericparam T :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 2)
+  method !!0 pick<U>(!!0, !0) genericparam U :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 2)
+attrs tools.IThing
+  method string label() :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+attrs tools.Thing
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  interfaceimpl [mscorlib]System.Collections.Generic.IComparer`1<string> :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8[] [0, 1])
+  interfaceimpl haxe.lang.IHxObject :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  interfaceimpl tools.IThing :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+attrs tools.Sub
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8[] [0, 1])
+attrs other.Plain
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  field string <name>k__BackingField :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method string get_name() :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void set_name(string) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+attrs tools.P
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  method !!0 first<T>(Array`1<!!0>) genericparam T :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 2)
+attrs tools.P_adder_96__Fun
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+attrs tools.sub.Q
+# -D dotnet-nullable names packages: Tools is not one (a package starts with a lowercase letter or _).
+--- attrs-nullable-invalid-value + -D dotnet-nullable=ai.tools,Tools
+class P {
+	static function main() {}
+}
+===
+[compile]
+dotnet: -D dotnet-nullable must name packages, separated by commas, like ai.tools or ai.tools,ai.models (not ai.tools,Tools)
+# A constrained type parameter's byte depends on the `where` clause gencs writes and hxc does not (no
+# GenericParamConstraint rows), so an enabled @:nativeGen type with one is refused, on the type or a method.
+# gencs writes no `where` clause for a String constraint (Plain), nor in its class model (P).
+--- attrs-nullable-refuse-constrained-type-parameter @lib @module=tools.P + -D dotnet-nullable=tools
+package tools;
+
+@:nativeGen class Box<T:cs.system.IComparable> {
+	public function new() {}
+	public function pick<A:cs.system.IComparable>(a:A):A return a;
+}
+
+@:nativeGen class Plain<T:String> {
+	public function new() {}
+}
+
+class P {
+	public static function pick<T:haxe.Constraints.IMap<String, Int>>(m:T):T return m;
+}
+===
+[compile]
+./tools/P.hx:3: lines 3-6 : dotnet: hxc cannot write the nullable metadata (-D dotnet-nullable) of tools.Box: its type parameter T is constrained, and hxc writes no constraints
+./tools/P.hx:5: characters 2-63 : dotnet: hxc cannot write the nullable metadata (-D dotnet-nullable) of tools.Box.pick: its type parameter A is constrained, and hxc writes no constraints

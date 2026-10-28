@@ -109,7 +109,10 @@ hxcs (`haxelib install hxcs`): hxcs supplies the reference assemblies and the st
 runtime sources. With `-main` it also writes `<name>.runtimeconfig.json` for `net10.0`, so
 `dotnet <name>.dll` runs the program on .NET 10; `-D dotnet-version=<N>` builds it for a later .NET
 instead (a whole number, 10 or more, e.g. `-D dotnet-version=11` for `net11.0`). `-D dll-name=<name>`
-sets the name; the default is the output directory's last segment.
+sets the name; the default is the output directory's last segment. `-D dotnet-nullable=<package>[,...]`
+writes the nullable metadata Roslyn writes for gencs's C# under `#nullable enable` for every type of the
+modules of exactly those packages (not their sub-packages), so `NullabilityInfoContext` reads their
+reference types as not null.
 
 The assembly's references resolve against hxcs's `netlib` directory for `-D net-ver` (default 20), or
 the directories given with `--net-std`. By default that means a reference to `mscorlib` 2.0.0.0,
@@ -233,11 +236,11 @@ a .NET method, an overloaded method, a struct's method or a method reached throu
 receiver as a delegate, and a .NET base class's non-virtual method or property implementing an
 interface method or property for a Haxe subclass (C# adds a forwarding stub there; a public virtual
 one works). Some interop is not written yet, with no error: events defined in Haxe (an `@:event` var's
-`add_` and `remove_` methods are compiled, but no event), and nullability metadata, so .NET reflection
-sees no event and no nullability. The next steps for the .NET generator bring these. Milestones 4a
+`add_` and `remove_` methods are compiled, but no event), so .NET reflection sees no event. The next steps for the .NET generator bring these. Milestones 4a
 (referenced-assembly interop) and 4b (inline C#, gencs's indexers, `IntPtr` members,
 `CompilerGeneratedAttribute` on `@:property` vars) are done; 4c has begun with attributes (`@:meta`,
-`@:strict`), and nullability metadata, events, `@:nativeGen` details and embedded resources are left.
+`@:strict`) and nullability metadata (`-D dotnet-nullable`), and events, `@:nativeGen` details and embedded
+resources are left.
 A field-level `addMetadata` or `addTypePatch` aimed at a class the core types load before the init macros
 run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7 applies it; class-level
 metadata, such as an added `@:build`, is applied, though a late patch aimed at an abstract reaches its impl

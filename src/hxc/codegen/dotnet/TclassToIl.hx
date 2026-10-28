@@ -1658,11 +1658,12 @@ class TclassToIl {
 	// The plan's field and method rows, after every TypeDef row exists.
 	public static function write(g:DotnetCtx, plan:ClassPlan):Void {
 		var mb = g.mb;
+		NullableToIl.prepare(g, plan);
 		if (plan.flags & TypeAttrs.INTERFACE == 0)
 			mb.setExtends(plan.token, plan.superSig == null ? mb.typeToken(objectPath, false) : sigToken(g, plan.superSig));
-		var implemented = [for (s in plan.interfaces) sigToken(g, s)];
-		implemented.sort((a, b) -> a - b);
-		for (i in implemented) mb.interfaceImpl(plan.token, i);
+		var implemented = [for (s in plan.interfaces) {sig: s, token: sigToken(g, s)}];
+		implemented.sort((a, b) -> a.token - b.token);
+		for (i in implemented) NullableToIl.interfaceImpl(g, plan, i.sig, mb.interfaceImpl(plan.token, i.token));
 		if (plan.c != null && plan.isStd && TypeFunctions.hasMeta(":classCode", plan.c.meta)) g.records.push("ignored @:classCode in " + plan.hxPath);
 		if (plan.layout != null && (plan.layout.pack != 0 || plan.layout.size != 0)) mb.classLayout(plan.token, plan.layout.pack, plan.layout.size);
 		checkFieldOffsets(g, plan);
@@ -1682,7 +1683,8 @@ class TclassToIl {
 		}
 		if (plan.initFlag) mb.field(plan.token, FieldAttrs.PRIVATE | FieldAttrs.STATIC, initFlagName, g.sigs.field(LBool));
 		for (m in plan.methods) {
-			m.token = mb.method(plan.token, m.flags, 0, m.name, g.sigs.method(m.hasThis, m.ret, m.args, m.generics.length), m.argNames);
+			m.token = mb.method(plan.token, m.flags, 0, m.name, g.sigs.method(m.hasThis, m.ret, m.args, m.generics.length), m.argNames,
+				NullableToIl.returnRow(g, m));
 			switch (m.kind) {
 				case MField(cf):
 					g.methodTokens.set(cf, m.token);
@@ -1720,6 +1722,7 @@ class TclassToIl {
 				g.methodSigs.set(cf, {ret: pair.accessor.ret, args: pair.accessor.args});
 			}
 		}
+		NullableToIl.write(g, plan);
 	}
 
 	// C#'s rules for FieldOffset, whose errors Roslyn gives: on the instance fields of a type with

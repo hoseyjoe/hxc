@@ -184,8 +184,8 @@ class AttributesToIl {
 		of(g).member(owner, meta, target, pos, site == null ? {name: "", ns: []} : site);
 	}
 
-	// A row for one of the backend's own attributes.
-	public static function write(g:DotnetCtx, owner:Int, ctor:AttrCtor, fixed:Array<AttrValue>, named:Array<AttrNamed>):Void {
+	// A row for one of the backend's own attributes; a `first` one comes before its parent's other rows.
+	public static function write(g:DotnetCtx, owner:Int, ctor:AttrCtor, fixed:Array<AttrValue>, named:Array<AttrNamed>, first = false):Void {
 		if (fixed.length != ctor.params.length)
 			throw "internal error: an attribute row with " + fixed.length + " arguments for a constructor of " + ctor.params.length;
 		var a = of(g);
@@ -199,7 +199,7 @@ class AttributesToIl {
 			b.serString(n.name);
 			a.fixedArg(b, n.type, n.value);
 		}
-		g.mb.customAttribute(owner, ctor.token, b.getBytes());
+		g.mb.customAttribute(owner, ctor.token, b.getBytes(), first);
 	}
 
 	// The constructor of System.Runtime's attribute `ns`.`name` with parameters `sig`, on a TypeRef into

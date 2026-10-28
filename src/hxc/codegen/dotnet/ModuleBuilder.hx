@@ -33,6 +33,8 @@ class ModuleBuilder {
 	// The TypeDef row each field and method row belongs to.
 	final fieldOwners:Array<Int> = [];
 	final methodOwners:Array<Int> = [];
+	// CustomAttribute rows that come before every other row of their parent (customAttribute's `first`).
+	final firstAttributes:Array<Array<Int>> = [];
 
 	// The assembly a referenced type comes from; the emitter sets it.
 	public var externScope:(IlPath) -> AssemblyIdentity = null;
@@ -93,8 +95,9 @@ class ModuleBuilder {
 	}
 
 	// Must be added in key order: by type, then by the interface's coded index.
-	public function interfaceImpl(typeDefToken:Int, typeDefOrRef:Int):Void {
+	public function interfaceImpl(typeDefToken:Int, typeDefOrRef:Int):Int {
 		tables.interfaceImpl.push([row(typeDefToken), typeDefOrRef]);
+		return (T.IInterfaceImpl << 24) | tables.interfaceImpl.length;
 	}
 
 	// Makes the method `body` (a MethodDef token) of the type the implementation of `declaration` (a
@@ -104,9 +107,12 @@ class ModuleBuilder {
 	}
 
 	// A CustomAttribute row on `parent` (a TypeDef, MethodDef, ... token): the attribute's constructor
-	// (a MethodDef or MemberRef token) and its value blob. The table is sorted when it is written.
-	public function customAttribute(parent:Int, ctor:Int, value:Bytes):Void {
-		tables.customAttribute.push([coded(T.IHasCustomAttribute, parent), coded(T.ICustomAttributeType, ctor), heaps.blobs.add(value)]);
+	// (a MethodDef or MemberRef token) and its value blob. The table is sorted by parent when it is written,
+	// and a parent's rows keep the order they were added in, except that the `first` ones come before the
+	// others, as Roslyn writes its nullable attributes before the rest.
+	public function customAttribute(parent:Int, ctor:Int, value:Bytes, first = false):Void {
+		(first ? firstAttributes : tables.customAttribute).push([coded(T.IHasCustomAttribute, parent), coded(T.ICustomAttributeType, ctor),
+			heaps.blobs.add(value)]);
 	}
 
 	// The Param row of `method` (a MethodDef token) for its parameter `index`, 0 for the first: the row with
@@ -136,10 +142,12 @@ class ModuleBuilder {
 		return (T.IField << 24) | tables.field.length;
 	}
 
-	// A MethodDef row with a Param row per name; its body comes later through setBody.
-	public function method(owner:Int, flags:Int, implFlags:Int, name:String, sig:Bytes, paramNames:Array<String>):Int {
+	// A MethodDef row with a Param row per name, after a row for the return value (sequence 0, no name) when
+	// `returnRow` says so; its body comes later through setBody.
+	public function method(owner:Int, flags:Int, implFlags:Int, name:String, sig:Bytes, paramNames:Array<String>, returnRow = false):Int {
 		tables.methodDef.push([0, implFlags, flags, heaps.strings.add(name), heaps.blobs.add(sig), tables.param.length + 1]);
 		methodOwners.push(row(owner));
+		if (returnRow) tables.param.push([0, 0, 0]);
 		for (i in 0...paramNames.length) tables.param.push([0, i + 1, heaps.strings.add(paramNames[i])]);
 		return (T.IMethod << 24) | tables.methodDef.length;
 	}
@@ -207,8 +215,9 @@ class ModuleBuilder {
 	}
 
 	// Must be added in key order: by owner, then number.
-	public function genericParam(owner:Int, number:Int, name:String):Void {
+	public function genericParam(owner:Int, number:Int, name:String):Int {
 		tables.genericParam.push([number, 0, coded(T.ITypeOrMethodDef, owner), heaps.strings.add(name)]);
+		return (T.IGenericParam << 24) | tables.genericParam.length;
 	}
 
 	// The TypeDefOrRef coded index of a defined or referenced type. Whether it is a value type is the
@@ -313,6 +322,10 @@ class ModuleBuilder {
 	public function finish(entryPoint:Int):Bytes {
 		linkMembers(4, fieldOwners, "Field");
 		linkMembers(5, methodOwners, "MethodDef");
+		if (firstAttributes.length > 0) {
+			var rest = tables.customAttribute.splice(0, tables.customAttribute.length);
+			for (r in firstAttributes.concat(rest)) tables.customAttribute.push(r);
+		}
 		tables.module.push([0, heaps.strings.add(name + ".dll"), mvid, 0, 0]);
 		// SHA-1 hash algorithm, version 1.0.0.0, no flags or public key, neutral culture.
 		tables.assembly.push([0x8004, 1, 0, 0, 0, 0, 0, heaps.strings.add(name), 0]);

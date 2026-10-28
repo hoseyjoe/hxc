@@ -46,6 +46,8 @@ class DotnetCtx {
 	public var entryPoint = 0;
 	// AttributesToIl's state, made on first use.
 	public var attributes:Null<AttributesToIl> = null;
+	// NullableToIl's state, when -D dotnet-nullable names packages.
+	public var nullable:Null<NullableToIl> = null;
 	public var diagnostics = 0;
 	// gencommon's mk_temp counter, which numbers FixOverrides's `__temp_` parameters across the program.
 	public var tempCount = 0;
@@ -428,6 +430,16 @@ class GenerateDotnet {
 			else
 				version = v;
 		}
+		// -D dotnet-nullable=<package>[,<package>...]: Roslyn's nullable metadata for those packages' modules.
+		if (ctx.defines.rawDefined("dotnet_nullable")) {
+			var s = ctx.defines.rawDefinedValueSafe("dotnet_nullable");
+			var packages = NullableToIl.parsePackages(s);
+			if (packages == null)
+				g.error("-D dotnet-nullable must name packages, separated by commas, like ai.tools or ai.tools,ai.models (not " + s + ")",
+					Position.nullPos);
+			else
+				g.nullable = new NullableToIl(packages);
+		}
 		// Resources (-resource files, or a macro's Context.addResource) would be manifest resources, which come
 		// with milestone 4; until then haxe.Resource would find none, so it is an error rather than ignored.
 		// No one position names them all: none.
@@ -581,7 +593,7 @@ class GenerateDotnet {
 		}
 		inline function key(owner:Int) return ModuleBuilder.coded(TableIdx.ITypeOrMethodDef, owner);
 		haxe.ds.ArraySort.sort(generics, (a, b) -> key(a.owner) != key(b.owner) ? key(a.owner) - key(b.owner) : a.number - b.number);
-		for (gp in generics) mb.genericParam(gp.owner, gp.number, gp.name);
+		for (gp in generics) NullableToIl.genericParam(g, gp.owner, gp.number, mb.genericParam(gp.owner, gp.number, gp.name));
 		// FieldLookup last: its table holds every name the other methods hashed.
 		var fieldLookup = null;
 		for (p in plans) if (p.hxPath == TclassToIl.fieldLookupPath) fieldLookup = p else TclassToIl.emitPlan(g, p);

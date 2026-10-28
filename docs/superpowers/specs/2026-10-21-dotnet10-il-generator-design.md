@@ -527,9 +527,11 @@ and `List` copy, and two threads casting one array at once.
     uses do not cascade into "left out" errors. The replacements: hand-written `@:native` externs for what a
     `@:classCode` injected (ruling 8), and `#if !dotnet` around a `@:functionCode` (ruling 9).
 - **Nullability metadata**: for types the AI tool schemas see, emit `NullableAttribute` /
-  `NullableContextAttribute` from Haxe types: `String` → non-null, `Null<String>` → nullable. Semantic
-  Kernel reads these through `NullabilityInfoContext`. The schemas the server app produces today must come out
-  identical; `ai.tools` gets non-null `string`, other namespaces unchanged.
+  `NullableContextAttribute` as Roslyn does for gencs's C# under the server app's `#nullable enable` patch:
+  gencs writes `string` for both `String` and `Null<String>`, so every reference type is non-null. Semantic
+  Kernel reads these through `NullabilityInfoContext`. The schemas the server app's build produces today must
+  come out identical; `ai.tools` gets non-null `string`, other namespaces unchanged (`-D dotnet-nullable`,
+  milestone 4c).
 - **Attributes**: `@:strict(...)` and `@:meta(...)` become CustomAttribute rows with properly encoded
   blobs, typed against the referenced assemblies.
 - **Resources**: Haxe `-resource` files and a macro's `Context.addResource` resources become manifest
@@ -875,8 +877,19 @@ and `List` copy, and two threads casting one array at once.
      A `@:nativeGen` class's methods and constructors get gencs's overloads for their trailing optional
      arguments, each with the field's attributes. Its constrained type parameters still get no
      GenericParamConstraint rows, so a call that passes one to an overloaded .NET method, which gencs's C#
-     binds by the `where` clause, is refused (ruling 7). Nullability metadata and events are not written yet, with no error: hxc compiles the
-     class without them (an `@:event` var's `add_` and `remove_` methods are plain methods), where gencs
+     binds by the `where` clause, is refused (ruling 7). `-D dotnet-nullable=<package>[,<package>…]` writes
+     Roslyn's nullable metadata (ruling 2) for every type of a module whose package is exactly one of those
+     named, its local functions' classes included, as the server app's build enables gencs's C# with
+     `#nullable enable` before each `namespace ai.tools {`; a sub-package's modules are not covered, which
+     gives the patch's 34-of-108 model split. The rows are Roslyn's, compressed by its context rules, so a
+     dump compares row for row (`attrs-nullable-rows`): each type reference's byte array in pre-order (1 for
+     every reference type, since gencs writes no `string?`, 0 for a generic struct such as
+     `haxe.lang.Null<int>`, 2 for a type parameter), `NullableContext` as the most common byte (ties to 0,
+     then 1, then 2) where it differs from the enclosing one, `Nullable(0)` for the base type, Param rows of
+     sequence 0 for a return value's attribute, the rows before their parent's others, and the attribute
+     types from System.Runtime. A value that names no package, and a constrained type parameter of a
+     `@:nativeGen` class (gencs writes its `where` clause, hxc no constraints), are errors. Events are not
+     written yet, with no error: hxc compiles the class without them (an `@:event` var's `add_` and `remove_` methods are plain methods), where gencs
      writes a C# `event`, so .NET reflection sees no event.
      The carried items:
      - covariant-return `@:overload` overrides, and gencs's `T1` renaming of a shadowing method type
@@ -1001,4 +1014,5 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
 - Which the server app build variants (`Server_Core`, `Server_Reports` in Builder.hx) come after the main
   `Server` build.
 - Builder.hx changes in the server app to call the new generator and drop the `HaxeServer.csproj` compile and
-  text patches (to be done in the server app's repository, separately).
+  text patches (to be done in the server app's repository, separately). Its `#nullable enable` patch becomes
+  `-D dotnet-nullable=ai.tools` (4c ruling 2), passed where Builder.hx patches today: an owner change.
