@@ -979,7 +979,9 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   overloads, and the full method, the field's attributes once (`attrs-nativegen-optional-overloads-attributes`).
   gencs writes the field's attributes in front of the first overload, which then has them twice and the full
   method none, so its C# does not compile for an attribute without `AllowMultiple`: `CS0579: Duplicate
-  'System.ComponentModel.DescriptionAttribute' attribute`.
+  'System.ComponentModel.DescriptionAttribute' attribute`. With `AllowMultiple` it compiles, and reflection
+  sees two copies on the first overload and none on the full method, where hxc writes one on each
+  (`attrs-nativegen-optional-overloads-allow-multiple`, whose `[gencs]` section shows gencs's counts).
 
 ## Left to the builder
 

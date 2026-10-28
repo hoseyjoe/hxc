@@ -280,16 +280,19 @@ class AttributesToIl {
 	// @:cs.assemblyStrict into them), in the order the classes are written, then the SDK's
 	// TargetFramework(".NETCoreApp,Version=v<net>.0", FrameworkDisplayName = ".NET <net>.0"). gencs writes
 	// `[assembly: ...]` before the namespace of the first class of a module, where C# looks the names up
-	// from the global namespace, and refuses them on another class or on a class of a top-level module.
+	// from the global namespace, and refuses them on another class or on a class it writes in no namespace
+	// (gencs.ml:2612, change_ns: after @:native, and haxe.root under -D no-root).
 	public static function forAssembly(g:DotnetCtx, classes:Array<TClass>, version:Int):Void {
 		var a = of(g);
 		var owner = (TableIdx.IAssembly << 24) | 1;
 		var seen = new Map<String, Bool>();
 		var site:AttrSite = {name: "the assembly", ns: []};
+		// The class whose entries first named each attribute type, by IlPaths.key.
+		var firstAt = new Map<String, Position>();
 		for (c in classes) {
 			var m = TypeFunctions.getMetaOpt(":cs.assemblyMeta", c.meta);
 			if (m == null) continue;
-			if (c.path.pack.length == 0) {
+			if (DotnetNames.typePath(TClassDecl(c)).ns.length == 0) {
 				g.error("@:cs.assemblyMeta cannot be used on top level modules", c.pos);
 				continue;
 			}
@@ -298,10 +301,11 @@ class AttributesToIl {
 				continue;
 			}
 			a.entries(owner, c.meta, ":cs.assemblyMeta", TAssembly, site, seen, c.pos);
+			for (k in seen.keys()) if (!firstAt.exists(k)) firstAt.set(k, c.pos);
 		}
 		var framework:IlPath = {ns: ["System", "Runtime", "Versioning"], nested: [], name: "TargetFrameworkAttribute"};
 		if (seen.exists(IlPaths.key(framework))) {
-			g.error("TargetFrameworkAttribute is on the assembly already: hxc writes it on every assembly, as the .NET SDK does (C# error CS0579)", Position.nullPos);
+			g.error("TargetFrameworkAttribute is on the assembly already: hxc writes it on every assembly, as the .NET SDK does (C# error CS0579)", firstAt.get(IlPaths.key(framework)));
 			return;
 		}
 		var ctor = runtimeAttr(g, "System.Runtime.Versioning", "TargetFrameworkAttribute", [ATString]);

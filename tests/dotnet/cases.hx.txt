@@ -21157,3 +21157,82 @@ System.String m(Int32, haxe.lang.Null`1[System.Int32], System.String) 1 m
 Void .ctor() 1 ctor
 Void .ctor(haxe.lang.Null`1[System.Int32]) 1 ctor
 Void .ctor(haxe.lang.Null`1[System.Int32], System.String) 1 ctor
+# Divergence (ruling 7), for an attribute with AllowMultiple: gencs's C# compiles, and reflection sees the
+# method's attributes twice on its first optional overload and not on the full method (gencs writes them in
+# front of the first overload). hxc writes them once on each overload and on the full method.
+--- attrs-nativegen-optional-overloads-allow-multiple @gencs
+@:meta(System.AttributeUsage(System.AttributeTargets.All, AllowMultiple = true))
+class Tag extends cs.system.Attribute {
+	public function new(n:Int) { super(); }
+}
+@:nativeGen class N {
+	@:meta(Tag(1))
+	public function new(?x:Int, y:String = "y") {}
+	@:meta(Tag(2))
+	public function m(a:Int, ?b:Int, c:String = "c"):String return a + "," + b + "," + c;
+}
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(N);
+		var all = new cs.Flags(cs.system.reflection.BindingFlags.Public) | cs.system.reflection.BindingFlags.Instance | cs.system.reflection.BindingFlags.DeclaredOnly;
+		var ms:Array<cs.system.reflection.MethodBase> = [for (m in t.GetMethods(all)) m];
+		for (c in t.GetConstructors(all)) ms.push(c);
+		var lines = [];
+		for (m in ms) lines.push(Std.string(m) + " " + cs.system.Attribute.GetCustomAttributes(m, cs.Lib.toNativeType(Tag)).Length);
+		lines.sort(Reflect.compare);
+		for (l in lines) Sys.println(l);
+	}
+}
+===
+[run]
+System.String m(Int32) 1
+System.String m(Int32, haxe.lang.Null`1[System.Int32]) 1
+System.String m(Int32, haxe.lang.Null`1[System.Int32], System.String) 1
+Void .ctor() 1
+Void .ctor(haxe.lang.Null`1[System.Int32]) 1
+Void .ctor(haxe.lang.Null`1[System.Int32], System.String) 1
+[gencs]
+System.String m(Int32) 1
+System.String m(Int32, haxe.lang.Null`1[System.Int32]) 2
+System.String m(Int32, haxe.lang.Null`1[System.Int32], System.String) 0
+Void .ctor() 1
+Void .ctor(haxe.lang.Null`1[System.Int32]) 2
+Void .ctor(haxe.lang.Null`1[System.Int32], System.String) 0
+# @:cs.assemblyMeta on a class that @:native puts in no namespace: gencs decides by the written namespace
+# (change_ns, gencs.ml:2612), as hxc does, but its generator then fails with the internal error
+# "Option.No_value" instead of its message. hxc gives gencs's message.
+--- attrs-assembly-meta-native-refused @module=pk.A
+package pk;
+@:native("X")
+@:cs.assemblyMeta(System.Reflection.AssemblyDescriptionAttribute("described"))
+class A {
+	static function main() {}
+}
+===
+[compile]
+./pk/A.hx:4: lines 4-6 : dotnet: @:cs.assemblyMeta cannot be used on top level modules
+# A second TargetFramework: hxc writes one on every assembly, as the .NET SDK's generated file does, so C#
+# fails with CS0579 (duplicate attribute). The error is at the class whose entry names it.
+--- attrs-assembly-meta-duplicate-target-framework @module=pk.A
+package pk;
+@:cs.assemblyMeta(System.Runtime.Versioning.TargetFrameworkAttribute(".NETCoreApp,Version=v10.0"))
+class A {
+	static function main() {}
+}
+===
+[compile]
+./pk/A.hx:3: lines 3-5 : dotnet: TargetFrameworkAttribute is on the assembly already: hxc writes it on every assembly, as the .NET SDK does (C# error CS0579)
+# With -D no-root a top-level class is written in haxe.root, which is a namespace, so gencs and hxc both
+# accept @:cs.assemblyMeta on it.
+--- attrs-assembly-meta-no-root @gencs + -D no-root
+@:cs.assemblyMeta(System.Reflection.AssemblyDescriptionAttribute("described"))
+class P {
+	static function main() {
+		var asm = cs.Lib.toNativeType(P).Assembly;
+		var d:cs.system.reflection.AssemblyDescriptionAttribute = cast cs.system.Attribute.GetCustomAttribute(asm, cs.Lib.toNativeType(cs.system.reflection.AssemblyDescriptionAttribute));
+		Sys.println(d == null ? "no description" : d.Description);
+	}
+}
+===
+[run]
+described
