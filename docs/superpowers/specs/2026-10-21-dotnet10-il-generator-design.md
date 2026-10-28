@@ -884,7 +884,7 @@ and `List` copy, and two threads casting one array at once.
      gives the patch's 34-of-108 model split. The rows are Roslyn's, compressed by its context rules, so a
      dump compares row for row (`attrs-nullable-rows`): each type reference's byte array in pre-order (1 for
      every reference type, since gencs writes no `string?`, 0 for a generic struct such as
-     `haxe.lang.Null<int>`, 2 for a type parameter), `NullableContext` as the most common byte (ties to 0,
+     `haxe.lang.Null<int>`; a reference to a type parameter is 1, and only its GenericParam row is 2), `NullableContext` as the most common byte (ties to 0,
      then 1, then 2) where it differs from the enclosing one, `Nullable(0)` for the base type, Param rows of
      sequence 0 for a return value's attribute, the rows before their parent's others, and the attribute
      types from System.Runtime. A value that names no package, and a constrained type parameter of a

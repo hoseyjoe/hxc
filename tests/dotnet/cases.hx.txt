@@ -21649,7 +21649,7 @@ package tools;
 
 @:nativeGen class Box<T:cs.system.IComparable> {
 	public function new() {}
-	public function pick<A:cs.system.IComparable>(a:A):A return a;
+	public function pick<A:cs.system.IComparable>(a:A, ?b:Int, ?c:Int):A return a;
 }
 
 @:nativeGen class Plain<T:String> {
@@ -21662,4 +21662,4 @@ class P {
 ===
 [compile]
 ./tools/P.hx:3: lines 3-6 : dotnet: hxc cannot write the nullable metadata (-D dotnet-nullable) of tools.Box: its type parameter T is constrained, and hxc writes no constraints
-./tools/P.hx:5: characters 2-63 : dotnet: hxc cannot write the nullable metadata (-D dotnet-nullable) of tools.Box.pick: its type parameter A is constrained, and hxc writes no constraints
+./tools/P.hx:5: characters 2-79 : dotnet: hxc cannot write the nullable metadata (-D dotnet-nullable) of tools.Box.pick: its type parameter A is constrained, and hxc writes no constraints

@@ -122,7 +122,9 @@ class NullableToIl {
 				AttributesToIl.write(g, m.token, n.contextCtor(g), [AInt(ATU1, Int64.ofInt(mn.local))], [], true);
 			var ret = attribute(mn.ret, mn.ctx);
 			if (ret != null) n.put(g, g.mb.paramToken(m.token, -1), ret);
-			for (i in 0...mn.args.length) if (i < m.argNames.length) n.put(g, g.mb.paramToken(m.token, i), attribute(mn.args[i], mn.ctx));
+			// Every plan names each of its arguments, so each has its Param row (its bytes are counted for the context).
+			if (mn.args.length != m.argNames.length) throw "internal error: " + plan.hxPath + "." + m.name + " has " + mn.args.length + " arguments and " + m.argNames.length + " names";
+			for (i in 0...mn.args.length) n.put(g, g.mb.paramToken(m.token, i), attribute(mn.args[i], mn.ctx));
 			for (i in 0...m.generics.length) n.pending(m.token, i, attribute([2], mn.ctx));
 		}
 		for (p in plan.properties) n.put(g, p.token, attribute(bytes(p.sig), tn.ctx));
@@ -155,9 +157,11 @@ class NullableToIl {
 		for (_ in plan.classParams) counts.add(2);
 		for (f in plan.fields) counts.add(common(bytes(f.sig)));
 		var planned = [];
+		var checkedFields = [];
 		for (m in plan.methods) {
 			switch (m.kind) {
-				case MField(cf) | MOptionalOverload(cf, _) | MBridge(cf) if (constrained): checkParams(g, cf.params, plan.hxPath + "." + cf.name, cf.pos);
+				// Once per field, though its optional-argument overloads and bridges are plans too.
+				case MField(cf) | MOptionalOverload(cf, _) | MBridge(cf) if (constrained && checkedFields.indexOf(cf) < 0): checkedFields.push(cf); checkParams(g, cf.params, plan.hxPath + "." + cf.name, cf.pos);
 				case _:
 			}
 			var mc = new Counts();
