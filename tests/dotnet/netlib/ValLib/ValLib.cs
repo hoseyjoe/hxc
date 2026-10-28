@@ -107,6 +107,18 @@ namespace ValLib
         public static SlotHolder The = new SlotHolder();
         public static SlotHolder Get() { Calls++; return The; }
     }
+    public class FBox
+    {
+        public string S = "s";
+        public bool B;
+        public int N = 1;
+        public readonly int RO = 5;
+        public int P { get; set; }
+        public static int SP { get; set; }
+        public static FBox The = new FBox();
+        public static FBox Get() { Console.WriteLine("get"); return The; }
+        public static Pt GetPt() { Console.WriteLine("getPt"); return new Pt(1); }
+    }
     public class IdxBase
     {
         public virtual string this[int i] { get { return "base-int" + i; } }

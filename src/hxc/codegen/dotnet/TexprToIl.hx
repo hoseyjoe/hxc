@@ -1237,7 +1237,7 @@ class TexprToIl {
 					case XField(open, initOnly):
 						var s = ExternMembers.subst(open, inst);
 						if (initOnly) throw new Unsupported("assignments to read-only .NET fields", true);
-						if (!isStatic) calls.receiver(obj, parent);
+						if (!isStatic) calls.receiver(obj, parent, true);
 						texpr(RValue(s), rhs);
 						var token = g.mb.memberRef(g.typeTokenOf(parent), ExternMembers.memberName(cf), g.sigs.field(open));
 						// The value of the assignment is the value stored, as for a property.
@@ -1476,6 +1476,21 @@ class TexprToIl {
 								code.opToken(isStatic ? IlOps.LDSFLD : IlOps.LDFLD, token, isStatic ? 0 : 1, 1);
 							},
 							store: () -> code.opToken(isStatic ? IlOps.STSFLD : IlOps.STFLD, token, isStatic ? 1 : 2, 0)
+						};
+					case XProperty(open, getter, setter) if (getter != null && setter != null):
+						// A hand-written extern variable bound to a .NET property: get once, set once.
+						var get = g.mb.memberRef(g.typeTokenOf(x.parent), getter, g.sigs.method(!isStatic, open, [], 0));
+						var set = g.mb.memberRef(g.typeTokenOf(x.parent), setter, g.sigs.method(!isStatic, LVoid, [open], 0));
+						var op = isStatic || DotnetTypes.isValueType(x.parent) ? IlOps.CALL : IlOps.CALLVIRT;
+						return {
+							sig: ExternMembers.subst(open, x.args),
+							receiver: !isStatic,
+							prepare: () -> if (!isStatic) calls.receiver(obj, x.parent, true),
+							load: () -> {
+								if (!isStatic) code.op(IlOps.DUP, 1, 2);
+								code.opToken(op, get, isStatic ? 0 : 1, 1);
+							},
+							store: () -> code.opToken(op, set, isStatic ? 1 : 2, 0)
 						};
 					case _:
 						return null;

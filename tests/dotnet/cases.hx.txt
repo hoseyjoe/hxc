@@ -16103,6 +16103,95 @@ class P {
 	}
 }
 ===
+# A receiver with a side effect is evaluated once, whether the field or property is stored, computed on or stepped, and a String
+# field's += and a Bool field's store are values too.
+--- netlib-field-store-once @gencs @netlib=ValLib
+class P {
+	static function main() {
+		var a = vallib.FBox.Get().N = 7;
+		trace("store", a);
+		var b = vallib.FBox.Get().N += 3;
+		trace("compound", b);
+		var c = vallib.FBox.Get().N++;
+		var d = ++vallib.FBox.Get().N;
+		trace("step", c, d, vallib.FBox.The.N);
+		var s = vallib.FBox.Get().S += "x";
+		trace("string", s, vallib.FBox.The.S);
+		var t = vallib.FBox.Get().B = true;
+		trace("bool", t, vallib.FBox.The.B);
+		vallib.FBox.Get().N--;
+		trace("statement", vallib.FBox.The.N);
+	}
+}
+===
+# op= and ++/-- on a .NET property get once, compute and set once: the value is the stored one, or for postfix the old one; the
+# receiver is evaluated once.
+--- netlib-property-compound-value @gencs @netlib=ValLib
+@:native("ValLib.FBox") extern class HBox {
+	function new():Void;
+	var P:Int;
+	static var SP:Int;
+	static var The:HBox;
+	static function Get():HBox;
+}
+class P {
+	static function main() {
+		var o = new HBox();
+		trace("compound", o.P += 3, o.P);
+		trace("prefix", ++o.P, o.P, --o.P);
+		trace("postfix", o.P++, o.P, o.P--, o.P);
+		o.P += 2;
+		o.P++;
+		trace("statement", o.P);
+		trace("static", HBox.SP += 4, ++HBox.SP, HBox.SP--, HBox.SP);
+		HBox.SP++;
+		trace("static statement", HBox.SP);
+		var c = HBox.Get().P *= 2;
+		var d = HBox.Get().P++;
+		trace("receiver", c, d, HBox.The.P);
+	}
+}
+===
+# C# rejects a store into a field of a struct returned by a call (CS1612); hxc refuses it instead of storing into a copy.
+--- netlib-field-store-struct-call-is-an-error @netlib=ValLib
+class P {
+	static function a() vallib.FBox.GetPt().X = 3;
+	static function b() vallib.FBox.GetPt().X += 1;
+	static function main() {
+		a();
+		b();
+	}
+}
+===
+[compile]
+P.hx:2: characters 22-47 : dotnet: assignments to fields of struct values are not supported yet
+P.hx:3: characters 22-48 : dotnet: assignments to fields of struct values are not supported yet
+# gencs hoists the struct a call returns into a temporary before ++ and --, so they step a copy, as hxc does.
+--- netlib-field-incdec-struct-call @gencs @netlib=ValLib
+class P {
+	static function main() {
+		vallib.FBox.GetPt().X++;
+		var a = ++vallib.FBox.GetPt().X;
+		var b = vallib.FBox.GetPt().X--;
+		trace(a, b);
+	}
+}
+===
+# A read-only (initonly) .NET field cannot be stored to, computed on or stepped.
+--- netlib-field-initonly-is-an-error @netlib=ValLib
+class P {
+	static function main() {
+		var o = new vallib.FBox();
+		o.RO = 1;
+		o.RO += 1;
+		o.RO++;
+	}
+}
+===
+[compile]
+P.hx:4: characters 5-7 : This expression cannot be accessed for writing
+P.hx:5: characters 5-7 : This expression cannot be accessed for writing
+P.hx:6: characters 5-7 : This expression cannot be accessed for writing
 # Indexers a derived class overrides are looked up where the base declared them (C# picks this[int] of the base for d[0], although
 # the derived class has its own DefaultMemberAttribute), and a getter-only override leaves the base's setter.
 --- netlib-indexer-override @gencs @netlib
