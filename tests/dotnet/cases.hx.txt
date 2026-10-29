@@ -19112,7 +19112,7 @@ CallHideBase.Y() CallHideBase.Z()
 # binds ToString(string) by C#'s betterness and returns null, where a typed object would bind ToString(object)
 # and return "". A null variable stays typed: a String binds ToString(string), a Dynamic ToString(object). A null
 # of a Null<Int> is gencs's `default(global::haxe.lang.Null<int>)`, typed (the type parameter's null:
-# inline-cs-null-type-param-is-an-error).
+# inline-cs-null-type-param).
 --- inline-cs-null-placeholder @gencs
 class P {
 	static function main() {
@@ -19133,9 +19133,9 @@ class P {
 P.hx:9: true, true, true, false
 P.hx:12: false, false
 # A null of a type parameter as a placeholder's argument is gencs's `default(T)`, typed, not the null literal. As
-# for any argument of a type parameter, hxc does not bind an overloaded .NET method to it (gencs's C# binds
-# Convert.ToString(object) and prints false for f("s") and f(1)).
---- inline-cs-null-type-param-is-an-error
+# for any argument of a type parameter, C# converts it only to object, so Convert.ToString(object) binds and
+# returns "" for f("s") and f(1), where the null literal would bind ToString(string) and return null.
+--- inline-cs-null-type-param @gencs
 class P {
 	static function f<T>(x:T):Bool {
 		return untyped __cs__("System.Convert.ToString({0}) == null", (null : T));
@@ -19145,8 +19145,8 @@ class P {
 	}
 }
 ===
-[compile]
-P.hx:3: characters 18-76 : dotnet: more than one .NET overload of System.Convert.ToString may accept (!!0)
+[run]
+P.hx:6: false, false
 # `==` and `!=` in inline C# call a user-defined operator that applies (System.Version's compares the
 # versions), on either operand's class, and compare references where none does (StringBuilder), as C# does.
 --- inline-cs-user-equality-operator @gencs
@@ -23760,3 +23760,198 @@ class P {
 ===
 [compile]
 P.hx:9: characters 3-43 : dotnet: assignment is not part of the inline C# subset; write it in Haxe (a .NET indexer's setter is x.set_Item(a, b, value))
+# gencs's RenameTypeParameters: per class, a counter starting at 0 and the set of names in use (the class's type
+# parameters, then each field's own); a method type parameter whose name is taken becomes name + the next
+# counter value not taken, over the instance fields first, then the statics. Only GenericParam names show it.
+--- method-type-param-renamed @gencs
+class G<T> {
+	public function new() {}
+	public static function s<T>(x:T):T return x;
+	public function i<T>(x:T):T return x;
+	public function j<U>(x:U):U return x;
+}
+class K<T> extends G<T> {
+	public function new() super();
+	public function k<T>(x:T):T return x;
+}
+class L<T> {
+	public function new() {}
+	public static function s<T1, T>(a:T1, x:T):T return x;
+}
+class M {
+	public static function s<T>(x:T):T return x;
+}
+class P {
+	static function show(c:Class<Dynamic>) {
+		var t = cs.Lib.toNativeType(c);
+		var out = [];
+		for (m in t.GetMethods()) if (m.IsGenericMethodDefinition && m.DeclaringType == t) {
+			var ps = [for (a in m.GetGenericArguments()) a.Name];
+			out.push(m.Name + "<" + ps.join(",") + ">");
+		}
+		out.sort(Reflect.compare);
+		Sys.println(t.Name + " " + out.join(" "));
+	}
+	static function main() {
+		show(G); show(K); show(L); show(M);
+		Sys.println(G.s(1) + new G<String>().i(2) + new K<Int>().k(4) + L.s(1, 2) + M.s(3));
+	}
+}
+===
+[run]
+G`1 G_cast<T_c> __hx_cast<T_c_c> i<T1> j<U> s<T2>
+K`1 G_cast<T_c> K_cast<T_c> __hx_cast<T_c_c> k<T1>
+L`1 L_cast<T_c> __hx_cast<T_c_c> s<T1,T2>
+M s<T>
+12
+# Divergence from gencs, whose C# for these fails with CS0246: it renames a method type parameter and keeps the
+# renamed name in the signature of an override of a renamed generic method (`K<T> extends G<T>`, `override
+# i<T>(x:T)` is `T1 i<T2>(T1 x)`), and for `H<T, T1>.s<T>` it declares one name and uses another. hxc renames by
+# the same rule and uses the new name in the whole signature, so both compile and run.
+--- method-type-param-renamed-override
+class G<T> {
+	public function new() {}
+	public function i<T>(x:T):T return x;
+}
+class K<T> extends G<T> {
+	public function new() super();
+	override public function i<T>(x:T):T return x;
+	public function k<T>(x:T):T return x;
+}
+class H<T, T1> {
+	public function new() {}
+	public static function s<T>(x:T):T return x;
+}
+class P {
+	static function show(c:Class<Dynamic>) {
+		var t = cs.Lib.toNativeType(c);
+		var out = [];
+		for (m in t.GetMethods()) if (m.IsGenericMethodDefinition && m.DeclaringType == t) {
+			var ps = [for (a in m.GetGenericArguments()) a.Name];
+			out.push(m.Name + "<" + ps.join(",") + ">");
+		}
+		out.sort(Reflect.compare);
+		Sys.println(t.Name + " " + out.join(" "));
+	}
+	static function main() {
+		show(G); show(K); show(H);
+		var g:G<Int> = new K<Int>();
+		Sys.println(g.i(5) + " " + new K<String>().i("a") + " " + new K<Int>().k(7) + " " + H.s(9));
+	}
+}
+===
+[run]
+G`1 G_cast<T_c> __hx_cast<T_c_c> i<T1>
+K`1 G_cast<T_c> K_cast<T_c> __hx_cast<T_c_c> i<T1> k<T2>
+H`2 H_cast<T_c,T1_c> __hx_cast<T_c_c,T1_c_c> s<T2>
+5 a 7 9
+# The rename covers an interface's methods (the companion's too: m mentions no class type parameter), a
+# constructor's own type parameter and an @:overload method's overloads, by the same counter.
+--- method-type-param-renamed-members @gencs
+interface I<T> {
+	function m<T>(x:T):T;
+	function n<T>(x:T, y:T):T;
+}
+class C<T> implements I<T> {
+	public function new() {}
+	public function m<T>(x:T):T return x;
+	public function n<T>(x:T, y:T):T return y;
+	@:overload public function o<T>(x:T):T return x;
+	@:overload public function o<T>(x:T, y:Int):T return x;
+	public function p<U>(x:U):U return x;
+}
+interface J {
+	function q<T>(x:T):T;
+}
+class P {
+	static function show(c:Class<Dynamic>) {
+		var t = cs.Lib.toNativeType(c);
+		var out = [];
+		for (m in t.GetMethods()) if (m.IsGenericMethodDefinition && m.DeclaringType == t) {
+			var ps = [for (a in m.GetGenericArguments()) a.Name];
+			out.push(m.Name + "<" + ps.join(",") + ">");
+		}
+		out.sort(Reflect.compare);
+		Sys.println(t.Name + " " + out.join(" "));
+	}
+	static function main() {
+		show(I); show(C); show(J);
+		var i:I<String> = new C<String>();
+		var c = new C<Int>();
+		Sys.println(i.m(1) + " " + i.n(1, 2) + " " + c.o(3) + " " + c.o(4, 5) + " " + c.p(6));
+	}
+}
+===
+[run]
+I`1 m<T1> n<T2>
+C`1 C_cast<T_c> I_cast<T_c> __hx_cast<T_c_c> m<T1> n<T2> o<T3> o<T> p<U>
+J q<T>
+1 2 3 4 6
+# A hand-written extern whose .NET method is generic (Ovl.G<T>(T)), called with an argument typed by a type
+# parameter: C# infers T as that type parameter (`call Ovl::G<!0>`, no box), so typeof(T) is the instantiation's
+# type. hxc boxes the value and calls G<object>. F(x:Any) stays F(object), as in gencs.
+--- netlib-extern-type-parameter-argument-inference @gencs @netlib=CarLib
+@:native("car.Ovl") extern class O { static function G(x:Any):String; static function F(x:Any):String; }
+class H<U> {
+	public function new() {}
+	public function g(x:U):String return O.G(x);
+	public function f(x:U):String return O.F(x);
+}
+class P {
+	static function sg<V>(x:V):String return O.G(x);
+	static function main() {
+	Sys.println(new H<Int>().g(1));
+	Sys.println(new H<String>().g("s"));
+	Sys.println(sg(1.5));
+	var a:Any = 3;
+	Sys.println(O.G(a));
+	Sys.println(new H<Int>().f(1));
+} }
+===
+[run]
+G<Int32>
+G<String>
+G<Double>
+G<Object>
+F(object)
+# A type parameter constrained to String, passed to a hand-written extern's String parameter (Conv.M(string), which
+# has an overload with a Nullable<long> parameter): the argument is the declared parameter's type, not the type
+# parameter, which converts to object alone, so the call keeps binding M(string).
+--- netlib-extern-type-parameter-constraint-argument @gencs @netlib=CarLib
+@:native("car.Conv") extern class C { static function M(x:String):String; }
+class K<T:String> {
+	public function new() {}
+	public function f(x:T):String return C.M(x);
+}
+class P {
+	static function g<V:String>(x:V):String return C.M(x);
+	static function main() {
+		Sys.println(new K<String>().f("a"));
+		Sys.println(g("b"));
+	}
+}
+===
+[run]
+M(string)
+M(string)
+# An argument of an unconstrained type parameter in inline C# to an overloaded .NET method: C# converts T only to
+# object, so Convert.ToString(object) binds, for a constrained method type parameter too (h: gencs writes no
+# `where` for a method's type parameters). f(null : T) is in inline-cs-null-type-param.
+--- inline-cs-type-param-argument-overloaded @gencs
+class P {
+	static function f<T>(x:T):String {
+		return untyped __cs__("System.Convert.ToString({0})", x);
+	}
+	static function g<T>(x:T):String return cs.system.Convert.ToString(x);
+	static function h<T:haxe.Constraints.IMap<Int,Int>>(x:T):String return untyped __cs__("System.Convert.ToString({0})", x);
+	static function main() {
+		Sys.println(f("s") + " " + f(1) + " " + f(null));
+		Sys.println(g("s") + " " + g(1));
+		Sys.println(h(new Map<Int,Int>()));
+	}
+}
+===
+[run]
+s 1
+s 1
+haxe.ds.IntMap`1[System.Int32]

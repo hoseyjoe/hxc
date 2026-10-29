@@ -255,6 +255,32 @@ class TclassToIl {
 	static final valueTypePath:IlPath = {ns: ["System"], nested: [], name: "ValueType"};
 	static inline final initFlagName = "__hx_init_called";
 
+	// gencs's RenameTypeParameters (run last, on the generated classes): per class, a counter starting at 0, and
+	// for each field (the instance fields in order, then the statics, then the constructor) a set of names in use
+	// that starts as the class's type parameters; a field's type parameter whose name is in the set becomes the
+	// name and the next counter value not in the set (`T` is `T1`, or `T2` after a `T1`), and every name joins the
+	// set. A class without type parameters renames nothing, and neither does an @:overload's overload. gencs keeps
+	// an override's base name in its signature and fails to compile (CS0246); here every name is the one written.
+	public static function renamedTypeParams(c:TClass):ObjectMap<TClassField, Array<String>> {
+		var r = new ObjectMap<TClassField, Array<String>>();
+		var fields = c.orderedFields.concat(c.orderedStatics);
+		if (c.constructor != null) fields.push(c.constructor);
+		var counter = 0;
+		for (cf in fields) {
+			var used = [for (p in c.params) p.name];
+			r.set(cf, [
+				for (p in cf.params) {
+					var name = p.name;
+					while (used.indexOf(name) >= 0) name = p.name + ++counter;
+					used.push(name);
+					name;
+				}
+			]);
+			for (o in cf.overloads) r.set(o, [for (p in o.params) p.name]);
+		}
+		return r;
+	}
+
 	public static function functionSig(g:DotnetCtx, t:T):{args:Array<IlSigNorm>, names:Array<String>, ret:IlSigNorm} {
 		return switch (TypeFunctions.follow(t)) {
 			case TFun(sig): {
@@ -418,6 +444,7 @@ class TclassToIl {
 		addFields(c.orderedFields, false);
 		addFields(c.orderedStatics, true);
 
+		var renamed = renamedTypeParams(c);
 		var methods:Array<MethodPlan> = [];
 		function addMethod(cf:TClassField, isStatic:Bool, isCtor:Bool) {
 			switch (cf.kind) {
@@ -460,7 +487,7 @@ class TclassToIl {
 				else if (isCtor) flags |= MethodAttrs.SPECIAL_NAME | MethodAttrs.RT_SPECIAL_NAME;
 				else flags |= virtuality(c, f, isStruct, implementing.exists(f) || CompanionToIl.isMember(g, c, f), !shape.match(OOverload(_)));
 				var name = isCtor ? ".ctor" : prop != null || event != null ? "_" + f.name : DotnetNames.fieldName(c, f.name);
-				var generics = [for (p in f.params) p.name];
+				var generics = renamed.get(f);
 				if (!shape.match(OSame) && TypeFunctions.hasClassFieldFlag(f, CfAbstract))
 					throw new Unsupported("abstract overrides that change the signature", true);
 				// The overloads an erased interface needs of the method, which gencs writes in front of it.

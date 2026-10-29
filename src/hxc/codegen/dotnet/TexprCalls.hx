@@ -1274,12 +1274,13 @@ class TexprCalls {
 	}
 
 	// A call site of an extern method with the arguments `args`, as ExternMembers.method takes it: each
-	// argument's own type, as gencs's C# sees it, unless it is Dynamic, and the type arguments of the
+	// argument's own type, as gencs's C# sees it, unless it is Dynamic (a type parameter is its own type, as C#
+	// infers a generic method's type argument from it: `Ovl.G(x)` is `G<!0>`), and the type arguments of the
 	// extern class and method.
 	function externCallSite(args:Array<TExpr>, classArgs:Array<IlSigNorm>, methodArgs:Array<IlSigNorm>):ExternCall {
 		return {
 			args: args,
-			argTypes: [for (a in args) TexprDynamic.isDynamic(a.type) ? null : try tl.sig(a.type) catch (_:Unsupported) null],
+			argTypes: [for (a in args) TexprDynamic.isDynamic(a.type) && !TexprDynamic.isTypeParamType(a.type) ? null : try tl.sig(a.type) catch (_:Unsupported) null],
 			caller: tl.cls,
 			classArgs: classArgs,
 			methodArgs: methodArgs

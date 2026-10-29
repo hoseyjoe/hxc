@@ -656,7 +656,9 @@ and `List` copy, and two threads casting one array at once.
          (`T1(x:Float)` with an `Int` is `T1<double>`, and `N(int)`/`N(double)` binds `N(double)`;
          `netlib-extern-basic-argument-cast`). A generic method's type arguments come from
          the arguments' own types, as C# infers them (`T1(x:Any)` with a `MyPlain` is `T1<MyPlain>`, a
-         TypeDef or TypeSpec of the program's own module); where they differ from the declared ones, the
+         TypeDef or TypeSpec of the program's own module, and with an `x:U` of a Haxe class or method type
+         parameter it is `T1<!0>`, no box; where C# cannot pass a type parameter to the declared parameter
+         type, the declared type stays); where they differ from the declared ones, the
          declared return type must still convert from the method's return with them, or the call is
          refused with the return-mismatch error.
        - **Argument values.** C# also converts by an argument's value, and gencs writes integer literals
@@ -714,8 +716,6 @@ and `List` copy, and two threads casting one array at once.
          `List<int>.Add(T)` takes an int; where that makes two candidates take exactly the arguments
          (`Gen<int>`'s `Foo(T)` and `Foo(int)`), the call is refused, where C# prefers the parameter that
          is not a type parameter.
-     - gencs renames a method type parameter that shadows another (`sh<T,T1>`) where hxc emits
-       `sh<T,T>`. Only reflection on generic-parameter names can see it.
      - An `@:overload` override that changes only the return type is refused. gencs compiles it as a C#
        covariant-return override, which needs `newslot`, a MethodImpl row and
        `PreserveBaseOverridesAttribute`.
@@ -922,8 +922,7 @@ and `List` copy, and two threads casting one array at once.
      error. The desktop app's build depends on the macro-API fix (ruling 9): 158 of its 217 resources come from
      haxeui-core's macros, which hxc's `Context.addResource` used to drop.
      The carried items:
-     - covariant-return `@:overload` overrides, and gencs's `T1` renaming of a shadowing method type
-       parameter;
+     - covariant-return `@:overload` overrides;
      - the forwarding stub C# adds where a .NET base class's non-virtual method or property
        implements an interface method or property for a Haxe subclass (ruling S; both are refused
        until then), and where a Haxe superclass's event implements a Haxe or .NET interface's event
@@ -931,8 +930,6 @@ and `List` copy, and two threads casting one array at once.
      - static `@:property` vars with get or set accessors, which gencs makes static properties;
      - .NET extern, overloaded and struct methods as delegate method groups, and a method group
        reached through a `Dynamic` or companion-interface receiver;
-     - an argument typed as a Haxe class type parameter, which infers `object` where gencs gives the
-       instantiation's type (listed in *Interop divergences from gencs*).
    **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
    schemas match today's, ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
@@ -973,9 +970,13 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   object passed to a hand-written extern is hxc's representation class (`haxe.lang.Function`,
   `Array`, `object`), where gencs's C# infers the closure's own class, ``Array`1`` or
   `haxe.lang.DynamicObject`. Only reflection on the type argument (`typeof(T)`) can tell.
-- A Haxe type parameter passed as such an argument infers `object`: `H<Int>.f(x:U)` calling `T1(x)` is
-  `T1<object>` in hxc, where gencs's generic C# class gives `T1<int>`. This follows from milestone 3c's
-  type-argument erasure, is carried, and is observable only through `typeof(T)`.
+- gencs renames a method type parameter that shadows a class one (`T` is `T1`; the counter is per class, over
+  the instance fields, then the statics, and an `@:overload`'s overloads keep their names), and hxc writes the
+  same GenericParam names (`method-type-param-renamed`). Two shapes do not compile in gencs's C#, both
+  `CS0246`: an override of a renamed generic method keeps the base's renamed name in its signature (`K<T>
+  extends G<T>`, `override i<T>(x:T)` is `T1 i<T2>(T1 x)`), and `H<T, T1>.s<T>` fails too. hxc renames by the
+  same rule and uses the new name in the whole signature, so both compile and run
+  (`method-type-param-renamed-override`; with no gencs run to compare, the case is not `@gencs`).
 - A delegate made from a static method is a new delegate each time (ruling 9). Roslyn caches it in a
   `<>O` class, so only reference equality between two such delegates can tell.
 - `throw e` of the innermost catch's own, unassigned variable is IL `rethrow` in hxc and keeps the stack

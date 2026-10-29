@@ -295,9 +295,10 @@ class CompanionToIl {
 		var indexer = null;
 		if (isInterface(c)) {
 			// The interface's methods that mention no type parameter, which its own plan left out.
+			var renamed = TclassToIl.renamedTypeParams(c);
 			for (cf in c.orderedFields) for (f in [cf].concat(cf.overloads)) if (isMember(g, c, f)) {
 				var sig = g.types.withParams(c.params, f.params, () -> TclassToIl.functionSig(g, f.type));
-				methods.push(abstractMethod(MField(f), DotnetNames.fieldName(c, f.name), sig.ret, sig.args, sig.names, [for (p in f.params) p.name], f.pos));
+				methods.push(abstractMethod(MField(f), DotnetNames.fieldName(c, f.name), sig.ret, sig.args, sig.names, renamed.get(f), f.pos));
 			}
 		} else {
 			var s = c.superClass;

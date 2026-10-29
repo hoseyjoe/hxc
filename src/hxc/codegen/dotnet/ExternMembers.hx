@@ -385,28 +385,41 @@ class ExternMembers {
 		}
 		if (call != null && !overloaded) {
 			// Ruling K: a Haxe-compiled argument keeps its own type, which converts as ruling J says.
-			var byArgs = [
+			function argsBy(typeParams:Bool) return [
 				for (i in 0...want.length) {
 					var s = i < call.argTypes.length ? call.argTypes[i] : null;
 					// gencs unwraps or wraps a haxe.lang.Null<T> where the declared type is not one (a basic-typed
 					// argument to a declared Null<T> included, ruling Q), and casts a basic-typed argument to
 					// another declared basic type (ruling N).
 					if (s == null || types.isNullOf(s) != types.isNullOf(want[i]) && (types.isNullOf(s) || isBasic(s))
-						|| isBasic(s) && isBasic(want[i])) want[i] else s;
+						|| isBasic(s) && isBasic(want[i]) || !typeParams && s.match(LTypeParam(_) | LMethodTypeParam(_))) want[i] else s;
 				}
 			];
-			if (!IlPaths.sigsEq(byArgs, want)) {
-				// Ruling F′: both bind the same method; its type arguments are the arguments' own, as C# infers
-				// them, and `bound` checks the return with them.
+			// The method `args` bind, if it is the one `want` does.
+			function bindsSame(args:Array<IlSigNorm>):Null<Bound> {
 				byValue = false;
 				byNull = false;
-				switch (resolve(links, name, isStatic, byArgs, cf.params.length, caller, receiverStatic, candInst, kinds)) {
-					case RBound(b) if (b.link == found.link && b.index == found.index):
-						found = b;
-					case _:
-						throw Unsupported.error("the .NET " + what + " depends on the argument types " + list(byArgs)
-							+ (byValue ? ", and " + byValueText : byNull ? ", and " + byNullText : "; declare it with @:overload"));
+				return switch (resolve(links, name, isStatic, args, cf.params.length, caller, receiverStatic, candInst, kinds)) {
+					case RBound(b) if (b.link == found.link && b.index == found.index): b;
+					case _: null;
 				}
+			}
+			// Ruling F′: both bind the same method; its type arguments are the arguments' own, as C# infers
+			// them, and `bound` checks the return with them. A type parameter's own type is one of them where
+			// C# binds that method with it (`Ovl.G(x)` is `G<!0>`); where it does not (a Foo parameter, which
+			// the argument is cast to), the declared type stays.
+			var byArgs = argsBy(true);
+			var plain = argsBy(false);
+			if (!IlPaths.sigsEq(byArgs, want)) {
+				var rebound = bindsSame(byArgs);
+				if (rebound == null && !IlPaths.sigsEq(byArgs, plain)) {
+					byArgs = plain;
+					if (!IlPaths.sigsEq(byArgs, want)) rebound = bindsSame(byArgs);
+				}
+				if (rebound == null && !IlPaths.sigsEq(byArgs, want))
+					throw Unsupported.error("the .NET " + what + " depends on the argument types " + list(byArgs)
+						+ (byValue ? ", and " + byValueText : byNull ? ", and " + byNullText : "; declare it with @:overload"));
+				if (rebound != null) found = rebound;
 			}
 		}
 		var link = links[found.link];
@@ -1071,6 +1084,9 @@ class ExternMembers {
 		}
 		if (span(from) || span(to)) return AUnknown;
 		if (to.match(LObject)) return AYes;
+		// An unconstrained type parameter converts to object and to itself, and to nothing else; its rule comes before the
+		// unknowns of decimal and Nullable, which it does not convert to either (inline-cs-type-param-argument-overloaded).
+		if (from.match(LTypeParam(_) | LMethodTypeParam(_))) return ANo;
 		inline function unmodelled(s:IlSigNorm) return s.match(LIntPtr | LUIntPtr) || isSystemNamed(s, "Decimal");
 		if (unmodelled(from) || unmodelled(to)) return AUnknown;
 		if (widens(from, to)) return AYes;
@@ -1080,7 +1096,6 @@ class ExternMembers {
 			case LValueType(_, [a]) if (isReference(from) && !implicitMayReach(norm(a), to) && !implicitMayReach(from, to)): ANo;
 			case _: AUnknown;
 		}
-		if (from.match(LTypeParam(_) | LMethodTypeParam(_))) return ANo;
 		var r = ANo;
 		switch (from) {
 			case LVector(_) | LArray(_, _):
