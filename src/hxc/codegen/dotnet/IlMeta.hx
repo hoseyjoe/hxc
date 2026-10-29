@@ -51,6 +51,15 @@ class TableIdx {
 	public static inline var IGenericParam = 42;
 	public static inline var IMethodSpec = 43;
 	public static inline var IGenericParamConstraint = 44;
+	// the Portable PDB's tables
+	public static inline var IDocument = 0x30;
+	public static inline var IMethodDebugInformation = 0x31;
+	public static inline var ILocalScope = 0x32;
+	public static inline var ILocalVariable = 0x33;
+	public static inline var ILocalConstant = 0x34;
+	public static inline var IImportScope = 0x35;
+	public static inline var IStateMachineMethod = 0x36;
+	public static inline var ICustomDebugInformation = 0x37;
 	// coded tokens
 	public static inline var ITypeDefOrRef = 64;
 	public static inline var IHasConstant = 65;
@@ -65,6 +74,7 @@ class TableIdx {
 	public static inline var ICustomAttributeType = 74;
 	public static inline var IResolutionScope = 75;
 	public static inline var ITypeOrMethodDef = 76;
+	public static inline var IHasCustomDebugInformation = 77;
 }
 
 enum ClrMeta {

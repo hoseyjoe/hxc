@@ -342,8 +342,11 @@ class ModuleBuilder {
 		if (next != owners.length) throw "internal error: " + what + " rows are not grouped by type";
 	}
 
-	// The image, with `entryPoint` the entry method's MethodDef token, or 0 for none.
-	public function finish(entryPoint:Int):Bytes {
+	// The image, with `entryPoint` the entry method's MethodDef token, or 0 for none, and with `pdb` the PDB
+	// named `pdbName` that its debug directory points at. The PDB's id comes from its SHA-256 (taken with
+	// the id zero), the MVID's way, and is in the image before PeWriter hashes it, so the MVID depends on
+	// the PDB.
+	public function finish(entryPoint:Int, pdb:Null<PdbBuilder>, pdbName:String):{dll:Bytes, pdb:Null<Bytes>} {
 		linkMembers(4, fieldOwners, "Field");
 		linkMembers(5, methodOwners, "MethodDef");
 		if (firstAttributes.length > 0) {
@@ -354,13 +357,28 @@ class ModuleBuilder {
 		// SHA-1 hash algorithm, version 1.0.0.0, no flags or public key, neutral culture.
 		tables.assembly.push([0x8004, 1, 0, 0, 0, 0, 0, heaps.strings.add(name), 0]);
 		var md = tables.writeMetadata(heaps);
-		return PeWriter.write({
+		var debug = null, pdbBytes = null;
+		if (pdb != null) {
+			var p = pdb.write(entryPoint, tables.rowCounts(), tables.methodDef.length);
+			var hash = haxe.crypto.Sha256.make(p.bytes);
+			// A GUID's version and variant bits, as the MVID's, then the stamp's top bit, as the timestamp's.
+			var id = hash.sub(0, 20);
+			id.set(7, (id.get(7) & 0x0F) | 0x40);
+			id.set(8, (id.get(8) & 0x3F) | 0x80);
+			id.set(19, id.get(19) | 0x80);
+			p.bytes.blit(p.idOffset, id, 0, 20);
+			debug = {pdbName: pdbName, pdbId: id, pdbHash: hash};
+			pdbBytes = p.bytes;
+		}
+		var dll = PeWriter.write({
 			metadata: md.bytes,
 			mvidOffset: md.mvidOffset,
 			il: il.getBytes(),
 			resources: resources.getBytes(),
 			entryPoint: entryPoint,
-			isDll: isDll
+			isDll: isDll,
+			debug: debug
 		});
+		return {dll: dll, pdb: pdbBytes};
 	}
 }

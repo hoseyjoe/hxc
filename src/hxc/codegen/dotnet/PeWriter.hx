@@ -3,9 +3,12 @@ package hxc.codegen.dotnet;
 import haxe.io.Bytes;
 
 // The PE32 image around the IL and metadata (ECMA-335 II.25): headers, a .text section holding the
-// IAT, CLI header, IL, metadata, manifest resources, mscoree import and entry stub, and a .reloc section
-// fixing up the stub. The MVID and timestamp come from a SHA-256 of the image, as in Roslyn's deterministic
-// mode.
+// IAT, CLI header, IL, metadata, manifest resources, debug directory, mscoree import and entry stub, and a
+// .reloc section fixing up the stub. The MVID and timestamp come from a SHA-256 of the image, as in Roslyn's
+// deterministic mode.
+
+// The PDB the debug directory names: its file name, its 20-byte id (a GUID and a stamp) and its SHA-256.
+typedef DebugDirectory = {pdbName:String, pdbId:Bytes, pdbHash:Bytes}
 
 class PeWriter {
 	// Where `il` starts: right after the 8-byte IAT and the 72-byte CLI header.
@@ -18,6 +21,7 @@ class PeWriter {
 	static inline var SECTION_ALIGNMENT = 0x2000;
 	static inline var HEADERS_SIZE = 0x200;
 	static inline var TIMESTAMP_OFFSET = 0x88;
+	static inline var DEBUG_ENTRY_SIZE = 28;
 
 	// The DOS header and stub of II.25.2.1; e_lfanew points at the PE signature at 0x80.
 	static final dosHeader = Bytes.ofHex("4d5a90000300000004000000ffff0000b8000000000000004000000000000000"
@@ -29,12 +33,59 @@ class PeWriter {
 		return (v + n - 1) & ~(n - 1);
 	}
 
-	public static function write(img:{metadata:Bytes, mvidOffset:Int, il:Bytes, resources:Bytes, entryPoint:Int, isDll:Bool}):Bytes {
+	// The debug directory (PE-COFF.md beside the Portable PDB spec) at `rva`, whose file position is
+	// `rva - delta`: CodeView, PdbChecksum and Reproducible entries, in that order as Roslyn writes them,
+	// then the first two's data.
+	static function debugDirectory(d:DebugDirectory, rva:Int, delta:Int):Bytes {
+		var name = Bytes.ofString(d.pdbName);
+		var codeViewRva = rva + 3 * DEBUG_ENTRY_SIZE;
+		var codeViewSize = 24 + name.length + 1;
+		var checksumRva = alignUp(codeViewRva + codeViewSize, 4);
+		var checksumSize = 7 + d.pdbHash.length;
+		var b = new IlBytes();
+		function entry(stamp:Int, major:Int, minor:Int, type:Int, size:Int, dataRva:Int) {
+			b.u32(0);
+			b.u32(stamp);
+			b.u16(major);
+			b.u16(minor);
+			b.u32(type);
+			b.u32(size);
+			b.u32(dataRva);
+			b.u32(size == 0 ? 0 : dataRva - delta);
+		}
+		// A portable CodeView entry's stamp is the id's last 4 bytes.
+		entry(d.pdbId.getInt32(16), 0x0100, 0x504D, 2, codeViewSize, codeViewRva);
+		entry(0, 1, 0, 19, checksumSize, checksumRva);
+		entry(0, 0, 0, 16, 0, 0);
+		b.bytes(Bytes.ofString("RSDS"));
+		b.bytes(d.pdbId.sub(0, 16));
+		b.u32(1); // age
+		b.bytes(name);
+		b.u8(0);
+		b.align(4);
+		b.bytes(Bytes.ofString("SHA256"));
+		b.u8(0);
+		b.bytes(d.pdbHash);
+		return b.getBytes();
+	}
+
+	public static function write(img:{
+		metadata:Bytes,
+		mvidOffset:Int,
+		il:Bytes,
+		resources:Bytes,
+		entryPoint:Int,
+		isDll:Bool,
+		debug:Null<DebugDirectory>
+	}):Bytes {
 		var imageBase = img.isDll ? 0x10000000 : 0x400000;
 		var metadataRva = alignUp(IL_RVA + img.il.length, 4);
 		// The resources blob follows the metadata, as Roslyn places it; with none, nothing moves.
 		var resourcesRva = alignUp(metadataRva + img.metadata.length, 4);
-		var importRva = alignUp(resourcesRva + img.resources.length, 4);
+		// The debug directory follows the resources; without one, nothing moves.
+		var debugRva = alignUp(resourcesRva + img.resources.length, 4);
+		var debug = img.debug == null ? Bytes.alloc(0) : debugDirectory(img.debug, debugRva, TEXT_RVA - HEADERS_SIZE);
+		var importRva = alignUp(debugRva + debug.length, 4);
 		var lookupRva = importRva + 40;
 		var hintNameRva = lookupRva + 8;
 		var dllNameRva = hintNameRva + 14;
@@ -91,7 +142,7 @@ class PeWriter {
 		b.u32(0x1000);
 		b.u32(0);
 		b.u32(16);
-		// Data directories: import, base relocation, IAT and CLI header are set.
+		// Data directories: import, base relocation, debug (with -debug), IAT and CLI header are set.
 		function dir(rva:Int, size:Int) {
 			b.u32(rva);
 			b.u32(size);
@@ -100,7 +151,8 @@ class PeWriter {
 		dir(importRva, dllNameRva + 12 - importRva);
 		for (_ in 0...3) dir(0, 0);
 		dir(relocRva, relocSize);
-		for (_ in 0...6) dir(0, 0);
+		if (img.debug == null) dir(0, 0) else dir(debugRva, 3 * DEBUG_ENTRY_SIZE);
+		for (_ in 0...5) dir(0, 0);
 		dir(TEXT_RVA, 8);
 		dir(0, 0);
 		dir(CLI_HEADER_RVA, CLI_HEADER_SIZE);
@@ -151,6 +203,9 @@ class PeWriter {
 		b.align(4);
 		at(resourcesRva);
 		b.bytes(img.resources);
+		b.align(4);
+		at(debugRva);
+		b.bytes(debug);
 		b.align(4);
 		at(importRva);
 		b.u32(lookupRva);

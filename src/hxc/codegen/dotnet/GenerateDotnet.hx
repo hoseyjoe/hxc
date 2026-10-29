@@ -24,6 +24,8 @@ private typedef AttrTarget = AttributesToIl.AttrTarget;
 class DotnetCtx {
 	public final ctx:Context;
 	public final mb:ModuleBuilder;
+	// The PDB, under -debug.
+	public final pdb:Null<PdbBuilder>;
 	public final types:DotnetTypes;
 	public final sigs:SigWriter;
 	public final externs:ExternMembers;
@@ -84,6 +86,7 @@ class DotnetCtx {
 	public function new(ctx:Context, mb:ModuleBuilder) {
 		this.ctx = ctx;
 		this.mb = mb;
+		pdb = ctx.debug ? new PdbBuilder() : null;
 		types = new DotnetTypes(ctx, mb);
 		types.g = this;
 		sigs = new SigWriter(mb.typeToken);
@@ -615,7 +618,9 @@ class GenerateDotnet {
 		}
 		if (g.diagnostics > 0) return;
 		if (!isDll && g.entryPoint == 0) throw "internal error: the program has no entry point";
-		sys.io.File.saveBytes(dir + "/" + name + ".dll", mb.finish(g.entryPoint));
+		var out = mb.finish(g.entryPoint, g.pdb, name + ".pdb");
+		sys.io.File.saveBytes(dir + "/" + name + ".dll", out.dll);
+		if (out.pdb != null) sys.io.File.saveBytes(dir + "/" + name + ".pdb", out.pdb);
 		if (!isDll) sys.io.File.saveContent(dir + "/" + name + ".runtimeconfig.json", runtimeConfig(version));
 	}
 

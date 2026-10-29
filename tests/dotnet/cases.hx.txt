@@ -13,6 +13,19 @@ class P {}
 ===
 [dump]
 assembly My.App 1.0.0.0
+--- pdb-written @lib @dump=debugdir + -debug
+class P {}
+===
+[dump]
+codeview P.pdb age 1 portable id-match
+pdbchecksum SHA256 match
+reproducible
+pdb rows match
+--- pdb-absent @lib @dump=debugdir
+class P {}
+===
+[dump]
+debugdir none
 --- runtimeconfig-defaults-to-net10 @runtimeconfig
 class P {
 	static function main() {}

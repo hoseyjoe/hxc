@@ -25,6 +25,9 @@ class CodedIndex {
 	static final hasConstantTables = [T.IField, T.IParam, T.IProperty];
 	static final hasSemanticsTables = [T.IEvent, T.IProperty];
 	static final implementationTables = [T.IFile, T.IAssemblyRef, T.IExportedType];
+	static final hasCustomDebugInformationTables = hasCustomAttributeTables.concat([
+		T.IDocument, T.ILocalScope, T.ILocalVariable, T.ILocalConstant, T.IImportScope
+	]);
 
 	public static function tables(kind:Int):Array<Int> {
 		return switch (kind) {
@@ -38,6 +41,7 @@ class CodedIndex {
 			case T.IHasConstant: hasConstantTables;
 			case T.IHasSemantics: hasSemanticsTables;
 			case T.IImplementation: implementationTables;
+			case T.IHasCustomDebugInformation: hasCustomDebugInformationTables;
 			case _: throw "unsupported coded index " + kind;
 		}
 	}
@@ -77,11 +81,11 @@ class CodedIndex {
 
 class MetaTables {
 	// Column kinds besides a table number (a row index into it) or a coded index kind.
-	static inline var U16 = -1;
-	static inline var U32 = -2;
-	static inline var STR = -3;
-	static inline var GUID = -4;
-	static inline var BLOB = -5;
+	public static inline var U16 = -1;
+	public static inline var U32 = -2;
+	public static inline var STR = -3;
+	public static inline var GUID = -4;
+	public static inline var BLOB = -5;
 
 	// The Sorted mask: every table that ECMA-335 keeps sorted by its key column.
 	static inline var SORTED_LO = 0x3301FA00;
@@ -182,8 +186,28 @@ class MetaTables {
 		checkSorted("GenericParam", genericParam, [2, 0]);
 		checkSorted("GenericParamConstraint", genericParamConstraint, [0]);
 
-		var rowCounts = [for (_ in 0...64) 0];
-		for (w in written) rowCounts[w.table] = w.rows.length;
+		var root = writeRoot("v4.0.30319", [
+			{name: "#~", data: writeTables(written, h, rowCounts(), SORTED_LO, SORTED_HI)},
+			{name: "#Strings", data: h.strings.bytes()},
+			{name: "#US", data: h.userStrings.bytes()},
+			{name: "#GUID", data: h.guids.bytes()},
+			{name: "#Blob", data: h.blobs.bytes()},
+		]);
+		if (module.length != 1) throw "the Module table needs exactly one row";
+		return {bytes: root.bytes, mvidOffset: root.offsets["#GUID"] + (module[0][2] - 1) * 16};
+	}
+
+	// Each table's row count, by table number.
+	public function rowCounts():Array<Int> {
+		var counts = [for (_ in 0...64) 0];
+		for (w in written) counts[w.table] = w.rows.length;
+		return counts;
+	}
+
+	// The #~ stream holding `written`, in table number order. Row and coded indices are sized by
+	// `rowCounts`, which may count tables of another metadata, as a PDB's references into its DLL are.
+	public static function writeTables(written:Array<{table:Int, rows:Array<Row>, schema:Array<Int>}>, h:MetaHeaps, rowCounts:Array<Int>,
+			sortedLo:Int, sortedHi:Int):Bytes {
 		function width(kind:Int):Int {
 			return switch (kind) {
 				case U16: 2;
@@ -213,8 +237,8 @@ class MetaTables {
 		}
 		s.u32(validLo);
 		s.u32(validHi);
-		s.u32(SORTED_LO);
-		s.u32(SORTED_HI);
+		s.u32(sortedLo);
+		s.u32(sortedHi);
 		for (w in written) if (w.rows.length > 0) s.u32(w.rows.length);
 		for (w in written) {
 			var widths = [for (k in w.schema) width(k)];
@@ -231,30 +255,29 @@ class MetaTables {
 			}
 		}
 		s.align(4);
+		return s.getBytes();
+	}
 
-		var streams = [
-			{name: "#~", data: s.getBytes()},
-			{name: "#Strings", data: h.strings.bytes()},
-			{name: "#US", data: h.userStrings.bytes()},
-			{name: "#GUID", data: h.guids.bytes()},
-			{name: "#Blob", data: h.blobs.bytes()},
-		];
-		// Each stream header is an offset, a size and the name, null-terminated and padded to 4.
-		var offset = 32;
-		for (st in streams) offset += 8 + ((st.name.length + 4) & ~3);
+	// The metadata root and its streams, with each stream's offset from the root's start.
+	public static function writeRoot(version:String, streams:Array<{name:String, data:Bytes}>):{bytes:Bytes, offsets:Map<String, Int>} {
+		// The version string and each stream header's name are null-terminated and padded to 4; a stream
+		// header is an offset, a size and the name.
+		inline function padded(s:String) return (s.length + 4) & ~3;
+		var offset = 20 + padded(version);
+		for (st in streams) offset += 8 + padded(st.name);
 		var root = new IlBytes();
 		root.u32(0x424A5342);
 		root.u16(1);
 		root.u16(1);
 		root.u32(0);
-		root.u32(12);
-		root.bytes(Bytes.ofString("v4.0.30319"));
-		root.align(4);
+		root.u32(padded(version));
+		root.bytes(Bytes.ofString(version));
+		for (_ in version.length...padded(version)) root.u8(0);
 		root.u16(0);
 		root.u16(streams.length);
-		var guidOffset = 0;
+		var offsets = new Map<String, Int>();
 		for (st in streams) {
-			if (st.name == "#GUID") guidOffset = offset;
+			offsets[st.name] = offset;
 			root.u32(offset);
 			root.u32(st.data.length);
 			root.bytes(Bytes.ofString(st.name));
@@ -263,7 +286,6 @@ class MetaTables {
 			offset += st.data.length;
 		}
 		for (st in streams) root.bytes(st.data);
-		if (module.length != 1) throw "the Module table needs exactly one row";
-		return {bytes: root.getBytes(), mvidOffset: guidOffset + (module[0][2] - 1) * 16};
+		return {bytes: root.getBytes(), offsets: offsets};
 	}
 }

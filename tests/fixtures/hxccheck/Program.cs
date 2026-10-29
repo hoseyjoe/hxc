@@ -1,7 +1,8 @@
 // Checks assemblies written by hxc's .NET generator.
 //   verify <dll>          ILVerify over method bodies and type definitions
-//   dump <dll> <items>    prints the metadata named by a comma-separated item list (a type name, or
-//                         attrs:<type> for its attribute rows)
+//   dump <dll> <items>    prints the metadata named by a comma-separated item list (a type name,
+//                         attrs:<type> for its attribute rows, or debugdir for the debug directory and
+//                         the PDB it names)
 //   stress-fieldlookup <dll>  calls the assembly's haxe.lang.FieldLookup from many threads at once
 //   stress-arrayforward <dll> makes the first cast of one unserialized array from many threads at once
 using System;
@@ -357,6 +358,9 @@ static class Program {
 					}
 					break;
 				}
+				case "debugdir":
+					DumpDebugDirectory(pe, md, path);
+					break;
 				case var a when a.StartsWith("attrs:"):
 					if (!DumpAttributes(md, types, a.Substring(6))) Console.WriteLine("missing " + a);
 					break;
@@ -366,6 +370,67 @@ static class Program {
 			}
 		}
 		return 0;
+	}
+
+	// `debugdir`: the debug directory's entries in order, each checked against the PDB its CodeView entry
+	// names (read from beside the DLL), then whether that PDB has a MethodDebugInformation row per
+	// MethodDef row. With no directory, a PDB beside the DLL anyway is reported as stray.
+	static void DumpDebugDirectory(PEReader pe, MetadataReader md, string path) {
+		var entries = pe.ReadDebugDirectory();
+		var dir = Path.GetDirectoryName(path)!;
+		if (entries.Length == 0) {
+			Console.WriteLine("debugdir none");
+			var stray = Path.GetFileNameWithoutExtension(path) + ".pdb";
+			if (File.Exists(Path.Combine(dir, stray))) Console.WriteLine("stray " + stray);
+			return;
+		}
+		byte[]? pdb = null;
+		MetadataReader? pdbMd = null;
+		foreach (var e in entries) {
+			switch (e.Type) {
+				case DebugDirectoryEntryType.CodeView: {
+					var cv = pe.ReadCodeViewDebugDirectoryData(e);
+					var kind = e.MinorVersion == 0x504D ? "portable" : "windows";
+					var file = Path.Combine(dir, Path.GetFileName(cv.Path));
+					string id;
+					if (File.Exists(file)) {
+						pdb = File.ReadAllBytes(file);
+						pdbMd = MetadataReaderProvider.FromPortablePdbStream(new MemoryStream(pdb)).GetMetadataReader();
+						var header = pdbMd.DebugMetadataHeader!;
+						var want = cv.Guid.ToByteArray().Concat(BitConverter.GetBytes(e.Stamp));
+						id = header.Id.SequenceEqual(want) ? "id-match" : "id-mismatch";
+					} else {
+						id = "pdb-missing";
+					}
+					Console.WriteLine("codeview " + cv.Path + " age " + cv.Age + " " + kind + " " + id);
+					break;
+				}
+				case DebugDirectoryEntryType.PdbChecksum: {
+					var sum = pe.ReadPdbChecksumDebugDirectoryData(e);
+					var state = "pdb-missing";
+					if (pdb != null && pdbMd != null && sum.AlgorithmName == "SHA256") {
+						var zeroed = (byte[])pdb.Clone();
+						var header = pdbMd.DebugMetadataHeader!;
+						Array.Clear(zeroed, header.IdStartOffset, header.Id.Length);
+						state = SHA256.HashData(zeroed).AsSpan().SequenceEqual(sum.Checksum.AsSpan()) ? "match" : "mismatch";
+					} else if (pdb != null) {
+						state = "unknown";
+					}
+					Console.WriteLine("pdbchecksum " + sum.AlgorithmName + " " + state);
+					break;
+				}
+				case DebugDirectoryEntryType.Reproducible:
+					Console.WriteLine("reproducible");
+					break;
+				default:
+					Console.WriteLine("entry " + e.Type);
+					break;
+			}
+		}
+		if (pdbMd != null) {
+			var rows = pdbMd.GetTableRowCount(TableIndex.MethodDebugInformation) == md.GetTableRowCount(TableIndex.MethodDef);
+			Console.WriteLine("pdb rows " + (rows ? "match" : "mismatch"));
+		}
 	}
 
 	// The public key token, computed when the row holds a full public key.
