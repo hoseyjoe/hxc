@@ -24611,3 +24611,44 @@ attrs tools.P_byId_11__Fun`1
   type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
   type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
   genericparam T :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 2)
+# gencs writes the optional-argument overloads of an abstract's implementation class too, as it does for a
+# @:nativeGen class (the server app's Guid abstract: `_new()` beside `_new(guidstr)`). Not for a class in its class
+# model (Plain), and each has the field's attributes (EditorBrowsable for a @:noCompletion method).
+--- optional-overloads-of-abstract-implementation-class @gencs
+abstract A(String) {
+	@:noCompletion
+	function new(s:String = null) this = s;
+
+	public static function make():A return new A();
+
+	public static function viaDefault(?k:Int, ?j:Int):Null<Int> return k;
+
+	public function inst(?z:Int):Null<Int> return z;
+}
+
+class Plain {
+	public static function f(?a:String) return a;
+}
+
+class P {
+	static function describe(t:cs.system.Type) {
+		var all = new cs.Flags(cs.system.reflection.BindingFlags.Public) | cs.system.reflection.BindingFlags.NonPublic
+			| cs.system.reflection.BindingFlags.Static | cs.system.reflection.BindingFlags.Instance | cs.system.reflection.BindingFlags.DeclaredOnly;
+		var ms = t.GetMethods(all);
+		var l = [for (i in 0...ms.Length) ms[i]];
+		l.sort((x, y) -> Reflect.compare(x.MetadataToken, y.MetadataToken));
+		var out = [];
+		for (m in l) {
+			var attrs = m.GetCustomAttributes(cs.Lib.toNativeType(cs.system.componentmodel.EditorBrowsableAttribute), false);
+			out.push(m.Name + "/" + m.GetParameters().Length + (attrs.Length > 0 ? "*" : ""));
+		}
+		return out.join(" ");
+	}
+
+	static function main() {
+		Sys.println(describe(cs.system.Type.GetType("_P.A_Impl_")));
+		Sys.println(describe(cs.Lib.toNativeType(Plain)));
+		Sys.println(A.make() == null);
+	}
+}
+===
