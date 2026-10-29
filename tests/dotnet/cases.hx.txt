@@ -22880,6 +22880,244 @@ class P {
 False
 Public, HideBySig, SpecialName
 1
+# gencs's C#: P.cs(13,46): error CS0737: 'Q' does not implement interface member 'IPing.Ping'. 'Q.Ping' cannot
+# implement an interface member because it is not public. A @:protected event's accessors are Family, which
+# implement no interface method (the CLR would not load the type).
+--- event-protected-implementing-interface-is-an-error
+import cs.system.EventHandler;
+
+interface IPing {
+	@:event private var Ping:EventHandler;
+	function add_Ping(h:EventHandler):Void;
+	function remove_Ping(h:EventHandler):Void;
+}
+
+class Q implements IPing {
+	public function new() {}
+	@:protected @:event var Ping:EventHandler;
+	var h:EventHandler;
+	public function add_Ping(x:EventHandler):Void h = h + x;
+	public function remove_Ping(x:EventHandler):Void h = h - x;
+}
+
+class P {
+	static function main() {
+		var i:IPing = new Q();
+		Sys.println(i != null);
+	}
+}
+===
+[compile]
+P.hx:11: characters 22-44 : dotnet: Q.Ping implements the event IPing.Ping, so it cannot be @:protected (gencs: C# error CS0737)
+P.hx:19: characters 17-24 : dotnet: Q (left out: Q.Ping implements the event IPing.Ping, so it cannot be @:protected (gencs: C# error CS0737)) is not supported yet
+# The same for a .NET interface's event, and for a field-like event.
+--- netlib-event-protected-implementing-is-an-error @netlib=EvLib
+import ev.*;
+class Src implements INotify {
+  public function new() {}
+  @:protected @:event var Noted:Note;
+  public function add_Noted(n:Note):Void {}
+  public function remove_Noted(n:Note):Void {}
+}
+class P { static function main() { Use.Subscribe(new Src(), "cs"); } }
+===
+[compile]
+P.hx:4: characters 23-38 : dotnet: Src.Noted implements the event ev.INotify.Noted, so it cannot be @:protected (gencs: C# error CS0737)
+P.hx:8: characters 50-59 : dotnet: Src (left out: Src.Noted implements the event ev.INotify.Noted, so it cannot be @:protected (gencs: C# error CS0737)) is not supported yet
+# gencs's C# refuses @:private and @:internal on the implementing var the same way (CS0737), but hxc ignores
+# both on every member, so its event is public and implements the interface's.
+--- event-private-implementing-interface-is-ignored
+import cs.system.EventHandler;
+
+interface IPing {
+	@:event private var Ping:EventHandler;
+	function add_Ping(h:EventHandler):Void;
+	function remove_Ping(h:EventHandler):Void;
+}
+
+class Q implements IPing {
+	public function new() {}
+	@:private @:event var Ping:EventHandler;
+	public function add_Ping(x:EventHandler):Void Sys.println("add");
+	public function remove_Ping(x:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		var i:IPing = new Q();
+		i.add_Ping(null);
+	}
+}
+===
+[run]
+add
+# gencs's C#: P.hx(20,51): error CS0079: The event 'IPing.Ping' can only appear on the left hand side of += or -=
+# (hxc used to compile this and throw "Field not found" when it ran).
+--- event-interface-var-read-is-an-error
+import cs.system.EventHandler;
+
+interface IPing {
+	@:event private var Ping:EventHandler;
+	function add_Ping(h:EventHandler):Void;
+	function remove_Ping(h:EventHandler):Void;
+}
+
+class Q implements IPing {
+	public function new() {}
+	@:event var Ping:EventHandler;
+	public function add_Ping(h:EventHandler):Void {}
+	public function remove_Ping(h:EventHandler):Void {}
+}
+
+@:access(IPing)
+class P {
+	static function main() {
+		var i:IPing = new Q();
+		Sys.println(i.Ping == null);
+	}
+}
+===
+[compile]
+P.hx:20: characters 15-21 : dotnet: the event IPing.Ping is an interface event, so it has no value to read or assign (C# error CS0079)
+# Under -dce full only add_Ping of the interface is used; hxc keeps the interface's var and both methods, so it is
+# an event. gencs removes the var and renames the surviving method to a private _add_Ping, which an interface cannot
+# have: `P.cs(6,15): error CS0501: 'IPing._add_Ping(EventHandler)' must declare a body because it is not marked
+# abstract, extern, or partial`.
+--- event-dce-full-interface + -dce full
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+interface IPing {
+	@:event private var Ping:EventHandler;
+	function add_Ping(h:EventHandler):Void;
+	function remove_Ping(h:EventHandler):Void;
+}
+
+class Q implements IPing {
+	public function new() {}
+	@:event var Ping:EventHandler;
+	var hs:EventHandler;
+	public function add_Ping(h:EventHandler):Void hs = hs + h;
+	public function remove_Ping(h:EventHandler):Void hs = hs - h;
+	public function fire() if (hs != null) hs.Invoke("q", EventArgs.Empty);
+}
+
+class P {
+	static function main() {
+		var i:IPing = new Q();
+		i.add_Ping(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o)));
+		(cast i : Q).fire();
+		var t = cs.Lib.toNativeType(IPing);
+		Sys.println(t.GetEvent("Ping") == null);
+		Sys.println(t.GetMethod("remove_Ping") == null);
+		Sys.println(cs.Lib.toNativeType(Q).GetEvent("Ping") == null);
+	}
+}
+===
+[run]
+got q
+False
+False
+False
+# An instance event of an hxgeneric class whose delegate type mentions the class's type parameter: its add_ and
+# remove_ mention T, so they are not the companion's, and gencs's C# compiles it (CS0686 needs a companion member).
+--- event-generic-class-delegate-mentions-type-parameter @gencs
+import cs.system.EventHandler_1;
+import cs.system.EventArgs;
+
+class G<T> {
+	public function new() {}
+	@:event var Changed:EventHandler_1<T>;
+	var hs:EventHandler_1<T>;
+	public function add_Changed(h:EventHandler_1<T>):Void {
+		Sys.println("add");
+		hs = hs + h;
+	}
+	public function remove_Changed(h:EventHandler_1<T>):Void hs = hs - h;
+	public function fire(v:T) if (hs != null) hs.Invoke(this, v);
+	@:event var Auto:EventHandler_1<T>;
+	public function add_Auto(h:EventHandler_1<T>):Void {}
+	public function remove_Auto(h:EventHandler_1<T>):Void {}
+	public function fireAuto(v:T) if (Auto != null) Auto.Invoke(this, v);
+}
+
+class P {
+	static function main() {
+		var g = new G<EventArgs>();
+		g.add_Changed(new EventHandler_1<EventArgs>((o:Dynamic, e:EventArgs) -> Sys.println("got")));
+		g.fire(EventArgs.Empty);
+		g.add_Auto(new EventHandler_1<EventArgs>((o:Dynamic, e:EventArgs) -> Sys.println("auto got")));
+		g.fireAuto(EventArgs.Empty);
+		var evs = cs.Lib.toNativeType(G).GetEvents();
+		Sys.println([for (i in 0...evs.Length) evs[i].Name]);
+	}
+}
+===
+[run]
+add
+got
+auto got
+[Auto,Changed]
+# A field-like event's initializer is an assignment of the backing field in the constructor (the static one in the
+# static constructor), which the event's own class may do; gencs's C# does the same.
+--- event-field-like-initializer @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("init " + o));
+	public function add_Changed(h:EventHandler):Void {}
+	public function remove_Changed(h:EventHandler):Void {}
+	public function fire(t:String) if (Changed != null) Changed.Invoke(t, EventArgs.Empty) else Sys.println("none");
+	@:event static var SChanged:EventHandler = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("sinit " + o));
+	public static function add_SChanged(h:EventHandler):Void {}
+	public static function remove_SChanged(h:EventHandler):Void {}
+	public static function sfire(t:String) if (SChanged != null) SChanged.Invoke(t, EventArgs.Empty) else Sys.println("none");
+}
+
+class P {
+	static function main() {
+		var a = new A();
+		a.fire("a");
+		a.add_Changed(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("two " + o)));
+		a.fire("b");
+		A.sfire("c");
+		A.add_SChanged(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("stwo " + o)));
+		A.sfire("d");
+	}
+}
+===
+[run]
+init a
+init b
+two b
+sinit c
+sinit d
+stwo d
+# gencs's C#: P.cs(13,43): error CS0625: 'Overlay.Changed': instance field in types marked with
+# StructLayout(LayoutKind.Explicit) must have a FieldOffset attribute. gencs puts no attribute on an event, so
+# there is no way to give the field one; a custom event has no field and is fine.
+--- event-field-like-in-explicit-layout-struct-is-an-error
+import cs.system.EventHandler;
+
+@:meta(System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit))
+@:struct @:nativeGen class Overlay {
+	@:meta(System.Runtime.InteropServices.FieldOffset(0)) public var i:Int;
+	@:event var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Void {}
+	public function remove_Changed(h:EventHandler):Void {}
+	public function new(f:Int) { this.i = f; }
+}
+
+class P {
+	static function main() {
+		Sys.println(new Overlay(1).i);
+	}
+}
+===
+[compile]
+P.hx:6: characters 10-35 : dotnet: Changed needs a FieldOffset attribute, as its type has StructLayout(LayoutKind.Explicit) (C# error CS0625)
 # Under -dce full an unread static @:event var is kept with both its methods, as an instance one is.
 --- event-dce-full-static + -dce full
 import cs.system.EventHandler;

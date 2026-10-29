@@ -1079,8 +1079,21 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
     (`event-interface-plain-var-is-an-error`, `netlib-event-var-not-event-is-an-error`): `CS0535: 'Plain' does not
     implement interface member 'IPing.Ping'` and `CS0470: Method 'Plain.add_Ping(EventHandler)' cannot implement
     interface accessor 'IPing.Ping.add' for type 'Plain'. Use an explicit interface implementation.`
+  - A `@:protected` var implementing an interface's event, Haxe or .NET
+    (`event-protected-implementing-interface-is-an-error`, `netlib-event-protected-implementing-is-an-error`): its
+    accessors are Family and the CLR would not load the type. gencs's C# fails: `CS0737: 'Q' does not implement
+    interface member 'IPing.Ping'. 'Q.Ping' cannot implement an interface member because it is not public.` The same
+    C# error is given for `@:private` and `@:internal`, which hxc ignores on every member, so there the event is
+    public and works (`event-private-implementing-interface-is-ignored`).
+  - Reading or assigning an interface's event var (`event-interface-var-read-is-an-error`): `CS0079: The event
+    'IPing.Ping' can only appear on the left hand side of += or -=`.
+  - A field-like event in an explicit-layout struct (`event-field-like-in-explicit-layout-struct-is-an-error`) is
+    `CS0625: 'Overlay.Changed': instance field in types marked with StructLayout(LayoutKind.Explicit) must have a
+    FieldOffset attribute` in both; an event carries no attribute in gencs, so the field cannot be given one.
   - Under `-dce full` hxc keeps an event's var, `add_X` and `remove_X` together (`event-dce-full-unread-var`,
-    `event-dce-full-static`, `event-dce-full-field-like`; `event-dce-full-keep` for `@:keep`). Haxe's own rule keeps
+    `event-dce-full-static`, `event-dce-full-field-like`; `event-dce-full-keep` for `@:keep`). For an interface's
+    event gencs's C# fails with `CS0501: 'IPing._add_Ping(EventHandler)' must declare a body because it is not marked
+    abstract, extern, or partial` (`event-dce-full-interface`). Haxe's own rule keeps
     the methods only when the var is `@:keep`, and DCE removes a var Haxe code never reads, so gencs writes no event and
     renames the surviving method to `_add_X`: its C# does not compile, `CS1061: 'A' does not contain a definition for
     'add_Changed' and no accessible extension method 'add_Changed' accepting a first argument of type 'A' could be

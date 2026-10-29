@@ -202,6 +202,13 @@ class AttributesToIl {
 		g.mb.customAttribute(owner, ctor.token, b.getBytes(), first);
 	}
 
+	// A CompilerGenerated row on each of the Field and MethodDef `tokens`, as Roslyn marks an auto-property's
+	// backing field and accessors and a field-like event's.
+	public static function compilerGenerated(g:DotnetCtx, tokens:Array<Int>):Void {
+		var ctor = runtimeAttr(g, "System.Runtime.CompilerServices", "CompilerGeneratedAttribute", []);
+		for (token in tokens) write(g, token, ctor, [], []);
+	}
+
 	// The constructor of System.Runtime's attribute `ns`.`name` with parameters `sig`, on a TypeRef into
 	// System.Runtime, as Roslyn references the attributes it writes itself.
 	public static function runtimeAttr(g:DotnetCtx, ns:String, name:String, sig:Array<AttrType>):AttrCtor {

@@ -235,7 +235,8 @@ a static `@:property` var with get or set accessors,
 a .NET method, an overloaded method, a struct's method or a method reached through a `Dynamic`
 receiver as a delegate, and a .NET base class's non-virtual method or property implementing an
 interface method or property for a Haxe subclass (C# adds a forwarding stub there; a public virtual
-one works). An `@:event` var is a C# event (Haxe's own checks apply: private, both methods present, type
+one works), and the same for a Haxe superclass's event that implements an interface's event for a subclass
+that lists the interface. An `@:event` var is a C# event (Haxe's own checks apply: private, both methods present, type
 `T -> Void`): custom when the `add_` and `remove_` methods have bodies, field-like when both are empty (the
 compiler's accessors over a private backing field, which only the class itself can read), and an interface
 event for a Haxe interface's, which a class implements with an `@:event` var of its own, as it does a .NET

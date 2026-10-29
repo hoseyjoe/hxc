@@ -1010,7 +1010,9 @@ class TclassToIl {
 	// The class's implementation of the event `iv` of the interface `i`, a Haxe interface's or a .NET one's: an
 	// @:event var of the class, whose accessors the class's add_ and remove_ methods implement (findImplementation
 	// matches the interface's methods like any other's). The event of a .NET base class is the base's, which
-	// findImplementation checks the accessors of. gencs's C# fails to compile a plain var (CS0535, CS0470); a
+	// findImplementation checks the accessors of. gencs's C# fails to compile a plain var (CS0535, CS0470) and a
+	// @:protected one (CS0737; @:private and @:internal, which gencs's C# refuses the same, are ignored here as on
+	// every member); a
 	// superclass's event has accessors that are not virtual, unless that superclass lists the interface itself,
 	// and C# adds a forwarding stub for them, which hxc does not write yet (ruling S).
 	static function checkEvent(g:DotnetCtx, c:TClass, i:ImplementedInterface, iv:TClassField):Void {
@@ -1021,6 +1023,10 @@ class TclassToIl {
 		if (!EventToIl.isEventVar(v.cf))
 			throw at(Unsupported.error(DotnetTypes.haxePath(TClassDecl(v.owner)) + "." + iv.name + " implements the event " + iname + "." + iv.name
 				+ ", so it must be an @:event var (gencs: C# error CS0535)"), v.cf.pos);
+		// The accessors of a @:protected event are Family, which implement no interface method.
+		if (TypeFunctions.hasMeta(":protected", v.cf.meta))
+			throw at(Unsupported.error(DotnetTypes.haxePath(TClassDecl(v.owner)) + "." + iv.name + " implements the event " + iname + "." + iv.name
+				+ ", so it cannot be @:protected (gencs: C# error CS0737)"), v.cf.pos);
 		function lists(owner:TClass):Bool {
 			for (x in owner.interfaces) if (x.c == i.c || lists(x.c)) return true;
 			return false;
@@ -1803,10 +1809,7 @@ class TclassToIl {
 		for (p in plan.properties) {
 			p.token = mb.property(plan.token, p.name, g.sigs.property(p.sig, p.isStatic != true, p.index));
 			// Roslyn marks an auto-property's backing field and both accessors CompilerGenerated.
-			if (p.backing != null) {
-				var ctor = AttributesToIl.runtimeAttr(g, "System.Runtime.CompilerServices", "CompilerGeneratedAttribute", []);
-				for (token in [p.backing.token, p.getter.token, p.setter.token]) AttributesToIl.write(g, token, ctor, [], []);
-			}
+			if (p.backing != null) AttributesToIl.compilerGenerated(g, [p.backing.token, p.getter.token, p.setter.token]);
 			if (p.getter != null) mb.methodSemantics(SemanticsAttrs.GETTER, p.getter.token, p.token);
 			if (p.setter != null) mb.methodSemantics(SemanticsAttrs.SETTER, p.setter.token, p.token);
 			// Every Haxe use of get_X and set_X calls the public accessor, as gencs writes `o.X` and `o.X = v`.

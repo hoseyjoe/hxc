@@ -201,10 +201,9 @@ class EventToIl {
 			// Roslyn marks a field-like event's field and both accessors CompilerGenerated, and an interface's
 			// accessors.
 			if (isReplaced(e)) {
-				var ctor = AttributesToIl.runtimeAttr(g, "System.Runtime.CompilerServices", "CompilerGeneratedAttribute", []);
 				var marked = [e.adder.token, e.remover.token];
 				if (e.backing != null) marked.unshift(e.backing.token);
-				for (token in marked) AttributesToIl.write(g, token, ctor, [], []);
+				AttributesToIl.compilerGenerated(g, marked);
 			}
 			// Every Haxe use of add_X and remove_X calls the public accessor, as gencs writes `o.X += h`.
 			for (pair in [{cf: e.addCf, accessor: e.adder}, {cf: e.removeCf, accessor: e.remover}]) {
@@ -322,6 +321,9 @@ class EventToIl {
 	// local function's class included (CS0070).
 	public static function checkValue(g:DotnetCtx, from:Null<TClass>, c:TClass, cf:TClassField):Void {
 		var e = g.eventVars.get(cf);
+		if (e != null && e.isInterface)
+			throw Unsupported.error("the event " + DotnetTypes.haxePath(TClassDecl(e.owner)) + "." + cf.name
+				+ " is an interface event, so it has no value to read or assign (C# error CS0079)");
 		if (e == null || !e.fieldLike) throw noValue(c, cf);
 		if (from != e.owner) {
 			var path = DotnetTypes.haxePath(TClassDecl(e.owner));

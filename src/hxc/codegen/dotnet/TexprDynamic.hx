@@ -156,6 +156,8 @@ class TexprDynamic {
 			case FAnon(_): isDynamic(obj.type);
 			case FClosure(null, _): false;
 			case FInstance(c, _, cf) | FClosure({c: c}, cf):
+				// An interface's event var has no value to reach through Runtime (C# error CS0079).
+				if (isInterfaceField(c, cf) && EventToIl.isEventVar(cf)) EventToIl.checkValue(g, null, c, cf);
 				isInterfaceField(c, cf) || companionReceiver(obj) && companionMember(c, cf) == null;
 			case _: false;
 		}
