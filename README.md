@@ -243,10 +243,14 @@ event for a Haxe interface's, which a class implements with an `@:event` var of 
 interface's. The var is no field, and reading or assigning a custom event's is an error, as in C#; so is a
 field-like event's outside its class. Some of what gencs's C# refuses is refused too, with the C# error
 (listed in the spec's *Interop divergences from gencs*). Milestones 4a
-(referenced-assembly interop) and 4b (inline C#, gencs's indexers, `IntPtr` members,
-`CompilerGeneratedAttribute` on `@:property` vars) are done; 4c has begun with attributes (`@:meta`,
-`@:strict`), nullability metadata (`-D dotnet-nullable`), manifest resources and events; `@:nativeGen` details
-are left.
+(referenced-assembly interop), 4b (inline C#, gencs's indexers, `IntPtr` members,
+`CompilerGeneratedAttribute` on `@:property` vars) and 4c (attributes (`@:meta`, `@:strict`), nullability
+metadata (`-D dotnet-nullable`), manifest resources, events, `@:nativeGen` details) are done, which is milestone 4:
+the server app builds to its `HaxeServer.dll` with its resources, the C# projects that name Haxe types build
+against it, its AI tool schemas are the ones gencs's C# gives, and ILVerify of it against the deployed assemblies
+prints nothing. A few constructs gencs's C# accepts stay compile errors, because nothing in the two apps uses
+them: covariant-return `@:overload` overrides, two refinements of the overload rule in inline C#
+(`Nullable<A>` to `Nullable<B>`, array covariance), `{0}[i]` on a program class in inline C# and `cs.Pointer.add`.
 A field-level `addMetadata` or `addTypePatch` aimed at a class the core types load before the init macros
 run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7 applies it; class-level
 metadata, such as an added `@:build`, is applied, though a late patch aimed at an abstract reaches its impl
@@ -258,7 +262,7 @@ gencs's is listed but not found; two names that escape to one manifest name are 
 hxc does not refuse a macro's access to the `cs` package, where Haxe's typer says "You cannot access the
 cs package while in a macro".
 Standard-library code that needs a construct not supported yet compiles to a stub: `cs.Pointer.add`
-(the `+` operator on pointers) is the one left, and `haxe.ds.EnumValueMap` is left out of the build.
+(the `+` operator on pointers) is the one left.
 
 hxc ships its own copy of the hxcs runtime classes that generated code depends on
 (`haxe.lang.HxObject`, `haxe.lang.DynamicObject`, `haxe.lang.FieldLookup`, `haxe.lang.Runtime`,

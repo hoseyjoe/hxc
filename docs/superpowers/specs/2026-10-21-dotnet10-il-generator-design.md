@@ -877,8 +877,9 @@ and `List` copy, and two threads casting one array at once.
      FrameworkDisplayName = ".NET <net>.0")`, and `@:cs.assemblyMeta` entries are assembly rows, refused as
      gencs refuses them on a class that is not its module's first or that has no package; a `@:noCompletion`
      field, property, method or constructor gets `EditorBrowsable(EditorBrowsableState.Never)` (ruling 6).
-     A `@:nativeGen` class's methods and constructors get gencs's overloads for their trailing optional
-     arguments, each with the field's attributes. Its constrained type parameters still get no
+     A `@:nativeGen` class's methods and constructors, and an abstract's implementation class's static
+     methods, get gencs's overloads for their trailing optional arguments, each with the field's attributes
+     (`optional-overloads-of-abstract-implementation-class`: the server app's `Guid_Impl_._new()`). Its constrained type parameters still get no
      GenericParamConstraint rows, so a call that passes one to an overloaded .NET method, which gencs's C#
      binds by the `where` clause, is refused (ruling 7). `-D dotnet-nullable=<package>[,<package>…]` writes
      Roslyn's nullable metadata (ruling 2) for every type of a module whose package is exactly one of those
@@ -891,7 +892,9 @@ and `List` copy, and two threads casting one array at once.
      then 1, then 2) where it differs from the enclosing one, `Nullable(0)` for the base type, Param rows of
      sequence 0 for a return value's attribute, the rows before their parent's others, and the attribute
      types from System.Runtime. A value that names no package, and a constrained type parameter of a
-     `@:nativeGen` class (gencs writes its `where` clause, hxc no constraints), are errors. Events defined in
+     `@:nativeGen` class (gencs writes its `where` clause, hxc no constraints), are errors; the class of a local
+     function in a constrained generic method is not one, since gencs writes it no `where` clause
+     (`attrs-nullable-closure-of-constrained-method`: the server app's `ARCADataHelper.byId`). Events defined in
      Haxe: Haxe's `check_cs_events` runs for the C# target before DCE (`@:event fields must be private`,
      `Missing event method: add_X`, and the unification error at an add_ or remove_ that is not `T -> Void`),
      and gencs hides every `@:event` var from reflection (`@:skipReflection`), so hxc does too. An `@:event`
@@ -924,17 +927,69 @@ and `List` copy, and two threads casting one array at once.
      array when there are none, as gencs's `static Resource()` does. Two names with one manifest name are an
      error. The desktop app's build depends on the macro-API fix (ruling 9): 158 of its 217 resources come from
      haxeui-core's macros, which hxc's `Context.addResource` used to drop.
-     The carried items:
-     - covariant-return `@:overload` overrides;
-     - the forwarding stub C# adds where a .NET base class's non-virtual method or property
-       implements an interface method or property for a Haxe subclass (ruling S; both are refused
-       until then), and where a Haxe superclass's event implements a Haxe or .NET interface's event
-       for a subclass that lists the interface (`event-interface-event-of-superclass-is-unsupported`);
-     - static `@:property` vars with get or set accessors, which gencs makes static properties;
-     - .NET extern, overloaded and struct methods as delegate method groups, and a method group
-       reached through a `Dynamic` or companion-interface receiver;
-   **Exit:** The server app builds to `HaxeServer.dll`, `cs/Server` builds against it, AI tool
-   schemas match today's, ILVerify against the deployed assemblies is clean.
+     - Its last step measured the apps, with the owner's changes below standing in as an overlay. The server app, its
+       nativepdf build and the build with the stubbed report have no error and each writes its DLL (4b: the same),
+       and the server's DLL has the two manifest resources, `src.Resources.coach.bin` and `src.Resources.tutorials.bin`,
+       of gencs's sizes (5,044,147 and 2,644,821 bytes). The desktop app has no error (4b: 1) and writes all 217
+       manifest resources, named as gencs's build names them. It found two things, both fixed: the nullable metadata
+       refused the classes of local functions in a constrained generic method (`ARCADataHelper.byId`), for which
+       gencs writes no `where` clause; and an abstract's implementation class lacked gencs's optional-argument
+       overloads (`Guid_Impl_._new()`). The baseline is gencs's C# of the same source tree with the build script's four
+       text patches applied, which is what the build script produces; gencs's C# alone has no nullable metadata.
+       Against it:
+       - `SharedServer`, `WebAPI`, `Server` and the no-browser runner build against hxc's DLL with no error and the
+         warning kinds and counts they have against gencs's. The 14 `?x:Bool` arguments that failed to compile
+         against the research build now pass, because `haxe.lang.Null<T>` converts implicitly from `T`. All 349
+         type and member references the consumers compiled against gencs's DLL make into it resolve in hxc's, and
+         the 349 of those compiled against hxc's resolve in gencs's. Every non-generic method of the DLL (24,873 in
+         5,948 types) and of the consumers JITs in the deployed server's folder, in each of the three pairings.
+       - ILVerify against the deployed assemblies prints nothing, as for gencs's patched DLL. Run on the older
+         deployed DLL, which still has `haxe.lang.BoxedPointer`, it prints that class's line, so the check can fail.
+       - The AI tool schemas, from Semantic Kernel over each DLL, are identical for all 133 tools, descriptions,
+         `required` lists and nullability included.
+       - The server app's no-browser export check prints the same results on both DLLs (the PDF and DOCX sizes
+         differ by a few bytes, as two gencs runs' do: timestamps).
+       - The CLR shape of the 24 classes and the 110 tool models has the same members. What it prints beyond that
+         is `DebuggerBrowsable(Never)` on 304 `@:property` backing fields and the Field-table order of two classes
+         (*Interop divergences*).
+       - The attribute rows differ only by what the SDK and Roslyn add to gencs's build (the assembly's Company,
+         Configuration, FileVersion, InformationalVersion, Product and Title, `CompilationRelaxations`,
+         `RuntimeCompatibility` and `Debuggable`, the module's `RefSafetyRules` and `UnverifiableCode`,
+         the DeclSecurity row, `DebuggerBrowsable`, `<PrivateImplementationDetails>`), and by the nullable rows of
+         the closure classes hxc has more of (3,759 against 2,251).
+     - The owner's changes, in one place. The measurement stands in for them with an overlay, and the server app's
+       files stay as they are until the owner makes them:
+       - the two source changes from 4b: nativepdf `Zlib`'s `@:classCode` becomes hand-written externs (4b ruling 8),
+         and the app's library's two constructor `@:functionCode`s go in `#if !dotnet` (4b ruling 9);
+       - the server's hxml gains `-resource <path>/coach.bin@coach.bin` and `-resource <path>/tutorials.bin@tutorials.bin`
+         (the files `HaxeServer.csproj` embeds today), and `-D dotnet-nullable=ai.tools`;
+       - the C# projects that name Haxe types (`SharedServer`, `WebAPI`, `Server`, and the no-browser runner) import one
+         shared `.props` holding `<Reference Include="HaxeServer"><HintPath>…</HintPath></Reference>`, in place of
+         `SharedServer`'s `ProjectReference` to `HaxeServer.csproj`; `SharedServer` takes that project's package and
+         project references (`Database`, `Database_Single`, `EPPlus`, `PemUtils`, `System.Net.Http`,
+         `System.Security.Cryptography.Algorithms`, `System.Text.Json`, `System.Text.RegularExpressions`). A
+         `<Reference HintPath>` does not flow to the projects that reference `SharedServer`;
+       - `Builder.hx` then drops its four text patches: deleting `BoxedPointer.cs` and `Pointer.cs` (hxc writes
+         neither class), the `thx.Options` chunk (dead code under DCE) and `#nullable enable` before
+         `namespace ai.tools {` (`-D dotnet-nullable=ai.tools`), and runs hxc instead of `dotnet build` of
+         `HaxeServer.csproj`.
+     - **Not supported**, and clean compile errors past milestone 4, because nothing in the two apps uses them:
+       - covariant-return `@:overload` overrides;
+       - the forwarding stub C# adds where a .NET base class's non-virtual method or property
+         implements an interface method or property for a Haxe subclass (ruling S), and where a Haxe
+         superclass's event implements a Haxe or .NET interface's event for a subclass that lists the
+         interface (`event-interface-event-of-superclass-is-unsupported`);
+       - static `@:property` vars with get or set accessors, which gencs makes static properties;
+       - .NET extern, overloaded and struct methods as delegate method groups, and a method group
+         reached through a `Dynamic` or companion-interface receiver;
+       - two refinements of the overload rule for inline C# (4b's `converts`): the lifted conversion
+         `Nullable<A>` to `Nullable<B>`, and array covariance;
+       - `{0}[i]` on a program class in inline C#;
+       - `cs.Pointer.add`, the one standard-library stub (the `+` operator on pointers).
+   **Exit:** The server app builds to `HaxeServer.dll`, the projects that name Haxe types (`SharedServer`,
+   `WebAPI`, `Server`, and the no-browser runner) reference the DLL through one shared `.props` and build,
+   the AI tool schemas match those the server's build script produces today (gencs's C# with its text patches
+   applied), ILVerify against the deployed assemblies is clean.
 5. **Portable PDB.** **Exit:** breakpoints and stepping in `.hx` files in Visual Studio and VS Code
    (built with `-D dotnet-debug-jit`), and `.hx` line numbers in exception stack traces from an
    optimized build.
@@ -1047,6 +1102,23 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   DLL and not against hxc's; nothing real writes it, and C# code that passes a `bool` to a Haxe `?b:Bool`
   parameter works in both. Reflection sees one `op_Implicit` and no nested type, where gencs's shows two and
   `__NoValue__`. hxc keeps its extra public `toString()`, the method `ToString` calls.
+- `initonly` is written on `haxe.lang.Null<T>`'s two fields and on no other `@:readOnly` or `final` field. gencs
+  marks 14 more in the runtime, which the server's DLL shows: `Math.PI`, `NaN`, `POSITIVE_INFINITY`,
+  `NEGATIVE_INFINITY` and `rand`, `Date.epochTicks`, `Sys.epochTicks`, `Type.__createEmptyInstance_EMPTY_ARGS`,
+  `haxe.lang.Enum._hx_index`, `FieldHashConflict.hash` and `name`, `GenericInterface.generic`,
+  `Runtime.undefined` and `StringExt.empty`. Only reflection (`FieldInfo.IsInitOnly`) sees it, and nothing real
+  reads it.
+- The assembly carries `TargetFramework`, `@:cs.assemblyMeta` entries and the attributes Haxe code writes, and not
+  what the SDK and Roslyn add to gencs's build: `AssemblyCompany`, `Configuration`, `FileVersion`,
+  `InformationalVersion`, `Product`, `Title`, `CompilationRelaxations`, `RuntimeCompatibility(WrapNonExceptionThrows)`,
+  `Debuggable` (milestone 5, with `-D dotnet-debug-jit`), the module's `RefSafetyRules` and `UnverifiableCode`, the
+  DeclSecurity row and `<PrivateImplementationDetails>`, nor `DebuggerBrowsable(Never)` on a `@:property` var's
+  backing field (a Debug-configuration artefact of gencs's build). Reflection and tooling read them; hxc never throws
+  a value that is no `Exception`, so `WrapNonExceptionThrows` changes nothing.
+- hxc writes more closure classes than gencs (3,759 against 2,251 in the server app). Every name gencs writes is
+  there; the others are local functions that gencs does not have a class for, such as a predicate passed to
+  `Array.filter`, which gencs inlines, and the `_Fun_N` numbering that follows. Only reflection over the assembly's
+  types sees them.
 - A resource name with a non-ASCII character or a `\` is found by `haxe.Resource` in hxc
   (`resource-non-ascii-name`, `resource-backslash-name`). gencs escapes the name's UTF-8 bytes into the file
   name (`é` is `-x195-x169`) and turns `\` into `-x92`, where `haxe.Resource` escapes the UTF-16 code units at
@@ -1150,4 +1222,6 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   `Server` build.
 - Builder.hx changes in the server app to call the new generator and drop the `HaxeServer.csproj` compile and
   text patches (to be done in the server app's repository, separately). Its `#nullable enable` patch becomes
-  `-D dotnet-nullable=ai.tools` (4c ruling 2), passed where Builder.hx patches today: an owner change.
+  `-D dotnet-nullable=ai.tools` (4c ruling 2), passed where Builder.hx patches today, and its server hxml gains
+  the two `-resource` lines for the coach and tutorials files (4c ruling 8): owner changes, listed with the others
+  in milestone 4's 4c bullet.
