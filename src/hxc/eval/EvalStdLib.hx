@@ -3395,11 +3395,25 @@ class EvalStdLib {
 						var name = stringOf(arg(args, 0));
 						if (name == "") EvalExceptions.excString(ctx, "Empty resource name");
 						var bytes = decodeBytes(arg(args, 1));
-						ctx.resources.set(name, bytes.sub(0, bytes.length));
+						// Haxe's add_resource replaces the compile's own entry (a name added before keeps its
+						// position) and binds the bytes to the module being typed, so a cached module gives
+						// them back. The interpreter's own map stays for the macro world's haxe.Resource.
+						var data = bytes.sub(0, bytes.length);
+						ctx.resources.set(name, data);
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						if (com != null) {
+							com.addResource(name, data);
+							var m = EvalMacro.currentModule();
+							if (m != null) m.extra.bindedRes.set(name, data);
+						}
 						return VNull;
 					}, true);
 				case "get_resources":
-					VFunction(function(args) return mkStringBytesMap(ctx, ctx.resources), true);
+					// The compile's resources: the -resource files and everything a macro added.
+					VFunction(function(args) {
+						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						return mkStringBytesMap(ctx, com != null ? com.resources : ctx.resources);
+					}, true);
 				case "make_expr":
 					VFunction(function(args) return EvalMacro.makeExprValueArgs(ctx, arg(args, 0), arg(args, 1)), true);
 				case "add_global_metadata_impl":
@@ -5051,7 +5065,10 @@ class EvalStdLib {
 				mkBytes(ctx, out);
 			}));
 		reg(s, "haxe.Resource", "listNames", vfn(a -> {
-			var names = [for (name in ctx.resources.keys()) mkStr(name)];
+			// The names come in the reverse of the resource table's traversal order, as every target
+			// lists them (the order a macro or the command line added them in is not it).
+			var order = ctx.com != null ? ctx.com.resourceFoldOrder() : [for (name in ctx.resources.keys()) name];
+			var names = [for (i in 0...order.length) if (ctx.resources.exists(order[order.length - 1 - i])) mkStr(order[order.length - 1 - i])];
 			VArray(new VArray(names, names.length));
 		}));
 		reg(s, "haxe.Resource", "getString", vfn(a -> {

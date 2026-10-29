@@ -277,7 +277,7 @@ class ServerCache {
 				case [MCode, MMacro] | [MMacro, MCode]:
 					// A cross-context dependency was only checked; do not add it, just its resources.
 					for (name in m.extra.bindedRes.keys())
-						com.resources.set(name, haxe.io.Bytes.ofString(m.extra.bindedRes.get(name)));
+						com.addResource(name, m.extra.bindedRes.get(name));
 				case _:
 					m.extra.added = compilationStep;
 					hxc.compiler.ServerMessage.reusing(com, tabs, m);
@@ -286,7 +286,7 @@ class ServerCache {
 					// re-adding only registers it with the current context.
 					hxc.context.ModuleLoader.registerReusedModule(com, m);
 					for (name in m.extra.bindedRes.keys())
-						com.resources.set(name, haxe.io.Bytes.ofString(m.extra.bindedRes.get(name)));
+						com.addResource(name, m.extra.bindedRes.get(name));
 					// Deps is an ordered map keyed by id: the walk visits the ids in ascending order.
 					for (id in sortedDepIds(m)) add(tabs + "  ", m0, m.extra.deps.get(id));
 			}

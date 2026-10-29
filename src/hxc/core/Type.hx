@@ -720,12 +720,12 @@ class ModuleDefExtra {
 	public var resolved:Int = 0;
 	public var deps:Map<Int, ModuleDef>;
 	public var kind:ModuleKind;
-	public var bindedRes:StringMap<String>;
+	public var bindedRes:StringMap<haxe.io.Bytes>;
 	public var ifFeature:Array<MIfFeature>;
 	public var features:StringMap<Bool>;
 	public function new(file:String, sign:String, display:ModuleDefDisplay, checkPolicy:Array<ModuleCheckPolicy>,
 			time:Float, cacheState:ModuleCacheState, added:Int, checked:Int, processed:Int,
-			deps:Map<Int, ModuleDef>, kind:ModuleKind, bindedRes:StringMap<String>, ifFeature:Array<MIfFeature>,
+			deps:Map<Int, ModuleDef>, kind:ModuleKind, bindedRes:StringMap<haxe.io.Bytes>, ifFeature:Array<MIfFeature>,
 			features:StringMap<Bool>) {
 		this.file = file;
 		this.sign = sign;

@@ -70,6 +70,21 @@ class P {
 [compile]
 dotnet: embedded resources (-resource or Context.addResource) are not supported with -D dotnet until milestone 4
 P.hx:3: characters 11-22 : dotnet: the inline C# name x is no local, member or type here (C# error CS0103)
+# A resource a macro adds reaches the backend now, so it gives the same error (Task 8 lifts it).
+--- resource-macro-is-an-error
+import haxe.macro.Context;
+class P {
+	static macro function add() {
+		Context.addResource("added", haxe.io.Bytes.ofString("x"));
+		return macro null;
+	}
+	static function main() {
+		add();
+	}
+}
+===
+[compile]
+dotnet: embedded resources (-resource or Context.addResource) are not supported with -D dotnet until milestone 4
 --- hello @gencs @stress-fieldlookup
 class P {
 	static function main() {
