@@ -628,7 +628,10 @@ class TclassToIl {
 			checkParameterlessBase(g, c);
 			methods.push(implicitCtor(c.pos, TypeFunctions.hasClassFlag(c, CAbstract)));
 		}
-		// gencs writes the static events, then __hx_ctor_*, then the statics, after the constructors.
+		// gencs writes the static events, then __hx_ctor_*, then the statics, after the constructors. A static
+		// @:property var's auto-property accessors are among the statics, in declaration order (gencs dumps with
+		// the var before and after a static method). The accessors of a static property with get/set methods
+		// would come before __hx_ctor_* (`get_sp, __hx_ctor__G, __hx_cast, st, _get_sp`), but hxc refuses those.
 		if (events != null) for (e in events.list) if (e.isStatic) {
 			methods.push(e.adder);
 			methods.push(e.remover);

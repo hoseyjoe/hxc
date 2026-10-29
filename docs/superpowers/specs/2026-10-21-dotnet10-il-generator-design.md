@@ -1016,13 +1016,20 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   compile: `CS1061` for the missing `__set`, `CS0535` for the missing implementation, and `CS0111: Type
   'IVec' already defines a member called 'this' with the same parameter types` where the companion also
   declares `__get` and `__set`.
-- Member order of events' private members: hxc writes every member in gencs's order (entry point, `.cctor`,
-  constructors, static events' accessors, `__hx_ctor_*`, statics, instance events' accessors, properties, the
-  instance members), except two things of an `@:event` var. The private bodies `_add_X` and `_remove_X` of a
-  non-field-like event are in their Haxe declaration position in hxc, where gencs writes them later and in reverse
-  (a static event's after the statics, an instance event's after the reflection members, before `ToString`), and
-  the backing field of a field-like event is in the instance fields' declaration order in hxc, where gencs puts it
-  ahead of the other instance fields. Only reflection's enumeration order of non-public members sees either.
+- Member order of events' private members and the Field table: hxc writes the methods in gencs's order (entry point,
+  `.cctor`, constructors, static events' accessors, `__hx_ctor_*`, statics, instance events' accessors, properties,
+  the instance members; a static `@:property` var's accessors are among the statics in declaration order), except
+  three things (`member-order-event-members-and-fields-differ-from-gencs`, with gencs's run in its header).
+  - The private bodies `_add_X` and `_remove_X` of a custom (non-field-like) event are in their Haxe declaration
+    position in hxc, where gencs writes them later: a static event's after the statics, an instance event's after
+    the reflection members and before `ToString`, the events in reverse declaration order and each pair as
+    `_remove_X`, `_add_X`.
+  - The backing field of a field-like event is in declaration order in hxc, where gencs puts it ahead of the other
+    fields of its kind (instance or static).
+  - gencs's Field table lists the static fields first and puts a generic class's `__hx_init_called` first; hxc lists
+    the instance fields first and `__hx_init_called` last. `GetFields` does not show this (the CLR lists instance
+    fields first), `FieldInfo.MetadataToken` order does.
+  Only reflection's enumeration of non-public members and metadata tokens see these.
 - A `@:struct` with no instance fields: Roslyn gives gencs's struct a ClassLayout row of size 1, and hxc
   writes no row. The runtime sizes both at 1 byte, so only metadata sees it: `Type.StructLayoutAttribute.Size`
   is 1 for gencs's struct and 0 for hxc's. hxc keeps this so that a DLL without explicit layout is unchanged

@@ -24383,7 +24383,11 @@ a,s1,s2
 # entry point, the static constructor and the constructors, the static events' accessors, __hx_ctor_*, the statics
 # in declaration order (a generic class's static __hx_cast first), then the instance events' accessors, the
 # properties' accessors, the cast and the other instance methods, and last the reflection members and ToString.
-# An interface keeps its own order, a struct writes its static method before the instance one.
+# An interface keeps its own order, a struct writes its static method before the instance one. A static
+# @:property var's accessors (get_sip, set_sip) are among the statics in declaration order, not ahead of
+# __hx_ctor_*: gencs dumps with the var declared before and after a static method both give that. The accessors of a
+# static property with get/set methods do come before __hx_ctor_*, but hxc refuses those. G is a generic class with
+# a static event.
 --- member-order-every-member-kind @gencs
 import cs.system.EventHandler;
 import cs.system.reflection.BindingFlags;
@@ -24444,6 +24448,17 @@ class Impl implements I {
 	public function sm() {}
 }
 
+class G<T> {
+	public var t:T;
+	public static var sv = 4;
+	@:event static var SEv:EventHandler;
+	public static function add_SEv(h:EventHandler):Void {}
+	public static function remove_SEv(h:EventHandler):Void {}
+	public static function st() return 1;
+	public function new() {}
+	public function m1(x:T) return x;
+}
+
 class P {
 	static var z = 5;
 	static function main() {
@@ -24451,8 +24466,10 @@ class P {
 		new D<Int>(1);
 		new Impl();
 		new S(1);
+		new G<Int>().m1(1);
+		G.st();
 		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-		for (t in [cs.Lib.toNativeType(C), cs.Lib.toNativeType(D), cs.Lib.toNativeType(I), cs.Lib.toNativeType(Impl), cs.Lib.toNativeType(S), cs.Lib.toNativeType(P)]) {
+		for (t in [cs.Lib.toNativeType(C), cs.Lib.toNativeType(D), cs.Lib.toNativeType(G), cs.Lib.toNativeType(I), cs.Lib.toNativeType(Impl), cs.Lib.toNativeType(S), cs.Lib.toNativeType(P)]) {
 			var ms = t.GetMethods(all);
 			Sys.println(t.Name + ": " + [for (i in 0...ms.Length) ms[i].Name].join(","));
 		}
@@ -24460,15 +24477,109 @@ class P {
 		var ps = c.GetProperties(all), es = c.GetEvents(all);
 		Sys.println("properties " + [for (i in 0...ps.Length) ps[i].Name].join(","));
 		Sys.println("events " + [for (i in 0...es.Length) es[i].Name].join(","));
+		var ges = cs.Lib.toNativeType(G).GetEvents(all);
+		Sys.println("events of G " + [for (i in 0...ges.Length) ges[i].Name].join(","));
 	}
 }
 ===
 [run]
 C: add_SEv,remove_SEv,__hx_ctor__C,get_sip,set_sip,sm,add_Ev,remove_Ev,get_pa,set_pa,get_ip,set_ip,_get_pa,_set_pa,m1,m2,toString,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields,ToString
 D`1: __hx_ctor__D,__hx_cast,sd,D_cast,md,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
+G`1: add_SEv,remove_SEv,__hx_ctor__G,__hx_cast,st,G_cast,m1,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
 I: get_iv,im
 Impl: __hx_ctor__Impl,sx,im,get_iv,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
 S: ss,sm
 P: Main,__hx_ctor__P,main
 properties sip,pa,ip
 events SEv,Ev
+events of G SEv
+# What still differs from gencs's member order, all in the members of an @:event var and in the Field table (spec,
+# Interop divergences). hxc's output is the expectation; gencs's real net10.0 run printed:
+#   E methods: add_SEv,remove_SEv,__hx_ctor__E,sa,_remove_SEv,_add_SEv,add_Ev2,remove_Ev2,add_Ev,remove_Ev,m1,toString,__hx_setField,__hx_getField,__hx_invokeField,__hx_getFields,_remove_Ev2,_add_Ev2,_remove_Ev,_add_Ev,ToString
+#   E fields by token: sh,h
+#   F fields by token: SEv,s1,s2,Ev,a,b
+#   G`1 fields by token: __hx_init_called,SEv,sv,t
+# (every other line below is the same in gencs's run). A custom event's private _add_X/_remove_X: gencs writes a
+# static event's after the statics and an instance event's after the reflection members, before ToString, each
+# event's pair as _remove_X then _add_X and the events in reverse declaration order; hxc leaves them at their
+# declaration position, _add_X then _remove_X. A field-like event's backing field: gencs puts it first among the
+# instance fields (or the static fields), hxc in declaration order. The Field table: gencs lists the static
+# fields first, hxc the instance fields (GetFields is unaffected, the CLR lists instance fields first; the
+# MetadataToken order shows it), and gencs puts a generic class's __hx_init_called first, hxc last.
+--- member-order-event-members-and-fields-differ-from-gencs
+import cs.system.EventHandler;
+import cs.system.reflection.BindingFlags;
+
+class E {
+	public static function sa() {}
+	var h:EventHandler;
+	@:event var Ev:EventHandler;
+	public function add_Ev(h2:EventHandler):Void { h = h + h2; }
+	public function remove_Ev(h2:EventHandler):Void { h = h - h2; }
+	@:event static var SEv:EventHandler;
+	static var sh:EventHandler;
+	public static function add_SEv(h2:EventHandler):Void { sh = sh + h2; }
+	public static function remove_SEv(h2:EventHandler):Void { sh = sh - h2; }
+	public function new() {}
+	public function m1() {}
+	@:event var Ev2:EventHandler;
+	public function add_Ev2(h2:EventHandler):Void { h = h + h2; }
+	public function remove_Ev2(h2:EventHandler):Void { h = h - h2; }
+	public function toString() return "E";
+}
+
+class F {
+	public var a:Int = 1;
+	public static var s1 = 2;
+	@:event var Ev:EventHandler;
+	public function add_Ev(h:EventHandler):Void {}
+	public function remove_Ev(h:EventHandler):Void {}
+	@:event static var SEv:EventHandler;
+	public static function add_SEv(h:EventHandler):Void {}
+	public static function remove_SEv(h:EventHandler):Void {}
+	public var b:Int = 3;
+	public static var s2 = 4;
+	public function new() {}
+}
+
+class G<T> {
+	public var t:T;
+	public static var sv = 4;
+	@:event static var SEv:EventHandler;
+	public static function add_SEv(h:EventHandler):Void {}
+	public static function remove_SEv(h:EventHandler):Void {}
+	public static function st() return 1;
+	public function new() {}
+	public function m1(x:T) return x;
+}
+
+class P {
+	static function main() {
+		new E();
+		new F();
+		new G<Int>().m1(1);
+		G.st();
+		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		for (t in [cs.Lib.toNativeType(E), cs.Lib.toNativeType(F), cs.Lib.toNativeType(G)]) {
+			var ms = t.GetMethods(all);
+			Sys.println(t.Name + " methods: " + [for (i in 0...ms.Length) ms[i].Name].join(","));
+			var fs = t.GetFields(all);
+			var l = [for (i in 0...fs.Length) fs[i]];
+			l.sort((x, y) -> x.MetadataToken - y.MetadataToken);
+			Sys.println(t.Name + " fields by token: " + [for (f in l) f.Name].join(","));
+			var es = t.GetEvents(all);
+			Sys.println(t.Name + " events: " + [for (i in 0...es.Length) es[i].Name].join(","));
+		}
+	}
+}
+===
+[run]
+E methods: add_SEv,remove_SEv,__hx_ctor__E,sa,_add_SEv,_remove_SEv,add_Ev2,remove_Ev2,add_Ev,remove_Ev,_add_Ev,_remove_Ev,m1,_add_Ev2,_remove_Ev2,toString,__hx_setField,__hx_getField,__hx_invokeField,__hx_getFields,ToString
+E fields by token: h,sh
+E events: SEv,Ev2,Ev
+F methods: add_SEv,remove_SEv,__hx_ctor__F,add_Ev,remove_Ev,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
+F fields by token: a,Ev,b,s1,SEv,s2
+F events: SEv,Ev
+G`1 methods: add_SEv,remove_SEv,__hx_ctor__G,__hx_cast,st,G_cast,m1,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
+G`1 fields by token: t,sv,SEv,__hx_init_called
+G`1 events: SEv
