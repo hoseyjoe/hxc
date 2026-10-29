@@ -9,6 +9,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..", "src").replace("\\", "/") + "/"
 rows = []
 for dp, ds, fs in os.walk(ROOT + "hxc"):
+    # the .NET runtime is source text RuntimeSources embeds for the program being compiled, not the compiler's own code
+    if dp.replace("\\", "/").endswith("hxc/codegen/dotnet"): ds[:] = [d for d in ds if d != "runtime"]
     ds.sort()
     for f in sorted(fs):
         if not f.endswith(".hx") or f == "ProcessState.hx": continue
