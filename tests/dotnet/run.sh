@@ -12,6 +12,7 @@
 # (its P.toInts making the first cast of one array from many threads at once). A @runtimeconfig case
 # is not run; its <name>.runtimeconfig.json is the result instead, so a case can build for a .NET
 # version this machine does not have.
+# ILVerify's report fails a case, unless the expectation has a [verify] section holding exactly that report.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
 # and a case whose expectation has no [run] section takes the gencs output as that expectation.
@@ -640,7 +641,11 @@ run_case() {
 		# determinism check, which compares what hxc wrote.
 		[ -n "$netlibs" ] && cp "$netlibdir"/*.dll "$casedir/a/P/"
 		local vout
-		if ! vout="$(exec dotnet "$checkdll" verify "$dll_m" 2>&1)"; then problem="${problem}${vout}"$'\n'; fi
+		if ! vout="$(exec dotnet "$checkdll" verify "$dll_m" 2>&1)"; then
+			# A case that pins ILVerify's report (a kept haxe.lang.BoxedPointer is unverifiable by nature)
+			# has a [verify] section; any other report fails the case.
+			if has_line "$expected" "[verify]"; then result="${result:+$result$'\n'}[verify]"$'\n'"$vout"; else problem="${problem}${vout}"$'\n'; fi
+		fi
 		if [ $config = 1 ]; then
 			result="${result:+$result$'\n'}[runtimeconfig]"$'\n'"$(cat "$casedir"/a/P/*.runtimeconfig.json 2>&1)"
 		elif [ $lib = 0 ]; then

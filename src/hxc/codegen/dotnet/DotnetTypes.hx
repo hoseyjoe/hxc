@@ -594,7 +594,15 @@ class DotnetTypes {
 						return LClass(defined(systemType), []);
 					case _:
 				}
-				if (isPath(p, ["cs"], "Pointer")) return LPointer(toSig(params[0]));
+				if (isPath(p, ["cs"], "Pointer")) {
+					// gencs writes a Pointer<Dynamic> as `void*`, not `object*`.
+					switch (TypeFunctions.follow(params[0])) {
+						case TDynamic(_): return LPointer(LVoid);
+						case TAbstract(da, _) if (da.path.pack.length == 0 && da.path.name == "Dynamic"): return LPointer(LVoid);
+						case _:
+					}
+					return LPointer(toSig(params[0]));
+				}
 				if (p.pack.length == 1 && p.pack[0] == "cs" && p.name != "Pointer" && a.module.path.name == "StdTypes") switch (p.name) {
 					case "Int8": return LInt8;
 					case "Int16": return LInt16;

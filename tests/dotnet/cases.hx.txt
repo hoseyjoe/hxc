@@ -21739,3 +21739,31 @@ class P {
 got true
 got false
 null
+
+# -D unsafe (the server app passes it) must not make the assembly unverifiable: hxc writes no
+# haxe.lang.BoxedPointer, as the server app's Builder.hx deletes gencs's BoxedPointer.cs, so its shipped DLL has
+# none (ruling 11). The harness's ILVerify then reports nothing at all. gencs (no Builder patch) keeps the class,
+# so its run prints True: a deliberate divergence toward what ships.
+--- unsafe-define-verifies @gencs + -D unsafe
+class P {
+	static function main() {
+		Sys.println(cs.system.Type.GetType("haxe.lang.BoxedPointer") != null);
+	}
+}
+===
+[run]
+False
+[gencs]
+True
+
+# A program that keeps haxe.lang.BoxedPointer gets it, with gencs's `void*` field and constructor parameter (hxc
+# wrote `object*`). The class is unverifiable by nature, so ILVerify's line for it is part of the expectation.
+--- unsafe-kept-boxed-pointer @lib @dump=haxe.lang.BoxedPointer + -D unsafe --macro keep("cs.internal.BoxedPointer")
+class P {}
+===
+[verify]
+haxe.lang.BoxedPointer::.ctor: UnmanagedPointer Unmanaged pointers are not a verifiable type. (Offset=7)
+[dump]
+type public beforefieldinit haxe.lang.BoxedPointer extends [mscorlib]System.Object
+  field public void* value
+  method public hidebysig specialname rtspecialname void .ctor(void*)
