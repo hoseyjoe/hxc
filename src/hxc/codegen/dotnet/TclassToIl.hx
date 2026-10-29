@@ -1301,11 +1301,11 @@ class TclassToIl {
 		return made;
 	}
 
-	// gencs's overloads of a @:nativeGen class's, or an abstract's implementation class's, method or constructor `f` (its own class's, not a local
-	// function's) that has trailing optional arguments and no type parameters of its own: one per optional
-	// argument from the last, each taking the parameters before it, the longest first, as gencs writes them
-	// in front of the method (gencs.ml:151-205, 2299). Each has the method's flags, as gencs gives its copy of
-	// the field the field's own.
+	// gencs's overloads of a @:nativeGen class's, or an abstract's implementation class's, method or
+	// constructor `f` (its own class's, not a local function's) that has trailing optional arguments and no
+	// type parameters of its own: one per optional argument from the last, each taking the parameters before
+	// it, the longest first, as gencs writes them in front of the method (gencs.ml:151-205, 2299). Each has
+	// the method's flags, as gencs gives its copy of the field the field's own.
 	static function optionalOverloads(g:DotnetCtx, c:TClass, f:TClassField, flags:Int, name:String, isStatic:Bool, isCtor:Bool,
 			sig:{args:Array<IlSigNorm>, names:Array<String>, ret:IlSigNorm}):Array<MethodPlan> {
 		if (!(TypeFunctions.hasMeta(":nativeGen", c.meta) || c.kind.match(KAbstractImpl(_))) || g.closureOwners.exists(c) || f.params.length > 0) return [];

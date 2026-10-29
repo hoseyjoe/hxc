@@ -879,9 +879,10 @@ and `List` copy, and two threads casting one array at once.
      field, property, method or constructor gets `EditorBrowsable(EditorBrowsableState.Never)` (ruling 6).
      A `@:nativeGen` class's methods and constructors, and an abstract's implementation class's static
      methods, get gencs's overloads for their trailing optional arguments, each with the field's attributes
-     (`optional-overloads-of-abstract-implementation-class`: the server app's `Guid_Impl_._new()`). Its constrained type parameters still get no
-     GenericParamConstraint rows, so a call that passes one to an overloaded .NET method, which gencs's C#
-     binds by the `where` clause, is refused (ruling 7). `-D dotnet-nullable=<package>[,<package>…]` writes
+     (`optional-overloads-of-abstract-implementation-class`: the server app's `Guid_Impl_._new()`). A
+     `@:nativeGen` class's constrained type parameters still get no GenericParamConstraint rows, so a call that
+     passes one to an overloaded .NET method, which gencs's C# binds by the `where` clause, is refused
+     (ruling 7). `-D dotnet-nullable=<package>[,<package>…]` writes
      Roslyn's nullable metadata (ruling 2) for every type of a module whose package is exactly one of those
      named, its local functions' classes included, as the server app's build enables gencs's C# with
      `#nullable enable` before each `namespace ai.tools {`; a sub-package's modules are not covered, which
@@ -894,7 +895,7 @@ and `List` copy, and two threads casting one array at once.
      types from System.Runtime. A value that names no package, and a constrained type parameter of a
      `@:nativeGen` class (gencs writes its `where` clause, hxc no constraints), are errors; the class of a local
      function in a constrained generic method is not one, since gencs writes it no `where` clause
-     (`attrs-nullable-closure-of-constrained-method`: the server app's `ARCADataHelper.byId`). Events defined in
+     (`attrs-nullable-closure-of-constrained-method`: a data helper class's `byId` in the server app). Events defined in
      Haxe: Haxe's `check_cs_events` runs for the C# target before DCE (`@:event fields must be private`,
      `Missing event method: add_X`, and the unification error at an add_ or remove_ that is not `T -> Void`),
      and gencs hides every `@:event` var from reflection (`@:skipReflection`), so hxc does too. An `@:event`
@@ -930,9 +931,10 @@ and `List` copy, and two threads casting one array at once.
      - Its last step measured the apps, with the owner's changes below standing in as an overlay. The server app, its
        nativepdf build and the build with the stubbed report have no error and each writes its DLL (4b: the same),
        and the server's DLL has the two manifest resources, `src.Resources.coach.bin` and `src.Resources.tutorials.bin`,
-       of gencs's sizes (5,044,147 and 2,644,821 bytes). The desktop app has no error (4b: 1) and writes all 217
-       manifest resources, named as gencs's build names them. It found two things, both fixed: the nullable metadata
-       refused the classes of local functions in a constrained generic method (`ARCADataHelper.byId`), for which
+       of gencs's sizes (5,044,147 and 2,644,821 bytes). The desktop app has no error (4b: 1), with its UI natives
+       DLL rebuilt from the current sources (the prebuilt one lags them, and gives 9 correct "unknown field"
+       refusals), and writes all 217 manifest resources, named as gencs's build names them. It found two things, both fixed: the nullable metadata
+       refused the classes of local functions in a constrained generic method (a data helper class's `byId`), for which
        gencs writes no `where` clause; and an abstract's implementation class lacked gencs's optional-argument
        overloads (`Guid_Impl_._new()`). The baseline is gencs's C# of the same source tree with the build script's four
        text patches applied, which is what the build script produces; gencs's C# alone has no nullable metadata.
@@ -948,7 +950,8 @@ and `List` copy, and two threads casting one array at once.
        - The AI tool schemas, from Semantic Kernel over each DLL, are identical for all 133 tools, descriptions,
          `required` lists and nullability included.
        - The server app's no-browser export check prints the same results on both DLLs (the PDF and DOCX sizes
-         differ by a few bytes, as two gencs runs' do: timestamps).
+         differ by a few bytes, as two gencs runs' do: timestamps). The gencs DLL it compares with is the older
+         one in the runner's folder, not the fresh baseline build.
        - The CLR shape of the 24 classes and the 110 tool models has the same members. What it prints beyond that
          is `DebuggerBrowsable(Never)` on 304 `@:property` backing fields and the Field-table order of two classes
          (*Interop divergences*).

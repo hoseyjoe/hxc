@@ -247,7 +247,7 @@ field-like event's outside its class. Some of what gencs's C# refuses is refused
 `CompilerGeneratedAttribute` on `@:property` vars) and 4c (attributes (`@:meta`, `@:strict`), nullability
 metadata (`-D dotnet-nullable`), manifest resources, events, `@:nativeGen` details) are done, which is milestone 4:
 the server app builds to its `HaxeServer.dll` with its resources, the C# projects that name Haxe types build
-against it, its AI tool schemas are the ones gencs's C# gives, and ILVerify of it against the deployed assemblies
+against it, its AI tool schemas are those of gencs's C# with the build script's four patches, and ILVerify of it against the deployed assemblies
 prints nothing. A few constructs gencs's C# accepts stay compile errors, because nothing in the two apps uses
 them: covariant-return `@:overload` overrides, two refinements of the overload rule in inline C#
 (`Nullable<A>` to `Nullable<B>`, array covariance), `{0}[i]` on a program class in inline C# and `cs.Pointer.add`,
