@@ -815,9 +815,14 @@ class CsToIl {
 	// The value of a float literal with the `f` suffix. Roslyn rounds the decimal to a float once; hxc parses
 	// it to a double first, which gives another float when that double lies exactly between two floats (the
 	// decimal was just above or below that midpoint, and the double rounds to even). The exact decimal is not
-	// worth the cost (no inline C# has an f literal), so such a literal is refused, an exact midpoint too.
+	// worth the cost (no inline C# has an f literal), so such a literal is refused, an exact midpoint too. A
+	// literal that rounds to infinity is C#'s error CS0594, and hxc must not write the infinity; the midpoint
+	// between float.MaxValue and 2^128 rounds up, so it is out of range too (its neighbours below, rounded to
+	// the same double, are refused with it).
 	function singleLiteral(digits:String):Float {
 		var d = Std.parseFloat(digits);
+		if (d >= Math.pow(2, 128) - Math.pow(2, 103))
+			error("the float literal is out of range for float, or too close to float.MaxValue for hxc to round it as C# does (C# error CS0594)");
 		if (isSingleMidpoint(d)) error("hxc cannot round this float literal as C# does; write it with fewer digits");
 		return d;
 	}

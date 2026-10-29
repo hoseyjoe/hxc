@@ -24150,7 +24150,7 @@ True
 #   (double)0.1f                              0.10000000149011612
 # Ruling 15: a literal whose double is a float32 rounding midpoint is refused (inline-cs-float-literal-midpoint-
 # is-an-error); the others round once and agree with C#, including an exactly representable one.
---- inline-cs-float-literal-rounding
+--- inline-cs-float-literal-rounding @gencs
 class P {
 	static function main() {
 		var c:Float = untyped __cs__("(double)0.1f");
@@ -24158,12 +24158,13 @@ class P {
 		var n:Float = untyped __cs__("(double)1.00000011920928955078125f");
 		var m:Float = untyped __cs__("(double)1.00000006f");
 		var k:Float = untyped __cs__("(double)16777218f");
-		Sys.println(c + " " + e + " " + n + " " + m + " " + k);
+		var x:Float = untyped __cs__("(double)3.4028235e38f");
+		Sys.println(c + " " + e + " " + n + " " + m + " " + k + " " + x);
 	}
 }
 ===
 [run]
-0.10000000149011612 0.5 1.0000001192092896 1.0000001192092896 16777218
+0.10000000149011612 0.5 1.0000001192092896 1.0000001192092896 16777218 3.4028234663852886E+38
 # The literals whose double is a float32 midpoint: the one just above (gencs prints 1.0000001192092896), the exact
 # midpoint and 16777217f (gencs prints 1 and 16777216, rounding once to even; hxc cannot tell them from the first
 # without the literal's exact value, so it refuses all three), as a bare literal and folded into a constant.
@@ -24223,3 +24224,131 @@ threw System.NullReferenceException
 3.5
 3.5
 p
+# The same through gencs's is_dynamic for the other shapes: an EnumValue field, a Null<{x:Int}> field (an anonymous
+# structure behind Null<>) and a field of an inline anonymous type get the override declared by their class; a field
+# typed as a class's or an enum's statics (`var s = Ev`) is no dynamic type, so a class with only those gets none (the
+# declaring type is haxe.lang.HxObject).
+--- reflect-getfield-f-dynamic-like-fields @gencs
+typedef Pt = {x:Int};
+enum En { A; }
+class HasEnumValue { public var e:EnumValue; public function new() {} }
+class HasNullAnon { public var n:Null<Pt>; public function new() {} }
+class HasInlineAnon { public var a:{y:String}; public function new() {} }
+class HasClassStatics { public var s = HasEnumValue; public function new() {} }
+class HasEnumStatics { public var s = En; public function new() {} }
+class P {
+	static function show(name:String) {
+		var t:cs.system.Type = cs.system.Type.GetType(name);
+		Sys.println(name + " " + t.GetMethod("__hx_getField_f").DeclaringType.FullName + " " + t.GetMethod("__hx_setField_f").DeclaringType.FullName);
+	}
+	static function main() {
+		show("HasEnumValue");
+		show("HasNullAnon");
+		show("HasInlineAnon");
+		show("HasClassStatics");
+		show("HasEnumStatics");
+	}
+}
+===
+[run]
+HasEnumValue HasEnumValue HasEnumValue
+HasNullAnon HasNullAnon HasNullAnon
+HasInlineAnon HasInlineAnon HasInlineAnon
+HasClassStatics haxe.lang.HxObject haxe.lang.HxObject
+HasEnumStatics haxe.lang.HxObject haxe.lang.HxObject
+# Overriding what a subclass's interface maps to: Haxe refuses an override of an inline or final method, so the base's
+# method, now `virtual final newslot` for an interface of a subclass, is never overridden (a CLR override of a sealed
+# slot would fail to load). A method with the same name and no `override` is refused too.
+--- inherited-final-override-is-an-error
+interface K { function k():Int; }
+class B {
+	public function new() {}
+	public inline function k():Int return 3;
+	public final function f():Int return 1;
+}
+class D extends B implements K {
+	public function new() super();
+	override public inline function k():Int return 4;
+}
+class E extends B {
+	public function new() super();
+	override public function f():Int return 5;
+}
+class F extends B {
+	public function new() super();
+	public function k():Int return 6;
+}
+class P {
+	static function main() {
+		Sys.println(new D().k() + new E().f() + new F().k());
+	}
+}
+===
+[compile]
+P.hx:9: characters 34-35 : Field k is inlined and cannot be overridden
+P.hx:13: characters 27-28 : Cannot override final method f
+P.hx:17: characters 18-19 : Field k should be declared with 'override' since it is inherited from superclass B
+# A float literal that rounds to infinity is C#'s CS0594 ("Floating-point constant is outside the range of type
+# 'float'"), including the midpoint between float.MaxValue and 2^128, which rounds up. hxc refuses them (a literal
+# just under that midpoint whose double equals it too); float.MaxValue's own literal is fine
+# (inline-cs-float-literal-rounding).
+--- inline-cs-float-literal-out-of-range-is-an-error
+class P {
+	static function main() {
+		var a:Float = untyped __cs__("(double)1e39f");
+		var b:Float = untyped __cs__("(double)3.4028235677973366e38f");
+		var c:Float = untyped __cs__("(double)(3.4028235677973366e38f + 1)");
+		Sys.println(a + b + c);
+	}
+}
+===
+[compile]
+P.hx:3: characters 25-48 : dotnet: the float literal is out of range for float, or too close to float.MaxValue for hxc to round it as C# does (C# error CS0594)
+P.hx:4: characters 25-65 : dotnet: the float literal is out of range for float, or too close to float.MaxValue for hxc to round it as C# does (C# error CS0594)
+P.hx:5: characters 25-71 : dotnet: the float literal is out of range for float, or too close to float.MaxValue for hxc to round it as C# does (C# error CS0594)
+# A method group over a final method that an interface of a subclass maps to (it is `virtual final` now), and over one
+# nothing maps. On a null receiver the creation throws System.ArgumentException in gencs's build and in hxc's, for the
+# mapped method and the plain one alike, and a live receiver's delegate runs the method, so making the first
+# `virtual final` changed nothing a program can see here.
+--- delegate-method-group-inherited-final-null-receiver @gencs + -D net-ver=40
+import cs.system.Func_1;
+interface J { function n():Int; }
+class B {
+	public function new() {}
+	public final function n():Int return 2;
+	public final function plain():Int return 3;
+}
+class D extends B implements J { public function new() super(); }
+class P {
+	static function viaN(d:D):Func_1<Int> return d.n;
+	static function viaPlain(d:D):Func_1<Int> return d.plain;
+	static function show(tag:String, make:() -> Func_1<Int>) {
+		var f = null;
+		try {
+			f = make();
+			Sys.println(tag + " made");
+		} catch (e:Dynamic) {
+			Sys.println(tag + " threw " + Type.getClassName(Type.getClass(e)));
+			return;
+		}
+		try {
+			Sys.println(tag + " " + f.Invoke());
+		} catch (e:Dynamic) {
+			Sys.println(tag + " invoke threw " + Type.getClassName(Type.getClass(e)));
+		}
+	}
+	static function main() {
+		show("n live", () -> viaN(new D()));
+		show("n null", () -> viaN(null));
+		show("plain live", () -> viaPlain(new D()));
+		show("plain null", () -> viaPlain(null));
+	}
+}
+===
+[run]
+n live made
+n live 2
+n null threw System.ArgumentException
+plain live made
+plain live 3
+plain null threw System.ArgumentException

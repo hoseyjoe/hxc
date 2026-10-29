@@ -140,15 +140,9 @@ class ReflectionMembers {
 	static function floatLike(g:DotnetCtx, cf:TClassField):Bool {
 		// A haxe.lang.Null<T>, a type parameter's too, is not (gencs's real type).
 		if (TexprDynamic.isNullType(cf.type)) return false;
-		switch (TypeFunctions.followWithAbstracts(cf.type)) {
-			case TDynamic(_): return true;
-			case TMono(m) if (m.type == null): return true;
-			case TInst({kind: KTypeParameter(_)}, _): return true;
-			// gencs's is_dynamic: an anonymous structure that is not a class's, an enum's or an abstract's statics.
-			case TAnon(a) if (!a.status.get().match(Statics(_) | EnumStatics(_) | AbstractStatics(_))): return true;
-			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Dynamic"): return true;
-			case _:
-		}
+		// gencs's is_dynamic: Dynamic, an unbound monomorph, a type parameter, EnumValue and an anonymous structure that
+		// is not a class's, enum's or abstract's statics.
+		if (TexprDynamic.isDynamic(cf.type)) return true;
 		var s = try g.types.toSig(cf.type) catch (_:Unsupported) null;
 		return s != null && s.match(LInt32 | LUInt32 | LFloat64 | LFloat32 | LInt8 | LUInt8 | LInt16 | LUInt16 | LChar);
 	}

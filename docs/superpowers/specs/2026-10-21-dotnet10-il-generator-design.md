@@ -1116,7 +1116,11 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   literal as a double first, which would give 1 for both, a silent wrong value; telling the two apart takes the
   literal's exact decimal value, so hxc refuses every literal that lands on a midpoint, `16777217f` too, which Roslyn
   rounds right. Every other `f` literal, an exactly representable one included, rounds once and agrees with C#
-  (`inline-cs-float-literal-rounding`). No inline C# in the apps has a float literal.
+  (`inline-cs-float-literal-rounding`, which is `@gencs`). No inline C# in the apps has a float literal.
+  A literal that rounds to infinity is refused too (`inline-cs-float-literal-out-of-range-is-an-error`): C#'s
+  error is `CS0594: Floating-point constant is outside the range of type 'float'`, and the text says so. The
+  midpoint between `float.MaxValue` and 2^128 rounds up, so it is out of range, and a literal just below it whose
+  double equals it is refused with it, where Roslyn would accept it.
 
 ## Left to the builder
 
