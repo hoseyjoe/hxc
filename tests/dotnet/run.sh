@@ -6,7 +6,9 @@
 # [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds]
 # [+ extra hxc args]`, its source, `===`,
 # and the expected result. Each case compiles twice into a fresh directory, and its .dll must be
-# byte-identical between the two, pass ILVerify, run (unless @lib) and dump as expected. A
+# byte-identical between the two, pass ILVerify, run (unless @lib) and dump as expected. A second
+# compile that exits differently from the first is reported as "second compile failed (exit N)", not as
+# nondeterminism; on a real mismatch both copies are kept in $HXC_TEST_TMP/nondeterministic/<case>/{a,b}. A
 # @stress-fieldlookup case's .dll must also pass HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup
 # called from many threads at once), and a @stress-arrayforward case's HxcCheck's stress-arrayforward
 # (its P.toInts making the first cast of one array from many threads at once). A @runtimeconfig case
@@ -613,9 +615,9 @@ run_case() {
 	# --cs adds -lib hxcs, and haxelib would find the checkout's own .haxelib above the case directory;
 	# --haxelib-global, which only counts after the library, keeps the global hxcs.
 	set -f
-	local cout ccode=0
+	local cout ccode=0 bcode=0
 	cout="$("$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs a/P --haxelib-global -D dotnet $extra "${netargs[@]}" 2>&1)" || ccode=$?
-	"$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs b/P --haxelib-global -D dotnet $extra "${netargs[@]}" > /dev/null 2>&1
+	"$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs b/P --haxelib-global -D dotnet $extra "${netargs[@]}" > /dev/null 2>&1 || bcode=$?
 	set +f
 
 	local result="" problem="" dll="" dll_m f
@@ -632,11 +634,25 @@ run_case() {
 	if [ -n "$dll" ]; then
 		paths "$dll"
 		dll_m="$path_m"
-		for f in "$casedir"/a/P/*; do
-			if ! cmp -s "$f" "$casedir/b/P/${f##*/}"; then
-				problem="${problem}not deterministic: ${f##*/}"$'\n'
-			fi
-		done
+		# A second compile that failed (killed, or out of forks under load) leaves no assembly to compare; that is
+		# not nondeterminism. On a real mismatch both copies are kept, in $tmproot/nondeterministic/<case>/{a,b}.
+		if [ $bcode != $ccode ]; then
+			problem="${problem}second compile failed (exit $bcode, the first's was $ccode)"$'\n'
+		else
+			local keep="$tmproot/nondeterministic/$name" kept=0
+			for f in "$casedir"/a/P/*; do
+				if ! cmp -s "$f" "$casedir/b/P/${f##*/}"; then
+					if [ $kept = 0 ]; then
+						rm -rf "$keep"
+						mkdir -p "$keep/a" "$keep/b"
+						kept=1
+					fi
+					cp "$f" "$keep/a/" 2> /dev/null
+					cp "$casedir/b/P/${f##*/}" "$keep/b/" 2> /dev/null
+					problem="${problem}not deterministic: ${f##*/} (both copies are kept in $keep/a and $keep/b)"$'\n'
+				fi
+			done
+		fi
 		# Every fixture library goes beside the program, not only the ones passed. After the
 		# determinism check, which compares what hxc wrote.
 		[ -n "$netlibs" ] && cp "$netlibdir"/*.dll "$casedir/a/P/"
