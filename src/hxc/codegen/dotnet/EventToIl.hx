@@ -306,12 +306,17 @@ class EventToIl {
 		code.op(IlOps.RET, 0, 0);
 	}
 
+	// The class, `c` or one of its superclasses, that declares the field `cf`.
+	static function declaringClass(c:TClass, cf:TClassField):TClass {
+		var owner = c;
+		while (owner.fields.get(cf.name) != cf && owner.statics.get(cf.name) != cf && owner.superClass != null) owner = owner.superClass.c;
+		return owner;
+	}
+
 	// The error for a read or an assignment of the var `cf` of an event, reached through the class `c`: C# lets an
 	// event with accessors of its own appear only on the left of `+=` and `-=` (CS0079).
 	public static function noValue(c:TClass, cf:TClassField):Unsupported {
-		var owner = c;
-		while (owner.fields.get(cf.name) != cf && owner.statics.get(cf.name) != cf && owner.superClass != null) owner = owner.superClass.c;
-		return Unsupported.error("the event " + DotnetTypes.haxePath(TClassDecl(owner)) + "." + cf.name
+		return Unsupported.error("the event " + DotnetTypes.haxePath(TClassDecl(declaringClass(c, cf))) + "." + cf.name
 			+ " has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)");
 	}
 
@@ -324,7 +329,12 @@ class EventToIl {
 		if (e != null && e.isInterface)
 			throw Unsupported.error("the event " + DotnetTypes.haxePath(TClassDecl(e.owner)) + "." + cf.name
 				+ " is an interface event, so it has no value to read or assign (C# error CS0079)");
-		if (e == null || !e.fieldLike) throw noValue(c, cf);
+		// No plan: the owner's was not built (it is left out), so it is not known whether the event is custom or field-like.
+		if (e == null)
+			throw Unsupported.error("the event " + DotnetTypes.haxePath(TClassDecl(declaringClass(c, cf))) + "." + cf.name
+				+ " has no value to read or assign here (C# error CS0079 for an event with add_/remove_ bodies, CS0070 outside its class"
+				+ " for a field-like one)");
+		if (!e.fieldLike) throw noValue(c, cf);
 		if (from != e.owner) {
 			var path = DotnetTypes.haxePath(TClassDecl(e.owner));
 			throw Unsupported.error("the event " + path + "." + cf.name + " has empty add_/remove_ bodies, so it is field-like: only " + path
