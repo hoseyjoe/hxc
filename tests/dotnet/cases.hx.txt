@@ -24761,3 +24761,28 @@ class P {
 [compile]
 P.hx:5: characters 15-41 : dotnet: volatile .NET fields (modlib.Box.V) are not supported yet
 P.hx:6: characters 15-45 : dotnet: volatile .NET fields (modlib.Box.S) are not supported yet
+# A class with an indexer gets [DefaultMember("Item")] as C# puts it: before the type's own attributes (Roslyn's order,
+# which GetCustomAttributesData shows).
+--- attrs-default-member-comes-before-user-meta @gencs
+@:native("System.Reflection.CustomAttributeData") extern class AttrData {
+	static function GetCustomAttributes(t:cs.system.Type):cs.system.collections.IEnumerable;
+}
+
+@:meta(System.Obsolete("old"))
+@:meta(System.Runtime.InteropServices.ComVisible(false))
+class Grid implements ArrayAccess<Int> {
+	var cells = [10, 20, 30];
+	public function new() {}
+	public function __get(i:Int):Int return cells[i];
+	public function __set(i:Int, v:Int):Int return cells[i] = v;
+}
+
+class P {
+	static function main() {
+		var e = AttrData.GetCustomAttributes(cs.Lib.toNativeType(Grid)).GetEnumerator();
+		var names = [];
+		while (e.MoveNext()) names.push(Std.string(e.Current));
+		Sys.println(names.join(" "));
+	}
+}
+===

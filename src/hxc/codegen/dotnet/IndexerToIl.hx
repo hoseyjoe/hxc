@@ -241,10 +241,11 @@ class IndexerToIl {
 		return null;
 	}
 
-	// [DefaultMember("Item")] on the TypeDef `token`, as C# puts it on a type that declares an indexer.
+	// [DefaultMember("Item")] on the TypeDef `token`, as C# puts it on a type that declares an indexer: after
+	// the nullable rows and before the type's @:meta, as Roslyn orders them.
 	public static function defaultMember(g:DotnetCtx, token:Int):Void {
 		var ctor = AttributesToIl.runtimeAttr(g, "System.Reflection", "DefaultMemberAttribute", [ATString]);
-		AttributesToIl.write(g, token, ctor, [AString(itemName)], []);
+		AttributesToIl.write(g, token, ctor, [AString(itemName)], [], true);
 	}
 
 	// An indexer's accessor (MIndexer), as C# compiles gencs's: `return this.__get(index);` and
