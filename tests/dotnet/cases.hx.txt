@@ -102,6 +102,34 @@ Unhandled exception. x
 method P::main
   P.hx 3:7-3:29
   P.hx 4:4-4:9
+# A file under the build folder is named relative to it, a Haxe std file by haxe-std/ and its path under
+# the std root; -D dotnet-pathmap replaces a path prefix, and the trace's own position keeps Haxe's name.
+--- pdb-names-relative @lib @module=pack.Mod @dump=doc:pack/Mod.hx,doc:haxe-std/haxe/Log.hx + -debug
+package pack;
+class Mod {
+	public static function hello() {
+		trace("x");
+	}
+}
+===
+[dump]
+document pack/Mod.hx sha256 csharp
+document haxe-std/haxe/Log.hx sha256 csharp
+--- pdb-names-pathmap @lib @module=pack.Mod @dump=doc:src/pack/Mod.hx + -debug -D dotnet-pathmap=pack/=src/pack/
+package pack;
+class Mod {
+	public static function hello() {
+		trace("x");
+	}
+}
+===
+[dump]
+document src/pack/Mod.hx sha256 csharp
+--- pdb-pathmap-malformed @lib + -debug -D dotnet-pathmap=foo
+class P {}
+===
+[compile]
+dotnet: -D dotnet-pathmap must be <from>=<to> pairs separated by commas, like C:/work/=src/ (not foo)
 --- runtimeconfig-defaults-to-net10 @runtimeconfig
 class P {
 	static function main() {}

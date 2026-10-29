@@ -86,13 +86,28 @@ class DotnetCtx {
 	public function new(ctx:Context, mb:ModuleBuilder) {
 		this.ctx = ctx;
 		this.mb = mb;
-		pdb = ctx.debug ? new PdbBuilder(new PdbPaths(Sys.getCwd())) : null;
+		pdb = ctx.debug ? new PdbBuilder(newPaths()) : null;
 		types = new DotnetTypes(ctx, mb);
 		types.g = this;
 		sigs = new SigWriter(mb.typeToken);
 		externs = new ExternMembers(ctx, types);
 		// hxc's own copy of the hxcs runtime is standard library too.
 		stdRoots = [for (p in ctx.stdPath) normalizePath(p)].concat([normalizePath(RuntimeSources.ROOT)]);
+	}
+
+	// The PDB's Document names (PdbPaths), with -D dotnet-pathmap=<from>=<to>[,<from>=<to>...] applied.
+	function newPaths():PdbPaths {
+		var cwd = Sys.getCwd();
+		var pathmap = [];
+		if (ctx.defines.rawDefined("dotnet_pathmap")) {
+			var s = ctx.defines.rawDefinedValueSafe("dotnet_pathmap");
+			var parsed = PdbPaths.parsePathmap(s, cwd);
+			if (parsed == null)
+				error("-D dotnet-pathmap must be <from>=<to> pairs separated by commas, like C:/work/=src/ (not " + s + ")", Position.nullPos);
+			else
+				pathmap = parsed;
+		}
+		return new PdbPaths(cwd, ctx.stdPath, ctx.libraryClassPaths, pathmap, s -> ctx.warning(hxc.core.WarningList.Warning.WUser, [], s, Position.nullPos));
 	}
 
 	static function normalizePath(p:String):String {

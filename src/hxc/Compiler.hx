@@ -148,6 +148,8 @@ class Compiler {
 	// callMain): the static initializers run again, but a static without one keeps its value, so this flag
 	// has none, and on re-entry every such static goes back to its fresh-process value (ProcessState).
 	static var mainHasRun:Null<Bool>;
+	// The class paths addLibs took from `haxelib path`, by library, over the command line being expanded.
+	static var libraryClassPaths:Array<{classPath:String, library:String}> = [];
 
 	public static function main() {
 		if (mainHasRun == true) hxc.core.ProcessState.resetUninitializedStatics();
@@ -523,6 +525,8 @@ class Compiler {
 	}
 
 	static function runInner(args:Array<String>):Void {
+		// Per request: the compile server runs several in one process.
+		libraryClassPaths = [];
 		hxc.core.BinaryStdio.set();
 		// The mono seams (create, bind, classify) route through TypeUnification; without this
 		// the printer's constraint rendering sees the CUnknown stub and drops " : Constraint".
@@ -572,6 +576,7 @@ class Compiler {
 			return;
 		}
 		var ctx = new Context();
+		ctx.libraryClassPaths = libraryClassPaths;
 		// The top-level handler holds the same context whose message list the argument handlers have been
 		// appending to, so an argument failure reports through that list rather than past it. Recorded
 		// here so the top-level handler can reach it.
@@ -4587,17 +4592,24 @@ class Compiler {
 		// Each non-empty stripped line - a bare path is a class path, `-L <dir>` a neko link path, anything
 		// else a flag with the rest of the line after its first space.
 		var out:Array<String> = [];
+		// The class paths since the last library's `-D <name>=<version>` line, which names their library.
+		var pending:Array<String> = [];
 		for (line in stdout.split("\n")) {
 			var l = StringTools.trim(line);
 			if (l == "") continue;
 			if (l.charCodeAt(0) != "-".code) {
 				out.push("-cp");
 				out.push(l);
+				pending.push(l);
 				continue;
 			}
 			var sp = l.indexOf(" ");
 			var param = sp < 0 ? l : l.substr(0, sp);
 			var value = sp < 0 ? "" : l.substr(sp + 1);
+			if (param == "-D" && value.indexOf("=") > 0) {
+				for (cp in pending) libraryClassPaths.push({classPath: cp, library: value.substr(0, value.indexOf("="))});
+				pending = [];
+			}
 			if (param == "-L") {
 				out.push("--neko-lib-path");
 				out.push(l.substr(3));

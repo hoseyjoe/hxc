@@ -56,6 +56,8 @@ class Context {
 	public var nullSafetyReportCallbacks:Array<Array<{msg:String, pos:hxc.ast.Position}>->Void> = [];
 
 	public var classPath:Array<String>;
+	// The class paths `-lib` added, each with the library whose `haxelib path` lines gave it (Compiler.addLibs).
+	public var libraryClassPaths:Array<{classPath:String, library:String}> = [];
 
 	/** Command-line package remaps, keyed by the first package segment. */
 	public var packageRemaps:StringMap<String>;
