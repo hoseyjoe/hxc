@@ -47,11 +47,16 @@ class TexprFlow {
 		}
 	}
 
+	// A statement's condition and branches have sequence points; a value's belong to the statement it is
+	// part of.
 	function ifExpr(ret:Ret, e:TExpr, cond:TExpr, eif:TExpr, eelse:Null<TExpr>):Void {
 		if (eelse == null && needVal(ret)) throw new Unsupported("Void values", true);
 		var r = valueRet(ret, e);
+		var statement = !needVal(ret);
 		var other = code.newLabel();
+		if (statement) tl.conditionPoint(cond);
 		tl.ops.jumpIf(cond, other, false);
+		if (statement) tl.statementPoint(eif);
 		tl.texpr(r, eif);
 		if (eelse == null) {
 			code.markIfUsed(other);
@@ -60,6 +65,7 @@ class TexprFlow {
 		var end = code.newLabel();
 		if (code.reachable()) code.branch(IlOps.BR, end);
 		code.markIfUsed(other);
+		if (statement) tl.statementPoint(eelse);
 		tl.texpr(r, eelse);
 		code.markIfUsed(end);
 	}
@@ -73,11 +79,15 @@ class TexprFlow {
 		tl.loops.push({brk: brk, cont: isDo ? cont : top, tries: tl.tryDepth});
 		try {
 			if (isDo) {
+				tl.statementPoint(body);
 				tl.texpr(RVoid, body);
 				code.markIfUsed(cont);
+				tl.conditionPoint(cond);
 				tl.ops.jumpIf(cond, top, true);
 			} else {
+				tl.conditionPoint(cond);
 				tl.ops.jumpIf(cond, brk, false);
+				tl.statementPoint(body);
 				tl.texpr(RVoid, body);
 				if (code.reachable()) code.branch(IlOps.BR, top);
 			}
@@ -95,10 +105,13 @@ class TexprFlow {
 	// can have, or the typer would want a return after it (the analyzer drops the @:exhaustive of a
 	// `return switch` when it moves the return into the cases). A value none of the cases matches
 	// reaches the end of gencs's C# method, which returns the default value; here it returns it
-	// itself, and the end of the switch is reachable only from the cases.
+	// itself, and the end of the switch is reachable only from the cases. As for an `if`, a statement's
+	// subject and cases have sequence points.
 	function switchExpr(ret:Ret, e:TExpr, subject:TExpr, cases:Array<TSwitchCase>, def:Null<TExpr>):Void {
 		if (def == null && needVal(ret)) throw new Unsupported("switch expressions without a default", true);
 		var r = valueRet(ret, e);
+		var statement = !needVal(ret);
+		if (statement) tl.conditionPoint(subject);
 		var returnsDefault = def == null && ret.match(RReturn) && !tl.ret.match(LVoid);
 		// A switch on enumIndex(x) of a .NET enum is one on x, against the constructors' values.
 		var ext = TexprToIl.externEnumIndex(subject);
@@ -154,11 +167,13 @@ class TexprFlow {
 		code.branch(IlOps.BR, defLabel);
 		for (i in 0...cases.length) {
 			code.markIfUsed(bodies[i]);
+			if (statement) tl.statementPoint(cases[i].expr);
 			tl.texpr(r, cases[i].expr);
 			if (code.reachable()) code.branch(IlOps.BR, end);
 		}
 		if (def != null) {
 			code.mark(defLabel);
+			if (statement) tl.statementPoint(def);
 			tl.texpr(r, def);
 		} else if (returnsDefault) {
 			code.markIfUsed(defLabel);

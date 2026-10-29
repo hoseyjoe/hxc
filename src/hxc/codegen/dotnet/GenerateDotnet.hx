@@ -86,7 +86,7 @@ class DotnetCtx {
 	public function new(ctx:Context, mb:ModuleBuilder) {
 		this.ctx = ctx;
 		this.mb = mb;
-		pdb = ctx.debug ? new PdbBuilder() : null;
+		pdb = ctx.debug ? new PdbBuilder(new PdbPaths(Sys.getCwd())) : null;
 		types = new DotnetTypes(ctx, mb);
 		types.g = this;
 		sigs = new SigWriter(mb.typeToken);

@@ -107,6 +107,9 @@ class IlOps {
 
 typedef Label = Int;
 
+// Where a statement's IL starts, and its position in the source (null: a hidden point).
+typedef SeqPoint = {offset:Int, pos:Null<hxc.ast.Position>};
+
 // An open protected region: where the block and the current handler start, the handler's kind (0 a
 // catch clause, 2 a finally) and caught class, and the clauses of the handlers already ended.
 private typedef TryBlock = {start:Int, end:Int, handler:Int, flags:Int, classToken:Int, clauses:Array<Array<Int>>};
@@ -133,6 +136,9 @@ class IlCode {
 	public var depth(default, null):Int = 0;
 	public var maxStack(default, null):Int = 0;
 
+	// The sequence points in IL order, when the PDB wants them (-debug); null otherwise.
+	public var points:Null<Array<SeqPoint>> = null;
+
 	// `what` names the method in internal errors.
 	public function new(what:String) {
 		this.what = what;
@@ -145,6 +151,15 @@ class IlCode {
 	}
 
 	public inline function reachable():Bool return depth >= 0;
+
+	// A sequence point at the current offset, where reachable code starts on an empty stack. It replaces
+	// one already there, whose statement emitted no IL.
+	public function point(pos:Null<hxc.ast.Position>):Void {
+		if (points == null || depth != 0) return;
+		var p = {offset: code.length, pos: pos};
+		var last = points.length - 1;
+		if (last >= 0 && points[last].offset == p.offset) points[last] = p else points.push(p);
+	}
 
 	function fail(msg:String):Dynamic {
 		throw "internal error: " + msg + " in " + what;

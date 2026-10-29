@@ -100,6 +100,10 @@ class TexprToIl {
 	// The method's Haxe return type where it has one: `return e` casts into it as a store does (texprTo).
 	public var retType:Null<T> = null;
 
+	// Whether lowering records sequence points: under -debug, in the methods that hold the user's
+	// expressions (TclassToIl.emitMethod).
+	public var points = false;
+
 	public function new(g:DotnetCtx, code:IlCode, ret:IlSigNorm) {
 		this.g = g;
 		this.code = code;
@@ -226,6 +230,21 @@ class TexprToIl {
 	// String with a C# cast (unbox.any, castclass), not through Runtime's own toInt, toDouble, toString.
 	function inRuntimeClass():Bool {
 		return cls != null && DotnetTypes.haxePath(TClassDecl(cls)) == "cs.internal.Runtime";
+	}
+
+	// A sequence point at statement `e`, unless it is a block, whose statements have their own, or a `var`
+	// without a value.
+	public function statementPoint(e:TExpr):Void {
+		if (!points) return;
+		switch (e.expr) {
+			case TBlock(_) | TVarExpr(_, null):
+			case _: code.point(e.pos);
+		}
+	}
+
+	// A sequence point at a condition or a switch's subject, inside its parentheses.
+	function conditionPoint(e:TExpr):Void {
+		if (points) code.point(strip(e).pos);
 	}
 
 	public function texpr(ret:Ret, e:TExpr):Void {
@@ -924,6 +943,7 @@ class TexprToIl {
 		for (i in 0...el.length) {
 			var s = el[i];
 			var r = i == el.length - 1 ? ret : RVoid;
+			if (!needVal(r)) statementPoint(s);
 			// The statement giving the block's value fails with the statement around the block: the code
 			// after it expects the value on the stack.
 			if (onError == null || needVal(r)) {

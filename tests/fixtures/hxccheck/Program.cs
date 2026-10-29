@@ -1,8 +1,9 @@
 // Checks assemblies written by hxc's .NET generator.
 //   verify <dll>          ILVerify over method bodies and type definitions
 //   dump <dll> <items>    prints the metadata named by a comma-separated item list (a type name,
-//                         attrs:<type> for its attribute rows, or debugdir for the debug directory and
-//                         the PDB it names)
+//                         attrs:<type> for its attribute rows, debugdir for the debug directory and
+//                         the PDB it names, docs or doc:<name> for the PDB's documents, pdb:<type> for
+//                         the sequence points of a type's methods)
 //   stress-fieldlookup <dll>  calls the assembly's haxe.lang.FieldLookup from many threads at once
 //   stress-arrayforward <dll> makes the first cast of one unserialized array from many threads at once
 using System;
@@ -335,6 +336,18 @@ static class Program {
 		using var pe = new PEReader(File.OpenRead(path));
 		var md = pe.GetMetadataReader();
 		var types = new TypeNames(md);
+		// The PDB, opened and checked by the first item that reads it.
+		MetadataReaderProvider? pdbFile = null;
+		MetadataReader? pdb = null;
+		var opened = false;
+		MetadataReader? Pdb() {
+			if (opened) return pdb;
+			opened = true;
+			pdbFile = OpenPdb(pe, path);
+			pdb = pdbFile?.GetMetadataReader();
+			if (pdb == null) Console.WriteLine("pdb missing"); else CheckPdb(pe, md, pdb);
+			return pdb;
+		}
 		foreach (var item in items.Split(',')) {
 			switch (item) {
 				case "assembly": {
@@ -361,6 +374,25 @@ static class Program {
 				case "debugdir":
 					DumpDebugDirectory(pe, md, path);
 					break;
+				case "docs": {
+					var p = Pdb();
+					if (p == null) break;
+					if (p.Documents.Count == 0) Console.WriteLine("documents none");
+					foreach (var h in p.Documents) Console.WriteLine(DocumentLine(p, h));
+					break;
+				}
+				case var a when a.StartsWith("doc:"): {
+					var p = Pdb();
+					if (p == null) break;
+					var h = p.Documents.FirstOrDefault(d => p.GetString(p.GetDocument(d).Name) == a.Substring(4));
+					Console.WriteLine(h.IsNil ? "missing " + a : DocumentLine(p, h));
+					break;
+				}
+				case var a when a.StartsWith("pdb:"): {
+					var p = Pdb();
+					if (p != null && !DumpSequencePoints(md, p, a.Substring(4))) Console.WriteLine("missing " + a);
+					break;
+				}
 				case var a when a.StartsWith("attrs:"):
 					if (!DumpAttributes(md, types, a.Substring(6))) Console.WriteLine("missing " + a);
 					break;
@@ -369,7 +401,98 @@ static class Program {
 					break;
 			}
 		}
+		pdbFile?.Dispose();
 		return 0;
+	}
+
+	static readonly Guid Sha256Algorithm = new("8829d00f-11b8-4213-878b-770e8597ac16");
+	static readonly Guid CSharpLanguage = new("3f5162f8-07c6-11d3-9053-00c04fa302a1");
+	static readonly Guid EmbeddedSourceKind = new("0e8a571b-6926-466e-b4ad-8ab04611f5fe");
+
+	// The PDB the CodeView entry names, read from beside the DLL, else <name>.pdb there; null for none.
+	static MetadataReaderProvider? OpenPdb(PEReader pe, string path) {
+		var file = Path.GetFileNameWithoutExtension(path) + ".pdb";
+		foreach (var e in pe.ReadDebugDirectory())
+			if (e.Type == DebugDirectoryEntryType.CodeView) file = Path.GetFileName(pe.ReadCodeViewDebugDirectoryData(e).Path);
+		var full = Path.Combine(Path.GetDirectoryName(path)!, file);
+		return File.Exists(full) ? MetadataReaderProvider.FromPortablePdbStream(new MemoryStream(File.ReadAllBytes(full))) : null;
+	}
+
+	// What every dump of a PDB checks, printing `bad pdb: <what>` for each failure: a MethodDebugInformation
+	// row per MethodDef row, and in each method sequence point offsets strictly increasing and inside its
+	// IL, and every document index a Document row.
+	static void CheckPdb(PEReader pe, MetadataReader md, MetadataReader pdb) {
+		if (pdb.GetTableRowCount(TableIndex.MethodDebugInformation) != md.GetTableRowCount(TableIndex.MethodDef)) {
+			Console.WriteLine("bad pdb: MethodDebugInformation rows are not MethodDef's");
+			return;
+		}
+		var docs = pdb.GetTableRowCount(TableIndex.Document);
+		foreach (var mh in md.MethodDefinitions) {
+			var m = md.GetMethodDefinition(mh);
+			var name = TypeName(md, m.GetDeclaringType()) + "::" + md.GetString(m.Name);
+			try {
+				var info = pdb.GetMethodDebugInformation(mh);
+				if (info.SequencePointsBlob.IsNil) continue;
+				var size = m.RelativeVirtualAddress == 0 ? 0 : pe.GetMethodBody(m.RelativeVirtualAddress).GetILBytes()!.Length;
+				var last = -1;
+				foreach (var sp in info.GetSequencePoints()) {
+					if (sp.Offset <= last) Console.WriteLine("bad pdb: " + name + " has offset " + sp.Offset + " after " + last);
+					if (sp.Offset >= size) Console.WriteLine("bad pdb: " + name + " has offset " + sp.Offset + " past its " + size + " bytes of IL");
+					var row = MetadataTokens.GetRowNumber(sp.Document);
+					if (row < 1 || row > docs) Console.WriteLine("bad pdb: " + name + " names document " + row);
+					last = sp.Offset;
+				}
+			} catch (BadImageFormatException e) {
+				Console.WriteLine("bad pdb: " + name + ": " + e.Message);
+			}
+		}
+	}
+
+	// `document <name> <sha256|other> <csharp|language GUID>`, then for an EmbeddedSource entry whether its
+	// text has the document's hash.
+	static string DocumentLine(MetadataReader pdb, DocumentHandle h) {
+		var d = pdb.GetDocument(h);
+		var language = pdb.GetGuid(d.Language);
+		var line = "document " + pdb.GetString(d.Name) + " " + (pdb.GetGuid(d.HashAlgorithm) == Sha256Algorithm ? "sha256" : "other") + " "
+			+ (language == CSharpLanguage ? "csharp" : language.ToString());
+		foreach (var ch in pdb.GetCustomDebugInformation(h)) {
+			var cdi = pdb.GetCustomDebugInformation(ch);
+			if (pdb.GetGuid(cdi.Kind) != EmbeddedSourceKind) continue;
+			// A format of 0 is the text as it is; above 0, the length of the deflated text.
+			var blob = pdb.GetBlobBytes(cdi.Value);
+			var text = blob.AsSpan(4).ToArray();
+			if (BitConverter.ToInt32(blob, 0) > 0) {
+				using var inflated = new MemoryStream();
+				using (var deflate = new System.IO.Compression.DeflateStream(new MemoryStream(text), System.IO.Compression.CompressionMode.Decompress))
+					deflate.CopyTo(inflated);
+				text = inflated.ToArray();
+			}
+			line += SHA256.HashData(text).AsSpan().SequenceEqual(pdb.GetBlobBytes(d.Hash)) ? " embedded ok" : " embedded mismatch";
+		}
+		return line;
+	}
+
+	// `pdb:<type>`: each method of the type that has sequence points, in MethodDef order, then a line per
+	// point in IL order: its document and span, or `hidden`.
+	static bool DumpSequencePoints(MetadataReader md, MetadataReader pdb, string item) {
+		foreach (var h in md.TypeDefinitions) {
+			if (TypeName(md, h) != item) continue;
+			foreach (var mh in md.GetTypeDefinition(h).GetMethods()) {
+				var info = pdb.GetMethodDebugInformation(mh);
+				if (info.SequencePointsBlob.IsNil) continue;
+				Console.WriteLine("method " + item + "::" + md.GetString(md.GetMethodDefinition(mh).Name));
+				foreach (var sp in info.GetSequencePoints()) {
+					if (sp.IsHidden) {
+						Console.WriteLine("  hidden");
+						continue;
+					}
+					var doc = pdb.GetString(pdb.GetDocument(sp.Document).Name);
+					Console.WriteLine("  " + doc + " " + sp.StartLine + ":" + sp.StartColumn + "-" + sp.EndLine + ":" + sp.EndColumn);
+				}
+			}
+			return true;
+		}
+		return false;
 	}
 
 	// `debugdir`: the debug directory's entries in order, each checked against the PDB its CodeView entry

@@ -5,7 +5,9 @@
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
 # [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds]
 # [+ extra hxc args]`, its source, `===`,
-# and the expected result. Each case compiles twice into a fresh directory, and its .dll must be
+# and the expected result. The source goes in the module's file; a source line `//// <path>` starts
+# another file, at <path> relative to the case directory (not in a @gencs case, whose source gencs gets
+# as one file). Each case compiles twice into a fresh directory, and its .dll must be
 # byte-identical between the two, pass ILVerify, run (unless @lib) and dump as expected. A second
 # compile that exits differently from the first is reported as "second compile failed (exit N)", not as
 # nondeterminism; on a real mismatch both copies are kept in $HXC_TEST_TMP/nondeterministic/<case>/{a,b}. A
@@ -251,6 +253,27 @@ has_line() {
 
 failed=0
 total=0
+
+# Writes case source $1 into directory $2: into file $3 up to the first `//// <path>` line, then into
+# each such line's <path> up to the next, every file ending as `printf '%s\n'` would end it.
+write_sources() {
+	local d="$2" f="$3" line part=""
+	if [[ $'\n'"$1" != *$'\n//// '* ]]; then
+		printf '%s\n' "$1" > "$d/$f"
+		return
+	fi
+	while IFS= read -r line; do
+		if [ "${line#//// }" != "$line" ]; then
+			printf '%s' "$part" > "$d/$f"
+			f="${line#//// }"
+			case "$f" in */*) mkdir -p "$d/${f%/*}" ;; esac
+			part=""
+		else
+			part="$part$line"$'\n'
+		fi
+	done <<< "$1"
+	printf '%s' "$part" > "$d/$f"
+}
 
 # The module's source file, relative to a case directory: sets $file.
 source_file() {
@@ -606,7 +629,7 @@ run_case() {
 	local file casedir_m
 	source_file "$module"
 	case "$file" in */*) mkdir -p "$casedir/${file%/*}" ;; *) mkdir "$casedir" ;; esac
-	printf '%s\n' "$source" > "$casedir/$file"
+	write_sources "$source" "$casedir" "$file"
 	paths "$casedir"
 	casedir_m="$path_m"
 

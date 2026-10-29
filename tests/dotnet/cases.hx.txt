@@ -26,6 +26,82 @@ class P {}
 ===
 [dump]
 debugdir none
+# A point per statement, at the condition of an if or while and at a body that is not a block, with
+# 1-based columns and the end column exclusive. The spans are the typer's, as Haxe's: a `var` takes its
+# semicolon, a trace its `trace` identifier and a throw its keyword.
+--- pdb-statements @dump=doc:P.hx,pdb:P + -debug
+class P {
+	static function main() {
+		var a = f();
+		trace(a);
+		if (a > 0) a++;
+		while (a > 0) a--;
+	}
+	static function f() return 1;
+}
+===
+[run]
+P.hx:4: 1
+[dump]
+document P.hx sha256 csharp
+method P::main
+  P.hx 3:3-3:15
+  P.hx 4:3-4:8
+  P.hx 5:7-5:12
+  P.hx 5:14-5:17
+  P.hx 6:10-6:15
+  P.hx 6:17-6:20
+method P::f
+  P.hx 8:22-8:30
+# Under -D keep-inline-positions an inlined function's statements keep their own file, so one method's
+# points name two documents.
+--- pdb-two-documents @dump=doc:P.hx,doc:Q.hx,pdb:P + -debug -D keep-inline-positions
+class P {
+	static function main() {
+		Q.report(2);
+		trace("end");
+	}
+}
+//// Q.hx
+class Q {
+	public static inline function report(x:Int):Void {
+		var y = x * 2;
+		trace(y);
+		trace(y);
+	}
+}
+===
+[run]
+Q.hx:4: 4
+Q.hx:5: 4
+P.hx:4: end
+[dump]
+document P.hx sha256 csharp
+document Q.hx sha256 csharp
+method P::main
+  Q.hx 3:3-3:17
+  Q.hx 4:3-4:8
+  Q.hx 5:3-5:8
+  P.hx 4:3-4:8
+# The code after a throw is dropped, and so is its point; @:analyzer(ignore) keeps the analyzer
+# from dropping it first.
+--- pdb-dead-code @dump=pdb:P + -debug
+class P {
+	@:analyzer(ignore) static function main() {
+		if (Sys.args().length == 0) {
+			throw new haxe.Exception("x");
+			trace("never");
+		}
+	}
+}
+===
+[run]
+Unhandled exception. x
+[exit 127]
+[dump]
+method P::main
+  P.hx 3:7-3:29
+  P.hx 4:4-4:9
 --- runtimeconfig-defaults-to-net10 @runtimeconfig
 class P {
 	static function main() {}

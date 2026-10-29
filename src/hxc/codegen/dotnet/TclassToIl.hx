@@ -2433,6 +2433,12 @@ class TclassToIl {
 		if (!plan.isStd) lower.onError = u -> failures.push(u);
 		lower.cls = plan.c;
 		if (m.hasThis) lower.thisSig = plan.thisSig;
+		// Under -debug, the methods that lower the user's expressions or field initializers have sequence
+		// points; the others, which hxc writes itself, have none.
+		if (g.pdb != null) {
+			code.points = [];
+			lower.points = m.kind.match(MField(_) | MImplicitCtor | MClonedCtor(_) | MStaticCtor(_) | MCctor);
+		}
 		try {
 			g.types.inParams(plan.classParams, [], () -> switch (m.kind) {
 				case MImplicitCtor:
@@ -2536,7 +2542,9 @@ class TclassToIl {
 			stubBody(g, stub.isError ? "hxc dotnet: " + what + ": " + stub.what
 				: "hxc dotnet: " + what + " uses " + stub.what + ", which " + stub.verb() + " not supported yet");
 		} else {
-			code.body(code.locals.length == 0 ? 0 : g.mb.standAloneSig(g.sigs.locals(code.locals)));
+			var localsSig = code.locals.length == 0 ? 0 : g.mb.standAloneSig(g.sigs.locals(code.locals));
+			if (g.pdb != null) g.pdb.method(m.token, localsSig, code);
+			code.body(localsSig);
 		}
 		g.mb.setBody(m.token, body);
 	}
@@ -2573,6 +2581,7 @@ class TclassToIl {
 	// A statement outside any block, reported like a block's own in user code.
 	static function statement(lower:TexprToIl, ret:Ret, e:TExpr):Void {
 		if (lower.onError == null) {
+			lower.statementPoint(e);
 			lower.texpr(ret, e);
 			return;
 		}
