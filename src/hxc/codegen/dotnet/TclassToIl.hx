@@ -600,8 +600,8 @@ class TclassToIl {
 		// gencs's Null<T> has these two ahead of its ToString and constructor.
 		if (isStruct && c == g.runtimeClass("cs.internal._Null.Nullable")) {
 			var surface = nullSurface(c, g.types.toSig(TInst(c, TypeFunctions.extractParamTypes(c.params))));
-			var at = 0;
-			for (m in surface) methods.insert(at++, m);
+			var slot = 0;
+			for (m in surface) methods.insert(slot++, m);
 		}
 		// gencs adds each overload's static constructor in front of the earlier ones, after the main one:
 		// the overloads come in reverse, the main one (listed last) still last.
@@ -1558,7 +1558,7 @@ class TclassToIl {
 				hasThis: false,
 				ret: self,
 				args: [LTypeParam(0)],
-				argNames: ["v"],
+				argNames: ["val"],
 				generics: [],
 				pos: pos,
 				token: 0

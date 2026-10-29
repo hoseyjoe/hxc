@@ -21686,6 +21686,8 @@ class P {
 			if (m.Name == "op_Implicit" && m.GetParameters()[0].ParameterType == cs.system.Type.GetType("System.Int32")) conv = m;
 		if (conv != null) Sys.println(conv.Invoke(null, cs.NativeArray.make((5 : Dynamic))));
 		else Sys.println("no op_Implicit(T)");
+		for (m in ti.GetMethods())
+			if (m.Name == "_ofDynamic") Sys.println(m.Invoke(null, cs.NativeArray.make((5 : Dynamic))));
 	}
 }
 ===
@@ -21694,10 +21696,12 @@ _ofDynamic,ofDynamic,op_Implicit
 False
 true true
 5
+5
 [gencs]
 _ofDynamic,ofDynamic,op_Implicit,op_Implicit
 True
 true true
+5
 5
 # The same surface as metadata, without __NoValue__ (and its op_Implicit), which gencs has, and with
 # hxc's extra public toString() (the runtime method ToString calls).
