@@ -23887,6 +23887,38 @@ I`1 m<T1> n<T2>
 C`1 C_cast<T_c> I_cast<T_c> __hx_cast<T_c_c> m<T1> n<T2> o<T3> o<T> p<U>
 J q<T>
 1 2 3 4 6
+# gencs's counter counts a dynamic generic method (d takes T1, so i is T2) and not a macro one (mm takes nothing,
+# so s is T3).
+--- method-type-param-renamed-skipped-fields @gencs
+class D<T> {
+	public function new() {}
+	public dynamic function d<T>(x:T):T return x;
+	public static macro function mm<T>(e:haxe.macro.Expr):haxe.macro.Expr return e;
+	public function i<T>(x:T):T return x;
+	public static function s<T>(x:T):T return x;
+}
+#if !macro
+class P {
+	static function show(c:Class<Dynamic>) {
+		var t = cs.Lib.toNativeType(c);
+		var out = [];
+		for (m in t.GetMethods()) if (m.IsGenericMethodDefinition && m.DeclaringType == t) {
+			var ps = [for (a in m.GetGenericArguments()) a.Name];
+			out.push(m.Name + "<" + ps.join(",") + ">");
+		}
+		out.sort(Reflect.compare);
+		Sys.println(t.Name + " " + out.join(" "));
+	}
+	static function main() {
+		show(D);
+		Sys.println(new D<Int>().d(1) + new D<Int>().i(2) + D.s(3));
+	}
+}
+#end
+===
+[run]
+D`1 D_cast<T_c> __hx_cast<T_c_c> i<T2> s<T3>
+6
 # A hand-written extern whose .NET method is generic (Ovl.G<T>(T)), called with an argument typed by a type
 # parameter: C# infers T as that type parameter (`call Ovl::G<!0>`, no box), so typeof(T) is the instantiation's
 # type. hxc boxes the value and calls G<object>. F(x:Any) stays F(object), as in gencs.
@@ -23914,6 +23946,28 @@ G<String>
 G<Double>
 G<Object>
 F(object)
+# The declared types bind Ovl.P(object), but C# binds an argument typed by an unconstrained type parameter to
+# Ovl.P<T>(T), whose T is the parameter (identity beats boxing): hxc calls that method, P<!0>, not the declared
+# one.
+--- netlib-extern-type-parameter-argument-other-overload @gencs @netlib=CarLib
+@:native("car.Ovl") extern class O { static function P(x:Any):String; }
+class H<U> {
+	public function new() {}
+	public function p(x:U):String return O.P(x);
+}
+class P {
+	static function main() {
+		Sys.println(new H<Int>().p(1));
+		Sys.println(new H<String>().p("s"));
+		var a:Any = 3;
+		Sys.println(O.P(a));
+	}
+}
+===
+[run]
+P<Int32>
+P<String>
+P(object)
 # A type parameter constrained to String, passed to a hand-written extern's String parameter (Conv.M(string), which
 # has an overload with a Nullable<long> parameter): the argument is the declared parameter's type, not the type
 # parameter, which converts to object alone, so the call keeps binding M(string).
@@ -23934,6 +23988,24 @@ class P {
 [run]
 M(string)
 M(string)
+# A class constraint on a Haxe class's type parameter, passed to an extern's parameter of that class (H has an
+# object and an IComparable overload). Probe of what gencs's C# binds, where it writes no `where`.
+--- netlib-extern-type-parameter-class-constraint-argument @gencs @netlib=CarLib
+import car.*;
+@:native("car.Ovl") extern class O { static function H(x:cs.system.IComparable):String; }
+class K<T:cs.system.IComparable> {
+	public function new() {}
+	public function f(x:T):String return O.H(x);
+}
+class V implements cs.system.IComparable { public function new() {} public function CompareTo(o:Dynamic):Int return 0; }
+class P {
+	static function main() {
+		Sys.println(new K<V>().f(new V()));
+	}
+}
+===
+[run]
+H(IComparable)
 # An argument of an unconstrained type parameter in inline C# to an overloaded .NET method: C# converts T only to
 # object, so Convert.ToString(object) binds, for a constrained method type parameter too (h: gencs writes no
 # `where` for a method's type parameters). f(null : T) is in inline-cs-null-type-param.

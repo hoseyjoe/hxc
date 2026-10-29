@@ -34,6 +34,8 @@ namespace car {
 		public static string H(object o) => "H(object)";
 		public static string H(IComparable o) => "H(IComparable)";
 		public static string Only(object o) => "Only(object)";
+		public static string P(object o) => "P(object)";
+		public static string P<T>(T x) => "P<" + typeof(T).Name + ">";
 	}
 	// g. converts refinements
 	public static class Conv {

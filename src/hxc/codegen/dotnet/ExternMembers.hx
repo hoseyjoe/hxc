@@ -404,21 +404,37 @@ class ExternMembers {
 					case _: null;
 				}
 			}
+			function refuse(args:Array<IlSigNorm>):Void {
+				throw Unsupported.error("the .NET " + what + " depends on the argument types " + list(args)
+					+ (byValue ? ", and " + byValueText : byNull ? ", and " + byNullText : "; declare it with @:overload"));
+			}
 			// Ruling F′: both bind the same method; its type arguments are the arguments' own, as C# infers
-			// them, and `bound` checks the return with them. A type parameter's own type is one of them where
-			// C# binds that method with it (`Ovl.G(x)` is `G<!0>`); where it does not (a Foo parameter, which
-			// the argument is cast to), the declared type stays.
+			// them, and `bound` checks the return with them.
 			var byArgs = argsBy(true);
 			var plain = argsBy(false);
 			if (!IlPaths.sigsEq(byArgs, want)) {
-				var rebound = bindsSame(byArgs);
-				if (rebound == null && !IlPaths.sigsEq(byArgs, plain)) {
-					byArgs = plain;
-					if (!IlPaths.sigsEq(byArgs, want)) rebound = bindsSame(byArgs);
+				// An unconstrained type parameter's own type is among the arguments: C# binds by it (`Ovl.G(x)` is
+				// `G<!0>`), so the method it selects is the one called, whichever the declared types selected. A
+				// constrained one (gencs's C# casts it to the declared type, or its class's `where` selects) keeps
+				// the declared type, as does one no method accepts, where gencs's C# fails (CS1503).
+				var ownType = false;
+				for (i in 0...want.length)
+					if (!IlPaths.sigEq(byArgs[i], plain[i]) && i < call.args.length && !hasConstraint(call.args[i].type)) ownType = true;
+				byValue = false;
+				byNull = false;
+				var r = resolve(links, name, isStatic, byArgs, cf.params.length, caller, receiverStatic, candInst, kinds, false, ownType);
+				var rebound:Null<Bound> = switch (r) {
+					case RBound(b) if (ownType || b.link == found.link && b.index == found.index): b;
+					case _: null;
 				}
-				if (rebound == null && !IlPaths.sigsEq(byArgs, want))
-					throw Unsupported.error("the .NET " + what + " depends on the argument types " + list(byArgs)
-						+ (byValue ? ", and " + byValueText : byNull ? ", and " + byNullText : "; declare it with @:overload"));
+				if (rebound == null) {
+					if (ownType && !r.match(RNone)) refuse(byArgs);
+					byArgs = plain;
+					if (!IlPaths.sigsEq(byArgs, want)) {
+						rebound = bindsSame(byArgs);
+						if (rebound == null) refuse(byArgs);
+					}
+				}
 				if (rebound != null) found = rebound;
 			}
 		}
@@ -715,7 +731,7 @@ class ExternMembers {
 	// may apply (ruling E). A link where none applies or may apply passes to the next. `inst`: the call's
 	// type arguments, which the methods' parameters take (ruling I). `kinds`: the arguments' kinds (ruling X).
 	function resolve(links:Array<{cls:IlClass, parent:IlSigNorm}>, name:String, isStatic:Bool, want:Array<IlSigNorm>,
-			typeParams:Int, caller:Null<TClass>, receiverStatic:Null<Receiver>, inst:Null<Inst>, ?kinds:Array<ArgKind>, closed = false):Resolution {
+			typeParams:Int, caller:Null<TClass>, receiverStatic:Null<Receiver>, inst:Null<Inst>, ?kinds:Array<ArgKind>, closed = false, identity = false):Resolution {
 		for (li in 0...links.length) {
 			var link = links[li];
 			var exact = [], yes = [], unknown = 0;
@@ -734,7 +750,9 @@ class ExternMembers {
 				else if (a.applies == AUnknown) unknown++;
 				else {
 					yes.push(b);
-					if (a.exact) exact.push(b);
+					// `identity`: a generic method whose inferred parameters are the arguments' own types is as good as an
+					// exact one, as C# prefers the identity conversion to boxing (`P<T>(T)` over `P(object)` for a `T`).
+					if (a.exact || identity && a.typeArgs != null && a.params != null && IlPaths.sigsEq(a.params, want)) exact.push(b);
 				}
 			}
 			if (exact.length == 1) return RBound(exact[0]);
@@ -848,6 +866,25 @@ class ExternMembers {
 			}
 		}
 		return null;
+	}
+
+	// Whether `t` is, through Null, a type parameter with a constraint of any kind.
+	static function hasConstraint(t:Null<T>):Bool {
+		for (_ in 0...16) {
+			if (t == null) return false;
+			switch (TypeFunctions.follow(t)) {
+				case TAbstract({path: {pack: [], name: "Null"}}, [inner]):
+					t = inner;
+				case TInst(c, _):
+					return switch (c.kind) {
+						case KTypeParameter(cl): cl.length > 0;
+						case _: false;
+					}
+				case _:
+					return false;
+			}
+		}
+		return false;
 	}
 
 	static function overrides(flags:MethodFlags):Bool
@@ -1056,7 +1093,9 @@ class ExternMembers {
 	// Whether C# converts a `from` to a `to` implicitly (ruling 1, with ruling E's unknowns): yes for
 	// identity, a reference upcast along the metadata's superclasses and interfaces, anything to object,
 	// boxing to a superclass or interface of the value type, the implicit numeric conversions between
-	// primitives, and A to Nullable<A>; a Haxe-compiled class as ruling J says. Unknown where hxc does
+	// primitives, and A to Nullable<A>; a Haxe-compiled class as ruling J says. A type parameter converts to
+	// object and to itself only (hxc writes no constraints, so C# sees none, and `T` to `Nullable<T>` is not
+	// modelled), whatever the target. Unknown where hxc does
 	// not model C#'s rules: Span and ReadOnlySpan, decimal, nint and nuint, Nullable<B> from a value type, a
 	// user-defined conversion that may apply (`implicitMayReach`), an array to a generic interface or another
 	// array, and a variant generic target. A reference type converts to Nullable<B> only by a user-defined

@@ -657,8 +657,9 @@ and `List` copy, and two threads casting one array at once.
          `netlib-extern-basic-argument-cast`). A generic method's type arguments come from
          the arguments' own types, as C# infers them (`T1(x:Any)` with a `MyPlain` is `T1<MyPlain>`, a
          TypeDef or TypeSpec of the program's own module, and with an `x:U` of a Haxe class or method type
-         parameter it is `T1<!0>`, no box; where C# cannot pass a type parameter to the declared parameter
-         type, the declared type stays); where they differ from the declared ones, the
+         parameter it is `T1<!0>`, no box, and the method C# picks for it is the one called, `P<T>(T)` over
+         `P(object)`, or the call is refused; a type parameter with a constraint keeps the declared type, as
+         gencs casts it); where they differ from the declared ones, the
          declared return type must still convert from the method's return with them, or the call is
          refused with the return-mismatch error.
        - **Argument values.** C# also converts by an argument's value, and gencs writes integer literals
