@@ -844,8 +844,9 @@ and `List` copy, and two threads casting one array at once.
        `@:classCode`, the 2 `@:functionCode`s, and the `zlibNative` call the `@:classCode` declared, an
        unknown name) and nativepdf 2. The desktop app's only error is its embedded resources (4c), with
        or without the Avalonia `--net-lib`s (4a: 10). No standard-library method either app calls is
-       stubbed; across the whole std, `cs.Pointer.add` is the one stub left and `haxe.ds.EnumValueMap`
-       the one class left out.
+       stubbed; across the whole std, `cs.Pointer.add` is the one stub left (`haxe.ds.EnumValueMap`, the one
+       class 4b left out, is written since 4c: a final or inline method of a Haxe base class that an interface of
+       a subclass maps to is `virtual final newslot` in its own class, as Roslyn writes it).
      - ILVerify of the server DLL against the deployed assemblies gives only the line gencs's DLL gives
        (`haxe.lang.BoxedPointer`'s unmanaged pointer). The server app's own no-browser export check, run on
        gencs's DLL and on hxc's, prints the same results. The CLR shape of the 24 classes 4a measured and of
@@ -1108,6 +1109,14 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
     `@:skipReflection` to all of them, Haxe's own check only to `(default, default)` ones), so a `@:meta` on the var
     is dropped (`event-meta-on-var-is-dropped`, `event-haxeui-builder-vars-are-not-events`); the attributes of a
     custom event's add_ stay on its private `_add_X`, and those of a field-like event's methods are dropped with them.
+- An `f` literal in inline C# whose double is exactly halfway between two floats is a compile error in hxc
+  (`inline-cs-float-literal-midpoint-is-an-error`: `hxc cannot round this float literal as C# does; write it with
+  fewer digits`). Roslyn rounds the decimal to a float once, so `(double)1.0000000596046447753906250001f` is
+  1.0000001192092896 and the exact midpoint `1.0000000596046447753906250000f` is 1 (round to even). hxc reads the
+  literal as a double first, which would give 1 for both, a silent wrong value; telling the two apart takes the
+  literal's exact decimal value, so hxc refuses every literal that lands on a midpoint, `16777217f` too, which Roslyn
+  rounds right. Every other `f` literal, an exactly representable one included, rounds once and agrees with C#
+  (`inline-cs-float-literal-rounding`). No inline C# in the apps has a float literal.
 
 ## Left to the builder
 

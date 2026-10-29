@@ -144,6 +144,8 @@ class ReflectionMembers {
 			case TDynamic(_): return true;
 			case TMono(m) if (m.type == null): return true;
 			case TInst({kind: KTypeParameter(_)}, _): return true;
+			// gencs's is_dynamic: an anonymous structure that is not a class's, an enum's or an abstract's statics.
+			case TAnon(a) if (!a.status.get().match(Statics(_) | EnumStatics(_) | AbstractStatics(_))): return true;
 			case TAbstract(a, _) if (a.path.pack.length == 0 && a.path.name == "Dynamic"): return true;
 			case _:
 		}

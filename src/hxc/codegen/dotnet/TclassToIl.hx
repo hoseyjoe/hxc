@@ -1376,7 +1376,8 @@ class TclassToIl {
 
 	// The method that implements the method of the interface `iface` with the CLR name `name` and signature
 	// `want`: null when one has that signature (a method of the class itself goes into `own`), else the method
-	// of that name with other types, which a bridge calls.
+	// of that name with other types, which a bridge calls. A final or inline method of a superclass with that
+	// signature stays the implementation, and is made virtual in its class (inheritedFinals).
 	static function findImplementation(g:DotnetCtx, c:TClass, iface:TClass, hxName:String, name:String, want:{args:Array<IlSigNorm>, ret:IlSigNorm},
 			own:ObjectMap<TClassField, Bool>):Null<{cf:TClassField, owner:TClass, params:Array<T>}> {
 		var cur = c;
@@ -1415,7 +1416,7 @@ class TclassToIl {
 						continue;
 					}
 					if (cur == c) own.set(f, true);
-					else if (isFinalMethod(cur, f)) throw new Unsupported("interface methods implemented by a final inherited method", true);
+					else if (isFinalMethod(cur, f)) g.inheritedFinals.set(f, true);
 					return null;
 				}
 				if (cf.overloads.length > 0 || !cf.kind.match(Method(MethNormal | MethInline))) throw other;
@@ -1427,6 +1428,20 @@ class TclassToIl {
 			cur = s.c;
 		}
 		throw new Unsupported("abstract classes that leave interface methods unimplemented", true);
+	}
+
+	// Roslyn's rule for a final or inline method of the program that an interface of a subclass maps to (the
+	// classes were all planned, so the base's flags are known to change only now): the method is `virtual final
+	// newslot` in its own class, as if it implemented the interface there, and the subclass adds nothing.
+	public static function openInheritedFinals(g:DotnetCtx):Void {
+		for (p in g.plans) for (m in p.methods) {
+			var f = switch (m.kind) {
+				case MField(f): f;
+				case _: continue;
+			}
+			if (m.hasThis && m.flags & (MethodAttrs.VIRTUAL | MethodAttrs.STATIC) == 0 && m.flags & 7 == MethodAttrs.PUBLIC && g.inheritedFinals.exists(f))
+				m.flags |= MethodAttrs.VIRTUAL | MethodAttrs.FINAL | MethodAttrs.NEW_SLOT;
+		}
 	}
 
 	// gencs's modifiers: virtual unless final or inline, override without newslot (unless FixOverrides

@@ -73,6 +73,10 @@ class DotnetCtx {
 	public final castNames = new ObjectMap<TClass, Array<String>>();
 	// TclassToIl's overloads that erased interfaces give each class, remembered for the round.
 	public final interfaceOverloads = new ObjectMap<TClass, Array<InterfaceBridge>>();
+	// The final or inline methods a subclass's interface maps to (TclassToIl.findImplementation), which Roslyn
+	// makes `virtual final newslot` in their own class; collected over the round, applied after it
+	// (TclassToIl.openInheritedFinals).
+	public final inheritedFinals = new ObjectMap<TClassField, Bool>();
 	final closureClasses:Array<TClass> = [];
 
 	final stdRoots:Array<String>;
@@ -537,6 +541,7 @@ class GenerateDotnet {
 			g.castParents.clear();
 			g.castNames.clear();
 			g.interfaceOverloads.clear();
+			g.inheritedFinals.clear();
 			g.companions = null;
 			// Enums first, so the classes that refer to one see whether it was left out.
 			for (e in hxEnums) {
@@ -561,6 +566,7 @@ class GenerateDotnet {
 				}
 			}
 		}
+		TclassToIl.openInheritedFinals(g);
 		var plans = [];
 		for (p in g.plans) {
 			plans.push(p);

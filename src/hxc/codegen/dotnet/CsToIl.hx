@@ -812,6 +812,27 @@ class CsToIl {
 		return tl.sig(a.type);
 	}
 
+	// The value of a float literal with the `f` suffix. Roslyn rounds the decimal to a float once; hxc parses
+	// it to a double first, which gives another float when that double lies exactly between two floats (the
+	// decimal was just above or below that midpoint, and the double rounds to even). The exact decimal is not
+	// worth the cost (no inline C# has an f literal), so such a literal is refused, an exact midpoint too.
+	function singleLiteral(digits:String):Float {
+		var d = Std.parseFloat(digits);
+		if (isSingleMidpoint(d)) error("hxc cannot round this float literal as C# does; write it with fewer digits");
+		return d;
+	}
+
+	// Whether the finite double `d` is exactly halfway between two adjacent floats.
+	static function isSingleMidpoint(d:Float):Bool {
+		if (!Math.isFinite(d) || d <= 0) return false;
+		var bits = haxe.io.FPHelper.floatToI32(d);
+		for (n in [bits - 1, bits + 1]) {
+			if (n < 0 || n >= 0x7F800000) continue;
+			if (d == (haxe.io.FPHelper.i32ToFloat(bits) + haxe.io.FPHelper.i32ToFloat(n)) / 2) return true;
+		}
+		return false;
+	}
+
 	function literal(l:CsLiteral):Null<IlSigNorm> {
 		switch (l) {
 			case LInt(s):
@@ -829,7 +850,7 @@ class CsToIl {
 						pushDecimal(d);
 						return decimal;
 					case "f":
-						il.opR4(IlOps.LDC_R4, Std.parseFloat(digits), 0, 1);
+						il.opR4(IlOps.LDC_R4, singleLiteral(digits), 0, 1);
 						return LFloat32;
 					case _:
 						il.opR8(IlOps.LDC_R8, Std.parseFloat(digits), 0, 1);
@@ -1285,7 +1306,7 @@ class CsToIl {
 				var suffix = s.charAt(s.length - 1).toLowerCase();
 				if (suffix == "m") return null;
 				var digits = suffix == "f" || suffix == "d" ? s.substr(0, s.length - 1) : s;
-				return {t: suffix == "f" ? LFloat32 : LFloat64, i: 0, f: Std.parseFloat(digits)};
+				return {t: suffix == "f" ? LFloat32 : LFloat64, i: 0, f: suffix == "f" ? singleLiteral(digits) : Std.parseFloat(digits)};
 			case CPlaceholder(n) if (n < args.length):
 				var t = tl.sig(args[n].type);
 				return switch (strip(args[n]).expr) {

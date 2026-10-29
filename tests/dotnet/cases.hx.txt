@@ -1116,7 +1116,6 @@ class P {
 ===
 [compile]
 P.hx:4: lines 4-7 : dotnet: interface methods implemented with other parameter types are not supported yet
-P.hx:15: characters 1-54 : dotnet: interface methods implemented by a final inherited method are not supported yet
 P.hx:24: characters 10-41 : dotnet: structs that extend a class are not supported yet
 P.hx:26: characters 2-23 : dotnet: instance variable initializers in structs are not supported yet
 P.hx:30: lines 30-32 : dotnet: struct constructors without arguments that do something are not supported yet
@@ -24061,3 +24060,166 @@ class P {
 s 1
 s 1
 haxe.ds.IntMap`1[System.Int32]
+# An interface a subclass lists, implemented by a final or inline method of its Haxe superclass. Roslyn makes
+# such a method of the same compilation `virtual final newslot` (B.m implements I in B already; B.n and the inline
+# B.k implement J and K only for D) and adds no stub, so a call through the interface reaches it. Replaces
+# FromFinal's error line in class-and-struct-declaration-errors.
+--- iface-method-inherited-final @gencs
+interface I { function m():Int; }
+interface J { function n():Int; }
+class B implements I {
+	public function new() {}
+	public final function m():Int return 1;
+	public final function n():Int return 2;
+	public inline function k():Int return 3;
+}
+interface K { function k():Int; }
+class D extends B implements I implements J implements K { public function new() super(); }
+class P {
+	static function main() {
+		var i:I = new D(), j:J = new D(), k:K = new D();
+		Sys.println(i.m() + " " + j.n() + " " + k.k());
+	}
+}
+===
+[run]
+1 2 3
+# The same two levels up, and what C# and reflection see of it: the method B.n a subclass of a subclass lists an
+# interface for is `virtual final` (IsVirtual and IsFinal, the slot of the interface method), as is the inline
+# one; a final method nothing lists stays non-virtual, and a call by the class (D.n, E.n) still reaches B's. The
+# interface method of a generic interface is bound through the base's type arguments.
+--- iface-method-inherited-final-two-levels-and-reflection @gencs
+interface J { function n():Int; }
+interface G<T> { function g(x:T):T; }
+class B {
+	public function new() {}
+	public final function n():Int return 2;
+	public inline function k():Int return 3;
+	public final function g(x:Int):Int return x + 1;
+	public final function plain():Int return 4;
+}
+class D extends B {
+	public function new() super();
+}
+class E extends D implements J implements G<Int> {
+	public function new() super();
+}
+interface K { function k():Int; }
+class F extends E implements K {
+	public function new() super();
+}
+class P {
+	static function main() {
+		var e = new E();
+		var j:J = e, g:G<Int> = e, k:K = new F();
+		Sys.println(j.n() + " " + g.g(5) + " " + k.k() + " " + e.n() + " " + e.plain());
+		var t = cs.Lib.toNativeType(B);
+		for (n in ["n", "k", "g", "plain"]) {
+			var m = t.GetMethod(n);
+			Sys.println(n + " virtual=" + m.IsVirtual + " final=" + m.IsFinal);
+		}
+	}
+}
+===
+[run]
+2 6 3 2 4
+n virtual=true final=true
+k virtual=true final=true
+g virtual=true final=true
+plain virtual=false final=false
+# haxe.ds.EnumValueMap re-lists IMap, whose keyValueIterator BalancedTree implements with an inline method
+# (virtual final newslot in BalancedTree, in hxc's DLL as in gencs's). A call through IMap keeps it; hxc used to
+# leave EnumValueMap out ("a final inherited method"), which -dce no showed as the one std class left out.
+--- enum-value-map-imap-key-value-iterator @gencs
+enum E { A; B(x:Int); }
+class P { static function main() {
+  var m:haxe.Constraints.IMap<E, Int> = new haxe.ds.EnumValueMap<E, Int>();
+  m.set(B(2), 2); m.set(A, 1);
+  for (k => v in m) Sys.println(k + " " + v);
+  var it = m.keyValueIterator(); Sys.println(it.hasNext());
+} }
+===
+[run]
+A 1
+B(2) 2
+True
+# gencs's real output for these three, one rounding too many in hxc's fold of the first (SILENT before ruling 15):
+#   (double)1.0000000596046447753906250001f   1.0000001192092896   (hxc: 1; the double rounds to the float midpoint
+#                                                                 1 + 2^-24 and then to even)
+#   (double)1.0000000596046447753906250000f   1                    (exactly the midpoint, which rounds to even)
+#   (double)0.1f                              0.10000000149011612
+# Ruling 15: a literal whose double is a float32 rounding midpoint is refused (inline-cs-float-literal-midpoint-
+# is-an-error); the others round once and agree with C#, including an exactly representable one.
+--- inline-cs-float-literal-rounding
+class P {
+	static function main() {
+		var c:Float = untyped __cs__("(double)0.1f");
+		var e:Float = untyped __cs__("(double)0.5f");
+		var n:Float = untyped __cs__("(double)1.00000011920928955078125f");
+		var m:Float = untyped __cs__("(double)1.00000006f");
+		var k:Float = untyped __cs__("(double)16777218f");
+		Sys.println(c + " " + e + " " + n + " " + m + " " + k);
+	}
+}
+===
+[run]
+0.10000000149011612 0.5 1.0000001192092896 1.0000001192092896 16777218
+# The literals whose double is a float32 midpoint: the one just above (gencs prints 1.0000001192092896), the exact
+# midpoint and 16777217f (gencs prints 1 and 16777216, rounding once to even; hxc cannot tell them from the first
+# without the literal's exact value, so it refuses all three), as a bare literal and folded into a constant.
+--- inline-cs-float-literal-midpoint-is-an-error
+class P {
+	static function main() {
+		var a:Float = untyped __cs__("(double)1.0000000596046447753906250001f");
+		var b:Float = untyped __cs__("(double)1.0000000596046447753906250000f");
+		var c:Float = untyped __cs__("16777217f");
+		var d:Float = untyped __cs__("(double)(1.0000000596046447753906250001f + 1)");
+		Sys.println(a + b + c + d);
+	}
+}
+===
+[compile]
+P.hx:3: characters 25-74 : dotnet: hxc cannot round this float literal as C# does; write it with fewer digits
+P.hx:4: characters 25-74 : dotnet: hxc cannot round this float literal as C# does; write it with fewer digits
+P.hx:5: characters 25-44 : dotnet: hxc cannot round this float literal as C# does; write it with fewer digits
+P.hx:6: characters 25-80 : dotnet: hxc cannot round this float literal as C# does; write it with fewer digits
+# A class whose only float-like reflection candidates are anonymous-structure fields gets gencs's own
+# __hx_getField_f/__hx_setField_f overrides (gencs's is_dynamic counts a TAnon that isn't class/enum statics),
+# so reflection sees the override declared by the class, as gencs's. Behaviour was already the same (both throw on
+# the Float read and accept the Float write). Ruling 19.
+--- reflect-getfield-f-anon-field @gencs
+typedef Pt = {x:Int};
+class C {
+	public var p:Pt;
+	public function new() {
+		p = {x: 1};
+	}
+}
+class P {
+	static function main() {
+		var t:cs.system.Type = cs.system.Type.GetType("C");
+		var m = t.GetMethod("__hx_getField_f");
+		Sys.println(m.DeclaringType.FullName);
+		var d:Dynamic = new C();
+		try {
+			var g:Float = d.p;
+			Sys.println(g);
+		} catch (e:Dynamic) {
+			Sys.println("threw " + Type.getClassName(Type.getClass(e)));
+		}
+		d.p = 3.5;
+		Sys.println(d.p);
+		var c:C = d;
+		Sys.println(Std.string((cast c.p : Dynamic)));
+		Sys.println(Reflect.field(d, "p"));
+		Sys.println(Reflect.fields(d).join(","));
+	}
+}
+===
+[run]
+C
+threw System.NullReferenceException
+3.5
+3.5
+3.5
+p
