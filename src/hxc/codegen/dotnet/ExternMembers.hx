@@ -364,7 +364,13 @@ class ExternMembers {
 		byValue = false;
 		byNull = false;
 		var what = isCtor ? "constructor of " + typeS(start) : "overload of " + typeS(start) + "." + name;
-		inline function list(l:Array<IlSigNorm>) return "(" + [for (s in l) sigS(s)].join(", ") + ")";
+		// A type parameter is named as Haxe names it, not `!0`: the declared types' are the extern class's and
+		// method's, the arguments' own types' are those of the code making the call.
+		inline function named(p:TypedTypeParam):IlSigNorm return LClass({ns: [], nested: [], name: p.name}, []);
+		inline function listIn(l:Array<IlSigNorm>, classParams:TypeParams, methodParams:TypeParams)
+			return "(" + [for (s in l) sigS(DotnetTypes.substitute(s, [for (p in classParams) named(p)], [for (p in methodParams) named(p)]))].join(", ") + ")";
+		inline function list(l:Array<IlSigNorm>) return listIn(l, c.params, cf.params);
+		inline function listOwn(l:Array<IlSigNorm>) return listIn(l, types.currentClassParams(), types.currentMethodParams());
 		var found = switch (resolve(links, name, isStatic, want, cf.params.length, caller, receiverStatic, candInst, kinds)) {
 			case RBound(b):
 				b;
@@ -408,7 +414,7 @@ class ExternMembers {
 				}
 			}
 			function refuse(args:Array<IlSigNorm>):Void {
-				throw Unsupported.error("the .NET " + what + " depends on the argument types " + list(args)
+				throw Unsupported.error("the .NET " + what + " depends on the argument types " + listOwn(args)
 					+ (byValue ? ", and " + byValueText : byNull ? ", and " + byNullText : "; declare it with @:overload"));
 			}
 			// Ruling F′: both bind the same method; its type arguments are the arguments' own, as C# infers

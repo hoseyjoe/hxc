@@ -24000,7 +24000,7 @@ class P {
 }
 ===
 [compile]
-P.hx:4: characters 39-48 : dotnet: the .NET overload of car.Ovl.R depends on the argument types (!0, !0); declare it with @:overload
+P.hx:4: characters 39-48 : dotnet: the .NET overload of car.Ovl.R depends on the argument types (U, U); declare it with @:overload
 # A type parameter constrained to String, passed to a hand-written extern's String parameter (Conv.M(string), which
 # has an overload with a Nullable<long> parameter): the argument is the declared parameter's type, not the type
 # parameter, which converts to object alone, so the call keeps binding M(string).
