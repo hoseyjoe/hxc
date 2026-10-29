@@ -18,6 +18,9 @@ class ModuleBuilder {
 	public final tables = new MetaTables();
 	// Method bodies; a MethodDef's RVA is PeWriter.IL_RVA plus its body's offset here.
 	public final il = new IlBytes();
+	// The manifest resources' data, each entry a 4-byte length and the bytes,
+	// padded to 8; a ManifestResource row's Offset points at its entry (ECMA-335 II.22.24).
+	public final resources = new IlBytes();
 
 	final name:String;
 	final isDll:Bool;
@@ -61,6 +64,15 @@ class ModuleBuilder {
 		row = tables.assemblyRef.length;
 		assemblyRefs.set(id.name, row);
 		return row;
+	}
+
+	// A public ManifestResource row for `data`, embedded in this file; Roslyn pads every entry to 8 bytes from
+	// the blob's start, the last one too.
+	public function manifestResource(name:String, data:Bytes):Void {
+		tables.manifestResource.push([resources.length, 1, heaps.strings.add(name), 0]);
+		resources.u32(data.length);
+		resources.bytes(data);
+		resources.align(8);
 	}
 
 	public static inline function row(token:Int):Int return token & 0xFFFFFF;
@@ -334,6 +346,7 @@ class ModuleBuilder {
 			metadata: md.bytes,
 			mvidOffset: md.mvidOffset,
 			il: il.getBytes(),
+			resources: resources.getBytes(),
 			entryPoint: entryPoint,
 			isDll: isDll
 		});

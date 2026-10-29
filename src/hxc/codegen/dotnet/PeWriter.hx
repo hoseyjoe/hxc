@@ -3,8 +3,9 @@ package hxc.codegen.dotnet;
 import haxe.io.Bytes;
 
 // The PE32 image around the IL and metadata (ECMA-335 II.25): headers, a .text section holding the
-// IAT, CLI header, IL, metadata, mscoree import and entry stub, and a .reloc section fixing up the
-// stub. The MVID and timestamp come from a SHA-256 of the image, as in Roslyn's deterministic mode.
+// IAT, CLI header, IL, metadata, manifest resources, mscoree import and entry stub, and a .reloc section
+// fixing up the stub. The MVID and timestamp come from a SHA-256 of the image, as in Roslyn's deterministic
+// mode.
 
 class PeWriter {
 	// Where `il` starts: right after the 8-byte IAT and the 72-byte CLI header.
@@ -28,10 +29,12 @@ class PeWriter {
 		return (v + n - 1) & ~(n - 1);
 	}
 
-	public static function write(img:{metadata:Bytes, mvidOffset:Int, il:Bytes, entryPoint:Int, isDll:Bool}):Bytes {
+	public static function write(img:{metadata:Bytes, mvidOffset:Int, il:Bytes, resources:Bytes, entryPoint:Int, isDll:Bool}):Bytes {
 		var imageBase = img.isDll ? 0x10000000 : 0x400000;
 		var metadataRva = alignUp(IL_RVA + img.il.length, 4);
-		var importRva = alignUp(metadataRva + img.metadata.length, 4);
+		// The resources blob follows the metadata, as Roslyn places it; with none, nothing moves.
+		var resourcesRva = alignUp(metadataRva + img.metadata.length, 4);
+		var importRva = alignUp(resourcesRva + img.resources.length, 4);
 		var lookupRva = importRva + 40;
 		var hintNameRva = lookupRva + 8;
 		var dllNameRva = hintNameRva + 14;
@@ -135,13 +138,19 @@ class PeWriter {
 		b.u32(img.metadata.length);
 		b.u32(1); // COMIMAGE_FLAGS_ILONLY
 		b.u32(img.entryPoint);
-		for (_ in 0...12) b.u32(0); // resources, strong name, code manager, vtable fixups, exports, native header
+		var hasResources = img.resources.length > 0;
+		b.u32(hasResources ? resourcesRva : 0);
+		b.u32(img.resources.length);
+		for (_ in 0...10) b.u32(0); // strong name, code manager, vtable fixups, exports, native header
 		at(IL_RVA);
 		b.bytes(img.il);
 		b.align(4);
 		at(metadataRva);
 		var metadataPos = b.length;
 		b.bytes(img.metadata);
+		b.align(4);
+		at(resourcesRva);
+		b.bytes(img.resources);
 		b.align(4);
 		at(importRva);
 		b.u32(lookupRva);

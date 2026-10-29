@@ -24,6 +24,7 @@ class CodedIndex {
 	static final typeOrMethodDefTables = [T.ITypeDef, T.IMethod];
 	static final hasConstantTables = [T.IField, T.IParam, T.IProperty];
 	static final hasSemanticsTables = [T.IEvent, T.IProperty];
+	static final implementationTables = [T.IFile, T.IAssemblyRef, T.IExportedType];
 
 	public static function tables(kind:Int):Array<Int> {
 		return switch (kind) {
@@ -36,6 +37,7 @@ class CodedIndex {
 			case T.ITypeOrMethodDef: typeOrMethodDefTables;
 			case T.IHasConstant: hasConstantTables;
 			case T.IHasSemantics: hasSemanticsTables;
+			case T.IImplementation: implementationTables;
 			case _: throw "unsupported coded index " + kind;
 		}
 	}
@@ -105,6 +107,7 @@ class MetaTables {
 	public final typeSpec:Array<Row> = [];
 	public final assembly:Array<Row> = [];
 	public final assemblyRef:Array<Row> = [];
+	public final manifestResource:Array<Row> = [];
 	public final genericParam:Array<Row> = [];
 	public final methodSpec:Array<Row> = [];
 	public final genericParamConstraint:Array<Row> = [];
@@ -135,6 +138,8 @@ class MetaTables {
 			{table: T.ITypeSpec, rows: typeSpec, schema: [BLOB]},
 			{table: T.IAssembly, rows: assembly, schema: [U32, U16, U16, U16, U16, U32, BLOB, STR, STR]},
 			{table: T.IAssemblyRef, rows: assemblyRef, schema: [U16, U16, U16, U16, U32, BLOB, STR, STR, BLOB]},
+			// Offset in the resources blob, flags, name, and the file holding it (0: this one).
+			{table: T.IManifestResource, rows: manifestResource, schema: [U32, U32, STR, T.IImplementation]},
 			{table: T.IGenericParam, rows: genericParam, schema: [U16, U16, T.ITypeOrMethodDef, STR]},
 			{table: T.IMethodSpec, rows: methodSpec, schema: [T.IMethodDefOrRef, BLOB]},
 			{table: T.IGenericParamConstraint, rows: genericParamConstraint, schema: [T.IGenericParam, T.ITypeDefOrRef]},

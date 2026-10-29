@@ -20,5 +20,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="src/**/*.cs" />
+    <EmbeddedResource Include="src/Resources/**" LogicalName="src.Resources.$([System.String]::Copy('%(RecursiveDir)%(Filename)%(Extension)').Replace('\','/'))" />
   </ItemGroup>
 </Project>

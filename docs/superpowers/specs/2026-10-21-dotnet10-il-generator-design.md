@@ -535,10 +535,10 @@ and `List` copy, and two threads casting one array at once.
 - **Attributes**: `@:strict(...)` and `@:meta(...)` become CustomAttribute rows with properly encoded
   blobs, typed against the referenced assemblies.
 - **Resources**: Haxe `-resource` files and a macro's `Context.addResource` resources become manifest
-  resources, named so `haxe.Resource` works.
-  A `-D dotnet-embed=<file>@<name>` define (repeatable) embeds a raw file under an exact manifest
-  name, so `TutorialTools.hx` keeps finding `coach.bin` / `tutorials.bin` through
-  `GetManifestResourceNames()`. *(My call.)*
+  resources, named so `haxe.Resource` works and C# reads them with `GetManifestResourceStream`. There is no
+  `-D dotnet-embed` (4c ruling 8): `TutorialTools.hx` finds `coach.bin` / `tutorials.bin` in
+  `GetManifestResourceNames()` by `endsWith`, which `src.Resources.coach.bin` satisfies, so the server app's
+  hxml gains two `-resource` lines (an owner change).
 - **What `HaxeServer.csproj` does besides compiling** *(my call)*: its package references (PDFsharp,
   PuppeteerSharp, PemUtils, System.Text.Json, …) and project references (Database,
   Database_Single, EPPlus) move to `cs/Server`'s project, which references the prebuilt
@@ -574,8 +574,8 @@ and `List` copy, and two threads casting one array at once.
    divergences (the 8314 forward, the parent casts, and the paths left working).
 4. **Interop.** `@:nativeGen`, attributes, properties, nullability, delegates/events, overloads,
    generics that cross into referenced assemblies, the inline-C# subset, the indexers gencs gives a
-   class with `__get`/`__set` (`Array`'s companion indexer among them), manifest resources (embedded resources, `-resource` or
-   `Context.addResource`, are a compile error until then). It is split into three plans:
+   class with `__get`/`__set` (`Array`'s companion indexer among them), manifest resources (`-resource` and
+   `Context.addResource`). It is split into three plans:
    - **4a (done):** what the server app and the desktop app need from referenced assemblies to
      lower: `System.Nullable<T>`, `null` into a .NET value type (`default(T)`, as gencs gives it) and
      `==` against `null` on one; generic .NET method overloads; nested .NET types, and types that no
@@ -855,7 +855,7 @@ and `List` copy, and two threads casting one array at once.
        an abstract reaches its impl class only, not the abstract.
    - **4c:** `@:nativeGen` details, attributes (`@:strict`, `@:meta`), nullability metadata for the AI
      tool schemas, events defined in Haxe (`@:event` vars), manifest resources (`-resource`,
-     `Context.addResource`, `-D dotnet-embed`), milestone 4's exit below, and the carried items.
+     `Context.addResource`), milestone 4's exit below, and the carried items.
      Attributes are written: each `@:meta` entry (StrictMeta rewrites `@:strict` into one, and its
      `@:cs.assemblyStrict` into `@:cs.assemblyMeta`) is a CustomAttribute row on the member gencs's C# puts
      it on, in meta order, with C#'s type lookup, constructor choice and Roslyn's blob, Type and enum names
@@ -891,6 +891,16 @@ and `List` copy, and two threads casting one array at once.
      `@:nativeGen` class (gencs writes its `where` clause, hxc no constraints), are errors. Events are not
      written yet, with no error: hxc compiles the class without them (an `@:event` var's `add_` and `remove_` methods are plain methods), where gencs
      writes a C# `event`, so .NET reflection sees no event.
+     Resources are manifest resources (ruling 8): each is named `src.Resources.` plus its name as
+     `haxe.Resource` escapes it at run time (`Path.escape(name, true)`, per UTF-16 code unit: every unit but
+     `A-Z a-z 0-9 _ . / \` becomes `-x<code>`), which is gencs's name for every ASCII name without `\`. The
+     ManifestResource rows (public, in this file) go in `resourceFoldOrder()`, the order hxcs passes them to csc,
+     and the blob follows the metadata as Roslyn's does: each entry a 4-byte length and the bytes, padded to 8
+     bytes, the last one included; the CLI header's Resources directory points at it, and a DLL without
+     resources is unchanged. `haxe.Resource.content` lists the names in the reverse of that order, an empty
+     array when there are none, as gencs's `static Resource()` does. Two names with one manifest name are an
+     error. The desktop app's build depends on the macro-API fix (ruling 9): 158 of its 217 resources come from
+     haxeui-core's macros, which hxc's `Context.addResource` used to drop.
      The carried items:
      - covariant-return `@:overload` overrides, and gencs's `T1` renaming of a shadowing method type
        parameter;
@@ -1002,6 +1012,12 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   DLL and not against hxc's; nothing real writes it, and C# code that passes a `bool` to a Haxe `?b:Bool`
   parameter works in both. Reflection sees one `op_Implicit` and no nested type, where gencs's shows two and
   `__NoValue__`. hxc keeps its extra public `toString()`, the method `ToString` calls.
+- A resource name with a non-ASCII character or a `\` is found by `haxe.Resource` in hxc
+  (`resource-non-ascii-name`, `resource-backslash-name`). gencs escapes the name's UTF-8 bytes into the file
+  name (`é` is `-x195-x169`) and turns `\` into `-x92`, where `haxe.Resource` escapes the UTF-16 code units at
+  run time (`é` is `-x233`) and keeps `\`, so under gencs `listNames()` lists the name and `getString` returns
+  null. hxc names the manifest resource the way the runtime looks it up, so `GetManifestResourceNames()`
+  differs from gencs's for those names only.
 
 ## Left to the builder
 

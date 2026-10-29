@@ -57,34 +57,29 @@ class P {
 ===
 [compile]
 dotnet: -D dotnet-version must be a whole number, 10 or later, like 11 (not net11.0)
-# Embedded resources (-resource, or a macro's Context.addResource) are not supported yet (manifest
-# resources are milestone 4), so they are one error, without a position, collected with the build's
-# other errors.
---- resource-is-an-error + --resource P.hx@first --resource P.hx@second
-class P {
-	static function main() {
-		untyped __cs__("x");
-	}
-}
-===
-[compile]
-dotnet: embedded resources (-resource or Context.addResource) are not supported with -D dotnet until milestone 4
-P.hx:3: characters 11-22 : dotnet: the inline C# name x is no local, member or type here (C# error CS0103)
-# A resource a macro adds reaches the backend now, so it gives the same error (Task 8 lifts it).
---- resource-macro-is-an-error
+# A resource an expression macro adds while main is typed is a manifest resource too (the module binds it), so
+# the program reads it at run time.
+--- resource-expression-macro @gencs
 import haxe.macro.Context;
 class P {
 	static macro function add() {
 		Context.addResource("added", haxe.io.Bytes.ofString("x"));
 		return macro null;
 	}
+	#if !macro
 	static function main() {
 		add();
+		Sys.println(haxe.Resource.listNames());
+		Sys.println(haxe.Resource.getString("added"));
+		Sys.println(cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames()[0]);
 	}
+	#end
 }
 ===
-[compile]
-dotnet: embedded resources (-resource or Context.addResource) are not supported with -D dotnet until milestone 4
+[run]
+[added]
+x
+src.Resources.added
 --- hello @gencs @stress-fieldlookup
 class P {
 	static function main() {
@@ -21782,3 +21777,308 @@ haxe.lang.BoxedPointer::.ctor: UnmanagedPointer Unmanaged pointers are not a ver
 type public beforefieldinit haxe.lang.BoxedPointer extends [mscorlib]System.Object
   field public void* value
   method public hidebysig specialname rtspecialname void .ctor(void*)
+
+# Manifest resources (4c). With no resource, haxe.Resource.content is still an empty array: gencs always
+# assigns it in Resource's static constructor. hxc at 7df87731 leaves it null, so listNames() throws.
+--- resource-list-names-empty @gencs
+class P {
+	static function main() {
+		Sys.println(haxe.Resource.listNames());
+		Sys.println(haxe.Resource.getString("x") == null);
+		Sys.println(haxe.Resource.getBytes("x") == null);
+		Sys.println(cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames().Length);
+	}
+}
+===
+[run]
+[]
+True
+True
+0
+
+# -resource files: each is the manifest resource "src.Resources." + the name escaped as haxe.Resource escapes it
+# (Path.escape(name, true): every UTF-16 code unit but A-Z a-z 0-9 _ . / \ becomes -x<code>), so a name with
+# slashes, dots or "Resources." in it round-trips. gencs.csproj.in embeds gencs's src/Resources under the names
+# hxcs gives csc. The harness writes P.hx with a final empty line: 555 bytes.
+--- resource-file-names @gencs + --resource P.hx@P.hx --resource P.hx@dir/sub/p.txt --resource P.hx@with-dash.and.dots --resource P.hx@.leading --resource P.hx@UPPER --resource P.hx@x/Resources.y --resource P.hx@Resources.x --resource P.hx@a_b
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		Sys.println(names);
+		for (n in names) {
+			var b = haxe.Resource.getBytes(n);
+			Sys.println(n + " " + (haxe.Resource.getString(n) == b.toString()) + " " + b.length + " " + haxe.crypto.Md5.make(b).toHex());
+		}
+		var asm = cs.Lib.toNativeType(P).Assembly;
+		var mn = asm.GetManifestResourceNames();
+		var all = [for (i in 0...mn.Length) mn[i]];
+		all.sort(Reflect.compare);
+		for (n in all) Sys.println("manifest " + n + " " + asm.GetManifestResourceStream(n).Length);
+	}
+}
+===
+[run]
+[a_b,dir/sub/p.txt,x/Resources.y,.leading,P.hx,Resources.x,with-dash.and.dots,UPPER]
+a_b true 555 3bf2ab71147534750ecceb943696bb8d
+dir/sub/p.txt true 555 3bf2ab71147534750ecceb943696bb8d
+x/Resources.y true 555 3bf2ab71147534750ecceb943696bb8d
+.leading true 555 3bf2ab71147534750ecceb943696bb8d
+P.hx true 555 3bf2ab71147534750ecceb943696bb8d
+Resources.x true 555 3bf2ab71147534750ecceb943696bb8d
+with-dash.and.dots true 555 3bf2ab71147534750ecceb943696bb8d
+UPPER true 555 3bf2ab71147534750ecceb943696bb8d
+manifest src.Resources..leading 555
+manifest src.Resources.P.hx 555
+manifest src.Resources.Resources.x 555
+manifest src.Resources.UPPER 555
+manifest src.Resources.a_b 555
+manifest src.Resources.dir/sub/p.txt 555
+manifest src.Resources.with-x45dash.and.dots 555
+manifest src.Resources.x/Resources.y 555
+
+# A macro's Context.addResource: binary data (all 256 byte values), an empty resource, a UTF-8 BOM (kept:
+# getString does not strip it), CRLF, and a nested name, read back through haxe.Resource and through
+# Assembly.GetManifestResourceStream. hxc at 7df87731 drops macro resources silently (EvalStdLib
+# add_resource writes only the interpreter's own map), compiles with no error and throws in listNames.
+--- resource-macro-binary @gencs + --macro P.addRes()
+
+#if macro
+class P {
+	static function addRes() {
+		var all = haxe.io.Bytes.alloc(256);
+		for (i in 0...256) all.set(i, i);
+		haxe.macro.Context.addResource("all256.bin", all);
+		haxe.macro.Context.addResource("empty", haxe.io.Bytes.alloc(0));
+		haxe.macro.Context.addResource("bom.txt", haxe.io.Bytes.ofHex("efbbbf626f6d"));
+		haxe.macro.Context.addResource("utf8.txt", haxe.io.Bytes.ofString("h\u00e9llo \u20ac \u{1F600}\r\n"));
+		haxe.macro.Context.addResource("dir/sub/deep.bin", all.sub(128, 128));
+	}
+}
+
+#else
+class P {
+	static function hex(b:haxe.io.Bytes):String {
+		return b == null ? "null" : b.length + ":" + haxe.crypto.Md5.make(b).toHex();
+	}
+	static function main() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		for (n in names) Sys.println(n + " " + hex(haxe.Resource.getBytes(n)));
+		var all = haxe.Resource.getBytes("all256.bin");
+		var ok = all.length == 256;
+		for (i in 0...256) if (all.get(i) != i) ok = false;
+		Sys.println("all256 " + ok);
+		var s = haxe.Resource.getString("utf8.txt");
+		Sys.println("utf8 " + s.length + " " + StringTools.urlEncode(s));
+		var bom = haxe.Resource.getString("bom.txt");
+		Sys.println("bom " + bom.length + " " + bom.charCodeAt(0));
+		Sys.println("empty [" + haxe.Resource.getString("empty") + "] " + hex(haxe.Resource.getBytes("empty")));
+		// What C# code reading the assembly's manifest resources sees.
+		var asm = cs.Lib.toNativeType(P).Assembly;
+		var mn = asm.GetManifestResourceNames();
+		var sorted = [for (i in 0...mn.Length) mn[i]];
+		sorted.sort(Reflect.compare);
+		for (n in sorted) {
+			var st = asm.GetManifestResourceStream(n);
+			var buf = new cs.NativeArray<cs.types.UInt8>(cast st.Length);
+			var got = st.Read(buf, 0, buf.Length);
+			Sys.println("manifest " + n + " " + hex(haxe.io.Bytes.ofData(buf)) + " read=" + got);
+		}
+		var info = asm.GetManifestResourceInfo("src.Resources.all256.bin");
+		Sys.println("location " + info.ResourceLocation);
+	}
+}
+
+#end
+===
+[run]
+all256.bin 256:e2c865db4162bed963bfaa9ef6ac18f0
+bom.txt 6:4fa45acfff78d2b05847562a7640f90c
+dir/sub/deep.bin 128:16f404156c0500ac48efa2d3abc5fbcf
+empty 0:d41d8cd98f00b204e9800998ecf8427e
+utf8.txt 17:9611a2976038f372c8566861b47673a9
+all256 true
+utf8 12 h%C3%A9llo%20%E2%82%AC%20%F0%9F%98%80%0D%0A
+bom 4 65279
+empty [] 0:d41d8cd98f00b204e9800998ecf8427e
+manifest src.Resources.all256.bin 256:e2c865db4162bed963bfaa9ef6ac18f0 read=256
+manifest src.Resources.bom.txt 6:4fa45acfff78d2b05847562a7640f90c read=6
+manifest src.Resources.dir/sub/deep.bin 128:16f404156c0500ac48efa2d3abc5fbcf read=128
+manifest src.Resources.empty 0:d41d8cd98f00b204e9800998ecf8427e read=0
+manifest src.Resources.utf8.txt 17:9611a2976038f372c8566861b47673a9 read=17
+location Embedded, ContainedInManifestFile
+
+# listNames() is the reverse of the order OCaml's Hashtbl.iter visits the names (Context.resourceFoldOrder in
+# hxc, already used by the jvm and cpp generators), with -resource and macro names in one table; a name
+# added again keeps its place and takes the new bytes. hxc writes the ManifestResource rows in
+# resourceFoldOrder, the order hxcs passes them to csc.
+--- resource-list-names-order @gencs + --resource P.hx@first --macro P.addRes()
+
+#if macro
+class P {
+	static function addRes() {
+		for (i in 0...60) haxe.macro.Context.addResource("many/m" + i, haxe.io.Bytes.ofString("m" + i));
+		// A name added again keeps its place and takes the new bytes.
+		haxe.macro.Context.addResource("many/m7", haxe.io.Bytes.ofString("replaced"));
+	}
+}
+
+#else
+class P {
+	static function main() {
+		// listNames is the reverse of the hash table's bucket order, not the order the names were added in.
+		Sys.println(haxe.Resource.listNames().join(","));
+		Sys.println(haxe.Resource.getString("many/m7") + " " + haxe.Resource.getString("many/m59") + " " + (haxe.Resource.getBytes("first").length > 0));
+		Sys.println(cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames().Length);
+	}
+}
+
+#end
+===
+[run]
+many/m23,many/m45,many/m22,many/m48,many/m0,many/m20,many/m27,many/m44,many/m55,many/m26,many/m36,many/m57,many/m11,many/m47,many/m49,many/m16,many/m54,many/m6,many/m7,many/m8,many/m12,many/m19,many/m14,many/m9,many/m31,many/m28,many/m34,many/m43,many/m58,many/m1,many/m2,many/m59,many/m40,first,many/m38,many/m46,many/m35,many/m37,many/m21,many/m18,many/m5,many/m15,many/m24,many/m30,many/m33,many/m39,many/m50,many/m53,many/m41,many/m42,many/m52,many/m10,many/m25,many/m56,many/m3,many/m51,many/m17,many/m29,many/m32,many/m4,many/m13
+replaced m59 true
+61
+
+# C# code reading the hxc assembly's manifest resources (EvLib's res.Reader: GetManifestResourceNames,
+# GetManifestResourceStream, GetManifestResourceInfo).
+--- resource-csharp-reads-manifest @gencs @netlib=EvLib + --macro P.addRes()
+
+#if macro
+class P {
+	static function addRes() {
+		var all = haxe.io.Bytes.alloc(256);
+		for (i in 0...256) all.set(i, i);
+		haxe.macro.Context.addResource("all256.bin", all);
+		haxe.macro.Context.addResource("empty", haxe.io.Bytes.alloc(0));
+		haxe.macro.Context.addResource("dir/x.txt", haxe.io.Bytes.ofString("x"));
+	}
+}
+
+#else
+class P {
+	static function main() {
+		Sys.print(res.Reader.Dump(cs.Lib.toNativeType(P).Assembly));
+	}
+}
+
+#end
+===
+[run]
+src.Resources.all256.bin 256 e2c865db4162bed963bfaa9ef6ac18f0 Embedded, ContainedInManifestFile
+src.Resources.dir/x.txt 1 9dd4e461268c8034f5c8564e155c67a6 Embedded, ContainedInManifestFile
+src.Resources.empty 0 d41d8cd98f00b204e9800998ecf8427e Embedded, ContainedInManifestFile
+
+# A non-ASCII name: gencs escapes the name's UTF-8 bytes (é is -x195-x169) but haxe.Resource escapes its UTF-16
+# code units at run time (é is -x233), so under gencs getString returns null for a name listNames gives. hxc
+# names the resource the way the runtime looks it up, so it is found (recorded divergence; NOTES §2.4 Q2).
+--- resource-non-ascii-name @gencs + --macro P.addRes()
+
+#if macro
+class P {
+	static function addRes() {
+		haxe.macro.Context.addResource("caf\u00e9.txt", haxe.io.Bytes.ofString("ok"));
+		haxe.macro.Context.addResource("\u20ac", haxe.io.Bytes.ofString("ok"));
+		haxe.macro.Context.addResource("plain.txt", haxe.io.Bytes.ofString("ok"));
+	}
+}
+
+#else
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		for (n in names) Sys.println(StringTools.urlEncode(n) + " " + haxe.Resource.getString(n));
+		var mn = cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames();
+		var all = [for (i in 0...mn.Length) mn[i]];
+		all.sort(Reflect.compare);
+		for (n in all) Sys.println("manifest " + StringTools.urlEncode(n));
+	}
+}
+
+#end
+===
+[run]
+caf%C3%A9.txt ok
+plain.txt ok
+%E2%82%AC ok
+manifest src.Resources.-x8364
+manifest src.Resources.caf-x233.txt
+manifest src.Resources.plain.txt
+[gencs]
+caf%C3%A9.txt null
+plain.txt ok
+%E2%82%AC null
+manifest src.Resources.-x226-x130-x172
+manifest src.Resources.caf-x195-x169.txt
+manifest src.Resources.plain.txt
+
+# A backslash in a name: gencs's file name escapes it (-x92), hxcs's csc call names the unescaped path (a missing
+# file, CS1566), and the runtime keeps it, so gencs never finds it. hxc keeps it, as the runtime does.
+--- resource-backslash-name @gencs + --macro P.addRes()
+
+#if macro
+class P {
+	static function addRes() {
+		haxe.macro.Context.addResource("a\\b", haxe.io.Bytes.ofString("ok"));
+		haxe.macro.Context.addResource("c\\d/e", haxe.io.Bytes.ofString("ok"));
+		haxe.macro.Context.addResource("plain.txt", haxe.io.Bytes.ofString("ok"));
+	}
+}
+
+#else
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		for (n in names) Sys.println(StringTools.urlEncode(n) + " " + haxe.Resource.getString(n));
+		var mn = cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames();
+		var all = [for (i in 0...mn.Length) mn[i]];
+		all.sort(Reflect.compare);
+		for (n in all) Sys.println("manifest " + StringTools.urlEncode(n));
+	}
+}
+
+#end
+===
+[run]
+a%5Cb ok
+c%5Cd%2Fe ok
+plain.txt ok
+manifest src.Resources.a%5Cb
+manifest src.Resources.c%5Cd%2Fe
+manifest src.Resources.plain.txt
+[gencs]
+a%5Cb null
+c%5Cd%2Fe null
+plain.txt ok
+manifest src.Resources.a-x92b
+manifest src.Resources.c-x92d%2Fe
+manifest src.Resources.plain.txt
+
+# Two names that escape to one manifest name ("\x01" + "2" and "\x0c" are both -x12): gencs writes one file over
+# the other (csc: CS1508 duplicate resource; MSBuild: both names read the same bytes, as below). hxc refuses.
+--- resource-escape-collision-is-an-error + --macro P.addRes()
+
+#if macro
+class P {
+	static function addRes() {
+		// "\x01" then "2", and "\x0c": both escape to -x12.
+		haxe.macro.Context.addResource(String.fromCharCode(1) + "2", haxe.io.Bytes.ofString("one-two"));
+		haxe.macro.Context.addResource(String.fromCharCode(12), haxe.io.Bytes.ofString("twelve"));
+	}
+}
+
+#else
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		for (n in names) Sys.println(StringTools.urlEncode(n) + " " + haxe.Resource.getString(n));
+	}
+}
+
+#end
+===
+[compile]
+dotnet: the resources "\x0c" and "\x012" would both be the manifest resource src.Resources.-x12

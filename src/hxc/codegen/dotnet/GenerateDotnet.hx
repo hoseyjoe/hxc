@@ -440,11 +440,10 @@ class GenerateDotnet {
 			else
 				g.nullable = new NullableToIl(packages);
 		}
-		// Resources (-resource files, or a macro's Context.addResource) would be manifest resources, which come
-		// with milestone 4; until then haxe.Resource would find none, so it is an error rather than ignored.
-		// No one position names them all: none.
-		if (ctx.resources.keys().hasNext())
-			g.error("embedded resources (-resource or Context.addResource) are not supported with -D dotnet until milestone 4", Position.nullPos);
+		// Resources (-resource files, or a macro's Context.addResource) are manifest resources, and
+		// haxe.Resource.content lists them; before planning, so the class gets its static constructor.
+		ResourcesToIl.fillContent(ctx);
+		ResourcesToIl.embed(g);
 		var identities = new Map<String, ModuleBuilder.AssemblyIdentity>();
 		// The identity of the file that defines the type, a reference-only one too.
 		mb.externScope = function(path:IlPath) {

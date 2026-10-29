@@ -239,14 +239,16 @@ one works). Some interop is not written yet, with no error: events defined in Ha
 `add_` and `remove_` methods are compiled, but no event), so .NET reflection sees no event. The next steps for the .NET generator bring these. Milestones 4a
 (referenced-assembly interop) and 4b (inline C#, gencs's indexers, `IntPtr` members,
 `CompilerGeneratedAttribute` on `@:property` vars) are done; 4c has begun with attributes (`@:meta`,
-`@:strict`) and nullability metadata (`-D dotnet-nullable`), and events, `@:nativeGen` details and embedded
-resources are left.
+`@:strict`), nullability metadata (`-D dotnet-nullable`) and manifest resources, and events and
+`@:nativeGen` details are left.
 A field-level `addMetadata` or `addTypePatch` aimed at a class the core types load before the init macros
 run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7 applies it; class-level
 metadata, such as an added `@:build`, is applied, though a late patch aimed at an abstract reaches its impl
 class only, not the abstract.
-Embedded resources (`-resource` or `Context.addResource`) are not supported yet: with `-D dotnet` they
-are a compile error, since `haxe.Resource` would find nothing.
+Embedded resources (`-resource` or `Context.addResource`) are manifest resources named `src.Resources.`
+plus the name as `haxe.Resource` escapes it at run time, so `haxe.Resource` and C#'s
+`GetManifestResourceStream` read them. A name with a non-ASCII character or a backslash is found, where
+gencs's is listed but not found; two names that escape to one manifest name are a compile error.
 Standard-library code that needs a construct not supported yet compiles to a stub: `cs.Pointer.add`
 (the `+` operator on pointers) is the one left, and `haxe.ds.EnumValueMap` is left out of the build.
 
