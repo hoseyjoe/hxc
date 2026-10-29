@@ -985,7 +985,24 @@ and `List` copy, and two threads casting one array at once.
        - two refinements of the overload rule for inline C# (4b's `converts`): the lifted conversion
          `Nullable<A>` to `Nullable<B>`, and array covariance;
        - `{0}[i]` on a program class in inline C#;
-       - `cs.Pointer.add`, the one standard-library stub (the `+` operator on pointers).
+       - `cs.Pointer.add`, the one standard-library stub (the `+` operator on pointers);
+       - a .NET field, method or property accessor whose signature has a required custom modifier (`modreq`), used
+         from Haxe or from inline C#. hxc writes no modreq into the MemberRef, and the CLR matches a member's
+         signature with its modifiers, so the call or access would throw `MissingFieldException` or
+         `MissingMethodException` when run, which `IlMetaTools.ilsigNorm` used to hide by dropping the modifier.
+         `ExternMembers` now refuses at compile time: volatile fields (`IsVolatile`), the `in` parameters of virtual
+         methods (`InAttribute`) and any other modreq (a `ref readonly` return, say) with a generic message that names
+         it. gencs's C# uses all of these, so this is a gap (keeping the modreq in the MemberRef, and writing
+         `volatile.` before the access of a volatile field, is the later fix); an init-only setter (`IsExternalInit`)
+         is refused for good, as gencs's C# fails too (*Interop divergences*). A member of the same shape without a
+         modreq works: a plain field, a non-virtual method's `in` parameter, an init-only property's getter
+         (`netlib-modreq-members-are-refused`, `inline-cs-modreq-fields-are-refused`,
+         `netlib-modreq-free-siblings-work`);
+       - things that were not run or not verified, and no refusal covers: the jvm path of `-resource` and
+         `Context.addResource` never ran; the order the cppia generator (`CppiaGen`) writes resources in
+         (`com.resources.keys()`) is unverified; and on Windows hxc reads its command line in the ANSI code page,
+         so a non-ASCII `-resource` name, `-D` value or path is changed for every target (U+014F arrives as `o`),
+         where Haxe 4.3.7's OCaml runtime reads UTF-16. The last is a front-end bug, not a .NET one.
    **Exit:** The server app builds to `HaxeServer.dll`, the projects that name Haxe types (`SharedServer`,
    `WebAPI`, `Server`, and the no-browser runner) reference the DLL through one shared `.props` and build,
    the AI tool schemas match those the server's build script produces today (gencs's C# with its text patches
@@ -1157,6 +1174,10 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
     `event-static-read-is-an-error`): `CS0079: The event 'A.Changed' can only appear on the left hand side of += or -=`.
     So is a custom event's initializer, static or not (`event-static-initializer-is-an-error`,
     `event-instance-initializer-is-an-error`): gencs writes it as an assignment in the (static) constructor.
+  - Assigning an init-only property of a .NET class (`netlib-modreq-members-are-refused`): `CS8852: Init-only property
+    or indexer 'Box.I' can only be assigned in an object initializer, or on 'this' or 'base' in an instance
+    constructor or an 'init' accessor`. Haxe has no object initializer, so hxc refuses every call of the setter
+    (a Haxe subclass's constructor writing `this.I` is the one assignment C# allows and hxc refuses).
     Reading or assigning a field-like event's var anywhere but its own class, a subclass, another class and a local
     function's class included (`event-field-like-outside-class-is-an-error`): `CS0070: The event 'A.Changed' can only
     appear on the left hand side of += or -= (except when used from within the type 'A')`. Inside its class the var

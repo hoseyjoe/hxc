@@ -24699,3 +24699,65 @@ class P {
 [compile]
 P.hx:7: characters 37-41 : dotnet: the event A.Changed has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)
 P.hx:15: characters 3-10 : dotnet: A (left out: the event A.Changed has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)) is not supported yet
+# A .NET member whose signature has a required modifier (modreq) is refused at compile time: hxc writes no modreq into the
+# MemberRef, so the CLR would not find the member (MissingFieldException, MissingMethodException when run). gencs's C#
+# uses a volatile field and a virtual method's `in` parameter without trouble, which hxc cannot yet (a recorded gap);
+# an init-only setter is CS8852 in gencs's C# too.
+--- netlib-modreq-members-are-refused @netlib=ModLib + -D unsafe
+import modlib.Box;
+class P {
+	static function main() {
+		var b = new Box();
+		b.V = 3;
+		trace(b.V);
+		Box.S = 4;
+		trace(Box.S);
+		b.V += 1;
+		var i = 1;
+		trace(b.M(i));
+		b.I = 7;
+		trace(b.R());
+	}
+}
+===
+[compile]
+P.hx:5: characters 3-10 : dotnet: volatile .NET fields (modlib.Box.V) are not supported yet
+P.hx:6: characters 9-12 : dotnet: volatile .NET fields (modlib.Box.V) are not supported yet
+P.hx:7: characters 3-12 : dotnet: volatile .NET fields (modlib.Box.S) are not supported yet
+P.hx:8: characters 9-14 : dotnet: volatile .NET fields (modlib.Box.S) are not supported yet
+P.hx:9: characters 3-11 : dotnet: volatile .NET fields (modlib.Box.V) are not supported yet
+P.hx:11: characters 9-15 : dotnet: `in` parameters of virtual methods (modlib.Box.M) are not supported yet
+P.hx:12: characters 3-10 : dotnet: the init-only setter modlib.Box.set_I cannot be called here (C# error CS8852: only an object initializer, or a constructor on this or base, may assign an init-only property)
+P.hx:13: characters 9-14 : dotnet: a required custom modifier (modreq System.Runtime.InteropServices.InAttribute) on the .NET method modlib.Box.R is not supported yet
+# The same members' siblings without a modreq work: a plain field, a non-virtual method's `in` parameter and an init-only
+# property's getter (the setter alone has the modifier).
+--- netlib-modreq-free-siblings-work @gencs @netlib=ModLib + -D unsafe
+import modlib.Box;
+class P {
+	static function main() {
+		var b = new Box();
+		b.Plain = 3;
+		trace(b.Plain);
+		var i = 1;
+		trace(b.N(i));
+		trace(b.I);
+	}
+}
+===
+# Inline C# reaches a volatile field the same way, and is refused the same way. Its reads of an init-only property (the
+# getter) and of a plain field work.
+--- inline-cs-modreq-fields-are-refused @netlib=ModLib + -D unsafe
+import modlib.Box;
+class P {
+	static function main() {
+		var b = new Box();
+		var v:Int = cs.Syntax.code("{0}.V", b);
+		var s:Int = cs.Syntax.code("modlib.Box.S");
+		var i:Int = cs.Syntax.code("{0}.I + {0}.Plain", b);
+		trace(v, s, i);
+	}
+}
+===
+[compile]
+P.hx:5: characters 15-41 : dotnet: volatile .NET fields (modlib.Box.V) are not supported yet
+P.hx:6: characters 15-45 : dotnet: volatile .NET fields (modlib.Box.S) are not supported yet

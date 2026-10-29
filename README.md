@@ -250,7 +250,9 @@ the server app builds to its `HaxeServer.dll` with its resources, the C# project
 against it, its AI tool schemas are the ones gencs's C# gives, and ILVerify of it against the deployed assemblies
 prints nothing. A few constructs gencs's C# accepts stay compile errors, because nothing in the two apps uses
 them: covariant-return `@:overload` overrides, two refinements of the overload rule in inline C#
-(`Nullable<A>` to `Nullable<B>`, array covariance), `{0}[i]` on a program class in inline C# and `cs.Pointer.add`.
+(`Nullable<A>` to `Nullable<B>`, array covariance), `{0}[i]` on a program class in inline C# and `cs.Pointer.add`,
+and so is a .NET member whose signature has a required modifier (`modreq`): a volatile field, the `in`
+parameter of a virtual method, an init-only setter (the last fails in gencs's C# too).
 A field-level `addMetadata` or `addTypePatch` aimed at a class the core types load before the init macros
 run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7 applies it; class-level
 metadata, such as an added `@:build`, is applied, though a late patch aimed at an abstract reaches its impl
@@ -261,6 +263,10 @@ plus the name as `haxe.Resource` escapes it at run time, so `haxe.Resource` and 
 gencs's is listed but not found; two names that escape to one manifest name are a compile error.
 hxc does not refuse a macro's access to the `cs` package, where Haxe's typer says "You cannot access the
 cs package while in a macro".
+Not run or not verified: the jvm path of `-resource` and `Context.addResource` never ran, and the order
+`CppiaGen` writes resources in (`com.resources.keys()`) is unverified. On Windows hxc reads its command line in
+the ANSI code page, so a non-ASCII `-resource` name, `-D` value or path is changed for every target, where
+Haxe 4.3.7 reads UTF-16 (a front-end bug, not a .NET one).
 Standard-library code that needs a construct not supported yet compiles to a stub: `cs.Pointer.add`
 (the `+` operator on pointers) is the one left.
 

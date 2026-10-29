@@ -1318,6 +1318,7 @@ class ExternMembers {
 	function bound(c:TClass, cf:TClassField, link:{cls:IlClass, parent:IlSigNorm}, m:IlMethod, isStatic:Bool, given:Int,
 			typeArgs:Null<Array<IlSigNorm>>, checkReturn:Bool, ?inst:Inst, ?candInst:Inst):ExternMethod {
 		var name = m.mname;
+		refuseModreq(typeS(c) + "." + name, m);
 		if (checkReturn) {
 			var declared = instantiate(types.withParams(c.params, cf.params, () -> switch (TypeFunctions.follow(cf.type)) {
 				case TFun(sig): types.toSig(sig.ret);
@@ -1339,6 +1340,70 @@ class ExternMembers {
 			omitted: m.margs.slice(given),
 			typeArgs: typeArgs
 		};
+	}
+
+	// The first required custom modifier (modreq) in `s`, or null. hxc writes no modreq into the MemberRef of a
+	// member it uses, and the CLR matches a member's signature with its modifiers, so a member whose signature
+	// has one cannot be found at run time (MissingFieldException, MissingMethodException).
+	static function modreqIn(s:IlSig):Null<IlPath> {
+		function first(l:Array<IlSig>):Null<IlPath> {
+			for (e in l) {
+				var p = modreqIn(e);
+				if (p != null) return p;
+			}
+			return null;
+		}
+		return switch (s) {
+			case SReqModifier(t, _): try IlMetaTools.getPath(t) catch (_:Dynamic) {ns: [], nested: [], name: "?"};
+			case SOptModifier(_, s) | SPointer(s) | SManagedPointer(s) | SVector(s) | SPinned(s) | SArray(s, _): modreqIn(s);
+			case SGenericInst(s, args): first([s].concat(args));
+			case SFunPtr(_, ret, args): first([ret].concat(args));
+			case _: null;
+		}
+	}
+
+	static function isModifier(p:IlPath, ns:Array<String>, name:String):Bool
+		return p.nested.length == 0 && p.name == name && IlPaths.strsEq(p.ns, ns);
+
+	static final compilerServices = ["System", "Runtime", "CompilerServices"];
+
+	// Refuses the use of the .NET field `f` (named `what`) when its type has a required modifier: a volatile field's.
+	static function refuseFieldModreq(what:String, f:IlField):Void {
+		if (f.fconstant != null) return;
+		var p = modreqIn(f.fsig.ssig);
+		if (p == null) return;
+		if (isModifier(p, compilerServices, "IsVolatile")) throw new Unsupported("volatile .NET fields (" + what + ")", true);
+		throw new Unsupported("a required custom modifier (modreq " + sigS(LClass(p, [])) + ") on the .NET field " + what, false);
+	}
+
+	// Refuses the use of the .NET method `m` (named `what`) when its signature has a required modifier: an init-only
+	// setter's return type, or the `in` parameter of a virtual method.
+	static function refuseModreq(what:String, m:IlMethod):Void {
+		var p = modreqIn(m.mret.ssig);
+		if (p != null && isModifier(p, compilerServices, "IsExternalInit"))
+			throw Unsupported.error("the init-only setter " + what + " cannot be called here (C# error CS8852: only an object initializer, or a constructor"
+				+ " on this or base, may assign an init-only property)");
+		var inArg = false;
+		if (p == null) for (a in m.margs) {
+			p = modreqIn(a.sig.ssig);
+			if (p != null) {
+				inArg = true;
+				break;
+			}
+		}
+		if (p == null) return;
+		if (inArg && isModifier(p, ["System", "Runtime", "InteropServices"], "InAttribute") && m.mflags.contract.indexOf(CMVirtual) >= 0)
+			throw new Unsupported("`in` parameters of virtual methods (" + what + ")", true);
+		throw new Unsupported("a required custom modifier (modreq " + sigS(LClass(p, [])) + ") on the .NET method " + what, false);
+	}
+
+	// Refuses the use of the accessor `name` of the property `what` of `cls`, a getter or a setter, when its
+	// signature has a required modifier.
+	static function refuseAccessorModreq(what:String, cls:IlClass, name:String, setter:Bool):Void {
+		for (m in cls.cmethods) if (m.mname == name && m.margs.length == (setter ? 1 : 0)) {
+			refuseModreq(what, m);
+			return;
+		}
 	}
 
 	// The .NET type of `c`, as messages name it.
@@ -1514,7 +1579,8 @@ class ExternMembers {
 					case true:
 				}
 				checkVar(c, cf, link, f.fsig.snorm, isStatic, reads, writes, inst);
-				var member = f.fconstant != null ? XConstant(f.fconstant, f.fsig.snorm) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
+				refuseFieldModreq(typeS(c) + "." + name, f);
+				var member =f.fconstant != null ? XConstant(f.fconstant, f.fsig.snorm) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
 				return {member: member, parent: link.parent};
 			}
 			for (p in link.cls.cprops) if (p.pname == name) {
@@ -1530,6 +1596,9 @@ class ExternMembers {
 				if (getter == null && setter == null) continue;
 				if (getter != true && setter != true) throw inaccessible(link);
 				checkVar(c, cf, link, t, isStatic, reads, writes, inst);
+				// Only the accessors the access uses matter: an init-only property can be read.
+				if (reads && getter == true) refuseAccessorModreq(typeS(c) + "." + name, link.cls, p.pget.name, false);
+				if (writes && setter == true) refuseAccessorModreq(typeS(c) + "." + name, link.cls, p.pset.name, true);
 				return {member: XProperty(t, getter == true ? p.pget.name : null, setter == true ? p.pset.name : null), parent: link.parent};
 			}
 		}
@@ -1771,6 +1840,7 @@ class ExternMembers {
 		}
 		for (link in csChain(recv, name)) {
 			for (f in link.cls.cfields) if (f.fname == name && check(f.fflags.access, link, f.fflags.contract.indexOf(CStatic) >= 0)) {
+				refuseFieldModreq(what, f);
 				var member = f.fconstant != null ? XConstant(f.fconstant, f.fsig.snorm) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
 				return {member: member, parent: link.parent};
 			}
@@ -1783,6 +1853,8 @@ class ExternMembers {
 				var getter = p.pget;
 				if (getter == null || !check(getter.flags.access, link, getter.flags.contract.indexOf(CMStatic) >= 0))
 					throw Unsupported.error("the .NET property " + what + " has no public getter");
+				// Inline C# only reads it, so only the getter's signature matters.
+				refuseAccessorModreq(what, link.cls, getter.name, false);
 				var setter = p.pset != null && p.pset.flags.access == FAPublic ? p.pset.name : null;
 				return {member: XProperty(t, getter.name, setter), parent: link.parent};
 			}
@@ -1950,6 +2022,12 @@ class ExternMembers {
 		}
 		var link = links[found.link];
 		var m = link.cls.cmethods[found.index];
+		try {
+			refuseModreq(sigS(LClass(link.cls.cpath, [])) + "." + m.mname, m);
+		} catch (u:Unsupported) {
+			u.pos = pos;
+			throw u;
+		}
 		var largs = linkArgs(link);
 		var targs = found.typeArgs == null ? [] : found.typeArgs;
 		var contract = m.mflags.contract;

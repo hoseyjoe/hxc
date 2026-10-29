@@ -20,7 +20,7 @@
 # is expected to compile: unless its expectation has a [compile] section, hxc failing or writing no
 # .dll fails the case.
 # A @netlib case gets fixture .NET libraries, the projects in tests/dotnet/netlib/<Name>/. A bare @netlib
-# passes ValLib, and @netlib=Name[,Name...] passes the named ones (CarLib, EvLib, LibA, LibB, M4Lib, ValLib), as
+# passes ValLib, and @netlib=Name[,Name...] passes the named ones (CarLib, EvLib, LibA, LibB, M4Lib, ModLib, ValLib), as
 # `--net-lib <dir>/<Name>.dll` to both hxc compiles and to gencs's haxe command, and as a <Reference> in
 # the csproj gencs's output is built with. Only the named libraries are passed, but every fixture .dll is
 # copied beside hxc's output (after the determinism check) and beside gencs's, so a library that is
