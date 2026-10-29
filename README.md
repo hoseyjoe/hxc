@@ -249,6 +249,8 @@ Embedded resources (`-resource` or `Context.addResource`) are manifest resources
 plus the name as `haxe.Resource` escapes it at run time, so `haxe.Resource` and C#'s
 `GetManifestResourceStream` read them. A name with a non-ASCII character or a backslash is found, where
 gencs's is listed but not found; two names that escape to one manifest name are a compile error.
+hxc does not refuse a macro's access to the `cs` package, where Haxe's typer says "You cannot access the
+cs package while in a macro".
 Standard-library code that needs a construct not supported yet compiles to a stub: `cs.Pointer.add`
 (the `+` operator on pointers) is the one left, and `haxe.ds.EnumValueMap` is left out of the build.
 

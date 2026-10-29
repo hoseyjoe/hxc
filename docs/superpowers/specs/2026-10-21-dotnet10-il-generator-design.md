@@ -1017,7 +1017,22 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   name (`é` is `-x195-x169`) and turns `\` into `-x92`, where `haxe.Resource` escapes the UTF-16 code units at
   run time (`é` is `-x233`) and keeps `\`, so under gencs `listNames()` lists the name and `getString` returns
   null. hxc names the manifest resource the way the runtime looks it up, so `GetManifestResourceNames()`
-  differs from gencs's for those names only.
+  differs from gencs's for those names only. A name outside the BMP is two code units at run time and four
+  UTF-8 bytes in gencs, the same divergence (`resource-astral-name`: `U+1F600` is `-x55357-x56832` in hxc,
+  `-x240-x159-x152-x128` in gencs).
+- Two resource names that escape to one manifest name are a compile error in hxc (`dotnet: the resources "{" and
+  "\x0c3" would both be the manifest resource src.Resources.-x123`; `resource-escape-collision-is-an-error` for the
+  macro form, `resource-escape-collision-on-command-line` for `-resource`). The names are positionless, since a
+  `-resource` is a command-line argument. gencs writes one file over the other, and csc says CS1508 for
+  duplicate resources, so neither has the error. The easiest collision to meet is a low code point and a digit
+  against a larger one: `a!5` (`!` is 33) and `a` + U+014F (335) are both `a-x335`, but gencs's UTF-8 byte escape
+  would write the second as `a-x197-x143`, so there it is no collision. The `-resource` case uses `{` against
+  form feed + `3` instead, because the compiler reads its command line in the ANSI code page on Windows and U+014F
+  arrives as `o`.
+- hxc does not refuse access to the `cs` package while a macro runs, where Haxe's typer says "You cannot
+  access the cs package while in a macro". A macro that names `cs.*` types compiles in hxc and fails in Haxe,
+  so a program can pass hxc and not Haxe. This is a typer difference, not a resource one; the resource case
+  `resource-expression-macro` wraps `main` in `#if !macro` for gencs and is accepted either way.
 
 ## Left to the builder
 

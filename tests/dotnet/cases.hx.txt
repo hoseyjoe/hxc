@@ -22082,3 +22082,86 @@ class P {
 ===
 [compile]
 dotnet: the resources "\x0c" and "\x012" would both be the manifest resource src.Resources.-x12
+
+# The same collision from the command line: "{" (123) and form feed (12) + "3" both escape to -x123. The
+# pair needs a control character because "!5" and U+014F, the printable pair, cannot be passed: the compiler
+# reads its arguments in the ANSI code page, so U+014F arrives as "o". gencs writes one file over the other and csc
+# says CS1508; hxc refuses. A -resource has no source position, so the error has none. In the header below, the
+# character before the "3" is a form feed (0x0C).
+--- resource-escape-collision-on-command-line + --resource P.hx@{ --resource P.hx@3
+class P {
+	static function main() {
+		Sys.println(haxe.Resource.listNames());
+	}
+}
+===
+[compile]
+dotnet: the resources "{" and "\x0c3" would both be the manifest resource src.Resources.-x123
+
+# The ManifestResource rows are in the order the compile holds the resources (Context.resourceFoldOrder, the
+# order hxcs passes them to csc), and haxe.Resource.listNames() is the reverse of that. GetManifestResourceNames()
+# lists the rows in table order, so unsorted it shows both. Not @gencs: MSBuild reorders the rows. A reversed
+# embed loop would print the second line as the first.
+--- resource-manifest-row-order + --resource P.hx@zeta --resource P.hx@alpha --resource P.hx@mid/dir.txt --resource P.hx@Beta --resource P.hx@a.b --resource P.hx@_u --resource P.hx@k9
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		Sys.println(names.join(","));
+		var mn = cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames();
+		var all = [for (i in 0...mn.Length) mn[i]];
+		Sys.println(all.join(","));
+		var rev = all.copy();
+		rev.reverse();
+		var same = rev.length == names.length;
+		for (i in 0...rev.length) if (rev[i] != "src.Resources." + names[i]) same = false;
+		Sys.println("rows are listNames reversed: " + same);
+	}
+}
+===
+[run]
+_u,zeta,a.b,Beta,mid/dir.txt,alpha,k9
+src.Resources.k9,src.Resources.alpha,src.Resources.mid/dir.txt,src.Resources.Beta,src.Resources.a.b,src.Resources.zeta,src.Resources._u
+rows are listNames reversed: true
+
+# A name outside the BMP: U+1F600 is two UTF-16 code units, so the runtime looks the resource up as
+# -x55357-x56832 and hxc names the manifest resource that. gencs escapes the four UTF-8 bytes instead
+# (-x240-x159-x152-x128), so under gencs listNames() lists the name and getString returns null (the same
+# divergence as resource-non-ascii-name).
+--- resource-astral-name @gencs + --macro P.addRes()
+
+#if macro
+class P {
+	static function addRes() {
+		haxe.macro.Context.addResource("a\u{1F600}b", haxe.io.Bytes.ofString("ok"));
+		haxe.macro.Context.addResource("plain", haxe.io.Bytes.ofString("ok"));
+	}
+}
+
+#else
+class P {
+	static function main() {
+		var names = haxe.Resource.listNames();
+		names.sort(Reflect.compare);
+		for (n in names) Sys.println(StringTools.urlEncode(n) + " " + n.length + " " + haxe.Resource.getString(n));
+		Sys.println(haxe.Resource.getString("a\u{1F600}b") == null);
+		var mn = cs.Lib.toNativeType(P).Assembly.GetManifestResourceNames();
+		var all = [for (i in 0...mn.Length) mn[i]];
+		all.sort(Reflect.compare);
+		for (n in all) Sys.println("manifest " + StringTools.urlEncode(n));
+	}
+}
+
+#end
+===
+[run]
+a%F0%9F%98%80b 4 ok
+plain 5 ok
+False
+manifest src.Resources.a-x55357-x56832b
+manifest src.Resources.plain
+[gencs]
+a%F0%9F%98%80b 4 null
+plain 5 ok
+True
+manifest src.Resources.a-x240-x159-x152-x128b
+manifest src.Resources.plain
