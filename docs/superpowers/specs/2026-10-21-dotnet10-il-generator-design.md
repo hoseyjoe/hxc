@@ -997,7 +997,13 @@ and `List` copy, and two threads casting one array at once.
          methods (`InAttribute`) and any other modreq (a `ref readonly` return, say) with a generic message that names
          it. gencs's C# uses all of these, so this is a gap (keeping the modreq in the MemberRef, and writing
          `volatile.` before the access of a volatile field, is the later fix); an init-only setter (`IsExternalInit`)
-         is refused for good, as gencs's C# fails too (*Interop divergences*). A member of the same shape without a
+         is refused, as gencs's C# fails too, except for the assignment in a subclass's constructor, which C# allows
+         and hxc refuses as well (*Interop divergences*). Still open with the later fix: a .NET indexer accessor
+         with a modreq (`this[int] { get; init; }`) is not refused and throws `MissingMethodException` when run; a
+         virtual method with an `in` parameter taken as a value (`var f = v.M;`) goes through the reflective
+         closure and throws `ArgumentException` at its first call; and the refusal also covers a Haxe class that
+         overrides or implements such a method, where no MemberRef is written, which may be more than needed.
+         Neither app reaches any of these (their builds have no error). A member of the same shape without a
          modreq works: a plain field, a non-virtual method's `in` parameter, an init-only property's getter
          (`netlib-modreq-members-are-refused`, `inline-cs-modreq-fields-are-refused`,
          `netlib-modreq-free-siblings-work`);

@@ -1586,7 +1586,7 @@ class ExternMembers {
 				}
 				checkVar(c, cf, link, f.fsig.snorm, isStatic, reads, writes, inst);
 				refuseFieldModreq(typeS(c) + "." + name, f);
-				var member =f.fconstant != null ? XConstant(f.fconstant, f.fsig.snorm) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
+				var member = f.fconstant != null ? XConstant(f.fconstant, f.fsig.snorm) : XField(f.fsig.snorm, f.fflags.contract.indexOf(CInitOnly) >= 0);
 				return {member: member, parent: link.parent};
 			}
 			for (p in link.cls.cprops) if (p.pname == name) {

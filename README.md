@@ -252,7 +252,8 @@ prints nothing. A few constructs gencs's C# accepts stay compile errors, because
 them: covariant-return `@:overload` overrides, two refinements of the overload rule in inline C#
 (`Nullable<A>` to `Nullable<B>`, array covariance), `{0}[i]` on a program class in inline C# and `cs.Pointer.add`,
 and so is a .NET member whose signature has a required modifier (`modreq`): a volatile field, the `in`
-parameter of a virtual method, an init-only setter (the last fails in gencs's C# too).
+parameter of a virtual method, an init-only setter (the last fails in gencs's C# too, outside a subclass's
+constructor). A .NET indexer accessor with a modreq is not refused yet, and fails when run.
 A field-level `addMetadata` or `addTypePatch` aimed at a class the core types load before the init macros
 run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7 applies it; class-level
 metadata, such as an added `@:build`, is applied, though a late patch aimed at an abstract reaches its impl
