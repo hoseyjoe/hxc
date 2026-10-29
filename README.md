@@ -235,15 +235,17 @@ a static `@:property` var with get or set accessors,
 a .NET method, an overloaded method, a struct's method or a method reached through a `Dynamic`
 receiver as a delegate, and a .NET base class's non-virtual method or property implementing an
 interface method or property for a Haxe subclass (C# adds a forwarding stub there; a public virtual
-one works). An `@:event` var is a C# event when its `add_` and `remove_` methods have bodies (Haxe's own
-checks apply: private, both methods present, type `T -> Void`); its var is no field, and reading or assigning
-it is an error, as in C#. Some interop is not written yet, with no error: an `@:event` var whose two bodies are
-both empty (a field-like event in C#) is compiled as an event with empty accessors, so it keeps no handler, and
-a Haxe interface's event is no event. The next steps for the .NET generator bring these. Milestones 4a
+one works). An `@:event` var is a C# event (Haxe's own checks apply: private, both methods present, type
+`T -> Void`): custom when the `add_` and `remove_` methods have bodies, field-like when both are empty (the
+compiler's accessors over a private backing field, which only the class itself can read), and an interface
+event for a Haxe interface's, which a class implements with an `@:event` var of its own, as it does a .NET
+interface's. The var is no field, and reading or assigning a custom event's is an error, as in C#; so is a
+field-like event's outside its class. Some of what gencs's C# refuses is refused too, with the C# error
+(listed in the spec's *Interop divergences from gencs*). Milestones 4a
 (referenced-assembly interop) and 4b (inline C#, gencs's indexers, `IntPtr` members,
 `CompilerGeneratedAttribute` on `@:property` vars) are done; 4c has begun with attributes (`@:meta`,
-`@:strict`), nullability metadata (`-D dotnet-nullable`), manifest resources and events with bodies; field-like and
-interface events and `@:nativeGen` details are left.
+`@:strict`), nullability metadata (`-D dotnet-nullable`), manifest resources and events; `@:nativeGen` details
+are left.
 A field-level `addMetadata` or `addTypePatch` aimed at a class the core types load before the init macros
 run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7 applies it; class-level
 metadata, such as an added `@:build`, is applied, though a late patch aimed at an abstract reaches its impl

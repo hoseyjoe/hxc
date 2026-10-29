@@ -9,6 +9,7 @@ import hxc.core.TypeFunctions;
 import hxc.codegen.dotnet.CompanionToIl;
 import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.EnumToIl;
+import hxc.codegen.dotnet.EventToIl.EventPlan;
 import hxc.codegen.dotnet.IlData;
 import hxc.codegen.dotnet.IlMeta.IlConstant;
 import hxc.codegen.dotnet.IlMeta.TableIdx;
@@ -37,6 +38,9 @@ class DotnetCtx {
 	// The CLR property each physical @:property var is (TclassToIl.planVarProperty), whose accessors every
 	// access calls; such a var has no entry in fieldTokens.
 	public final varProperties = new ObjectMap<TClassField, PropertyPlan>();
+	// The CLR event each @:event var of a Haxe class or interface is (EventToIl), which says whether a read or
+	// assignment of the var is the backing field (a field-like event inside its own class) or an error.
+	public final eventVars = new ObjectMap<TClassField, EventPlan>();
 	// What each hxgen enum became (EnumToIl).
 	public final enumPlans = new ObjectMap<TEnum, EnumPlan>();
 	public var plans:Array<ClassPlan> = [];

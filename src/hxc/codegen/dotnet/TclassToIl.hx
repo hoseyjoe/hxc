@@ -356,7 +356,7 @@ class TclassToIl {
 		var impls = isInterface ? null : interfaceImpls(g, c, interfaces);
 		var implementing = impls == null ? new ObjectMap<TClassField, Bool>() : impls.own;
 		var props = isInterface ? null : planProperties(g, c, interfaces, implementing);
-		var events = isInterface ? null : EventToIl.planEvents(g, c, implementing);
+		var events = EventToIl.planEvents(g, c, implementing);
 		var path = DotnetNames.typePath(TClassDecl(c));
 		inline function site(name:String):AttributesToIl.AttrSite return {name: name, ns: path.ns};
 
@@ -368,8 +368,13 @@ class TclassToIl {
 		function addFields(list:Array<TClassField>, isStatic:Bool) {
 			for (cf in list) {
 				if (TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
-				// An @:event var is no field: its event has accessors (EventToIl).
-				if (events != null && events.vars.exists(cf)) continue;
+				// An @:event var is no field: its event has accessors (EventToIl), over a private backing field when
+				// it is field-like.
+				var event = events == null ? null : events.vars.get(cf);
+				if (event != null) {
+					if (event.backing != null) fields.push(event.backing);
+					continue;
+				}
 				// gencs's gen_prop makes a static property of a static @:property var with an accessor, its
 				// accessors private static _get_X/_set_X; hxc does not write one yet.
 				if (isStatic && !TypeFunctions.isPhysicalField(cf) && isCallVar(cf) && TypeFunctions.hasMeta(":property", cf.meta))
@@ -445,6 +450,8 @@ class TclassToIl {
 				var prop = isStatic || props == null ? null : props.bodies.get(f);
 				// And of an event's, static or not (EventToIl).
 				var event = events == null ? null : events.bodies.get(f);
+				// An interface's and a field-like event's add_X and remove_X are the accessors.
+				if (event != null && EventToIl.isReplaced(event)) continue;
 				var shape = prop == null && event == null && !isStatic && !isCtor && !isInterface && isOverride(f) ? overrideShape(g, c, TypeFunctions.extractParamTypes(c.params), f, sig) : OSame;
 				var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG;
 				if (prop != null) flags = MethodAttrs.PRIVATE | MethodAttrs.HIDE_BY_SIG;
@@ -836,8 +843,13 @@ class TclassToIl {
 						+ DotnetTypes.haxePath(TClassDecl(i.c)));
 			for (im in i.c.orderedFields) {
 				switch (im.kind) {
+					case Var(_) if (EventToIl.isEventVar(im)):
+						// The interface's event (a Haxe interface's @:event var, or the private one NetConverter makes of
+						// a .NET interface's): the class needs an event, whose accessors the methods below match.
+						checkEvent(g, c, i, im);
+						continue;
 					case Var(_) if (isExternInterface):
-						if (!isCallVar(im)) throw new Unsupported("events of .NET interfaces", true);
+						if (!isCallVar(im)) throw new Unsupported("variables of .NET interfaces that are neither properties nor events", true);
 						checkProperty(g, c, i, im);
 						continue;
 					case Var(_):
@@ -993,6 +1005,29 @@ class TclassToIl {
 				}
 			case _:
 		}
+	}
+
+	// The class's implementation of the event `iv` of the interface `i`, a Haxe interface's or a .NET one's: an
+	// @:event var of the class, whose accessors the class's add_ and remove_ methods implement (findImplementation
+	// matches the interface's methods like any other's). The event of a .NET base class is the base's, which
+	// findImplementation checks the accessors of. gencs's C# fails to compile a plain var (CS0535, CS0470); a
+	// superclass's event has accessors that are not virtual, unless that superclass lists the interface itself,
+	// and C# adds a forwarding stub for them, which hxc does not write yet (ruling S).
+	static function checkEvent(g:DotnetCtx, c:TClass, i:ImplementedInterface, iv:TClassField):Void {
+		var v = findVar(c, iv.name);
+		if (v == null) throw new Unsupported("abstract classes that leave interface methods unimplemented", true);
+		if (TypeFunctions.hasClassFlag(v.owner, CExtern)) return;
+		var iname = DotnetTypes.haxePath(TClassDecl(i.c));
+		if (!EventToIl.isEventVar(v.cf))
+			throw at(Unsupported.error(DotnetTypes.haxePath(TClassDecl(v.owner)) + "." + iv.name + " implements the event " + iname + "." + iv.name
+				+ ", so it must be an @:event var (gencs: C# error CS0535)"), v.cf.pos);
+		function lists(owner:TClass):Bool {
+			for (x in owner.interfaces) if (x.c == i.c || lists(x.c)) return true;
+			return false;
+		}
+		if (v.owner != c && !lists(v.owner))
+			throw at(new Unsupported("an interface event (" + iname + "." + iv.name + ") implemented by the non-virtual event of the superclass "
+				+ DotnetTypes.haxePath(TClassDecl(v.owner)), false), v.cf.pos);
 	}
 
 	// The .NET interface property `iv` of `i` implemented by the .NET base class's property, of which the CLR
@@ -1832,7 +1867,8 @@ class TclassToIl {
 			if (plan.emptyCtor != null && c.constructor != null)
 				AttributesToIl.forMember(g, plan.emptyCtor.token, c.constructor.meta, AttrTarget.TCtor, c.constructor.pos, site("new"));
 			inline function declares(cf:TClassField) return c.fields.get(cf.name) == cf || c.statics.get(cf.name) == cf;
-			for (f in plan.fields) if (f.cf != null && f.property == null && !done.exists(f.cf) && declares(f.cf)) {
+			// (A field-like event's backing field has none of its var's, which gencs puts on no event.)
+			for (f in plan.fields) if (f.cf != null && f.property == null && !done.exists(f.cf) && declares(f.cf) && !EventToIl.isEventVar(f.cf)) {
 				done.set(f.cf, true);
 				AttributesToIl.forMember(g, f.token, f.cf.meta, AttrTarget.TField, f.cf.pos, site(f.cf.name));
 			}

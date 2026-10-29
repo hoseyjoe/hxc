@@ -128,6 +128,9 @@ class NullableToIl {
 			for (i in 0...m.generics.length) n.pending(m.token, i, attribute([2], mn.ctx));
 		}
 		for (p in plan.properties) n.put(g, p.token, attribute(bytes(p.sig), tn.ctx));
+		// An event's Nullable attribute, which its type's context does not count (planType): Roslyn's tally takes a
+		// field-like event's backing field and its accessors' parameters, not the event itself.
+		for (e in plan.events) n.put(g, e.token, attribute(bytes(e.sig), tn.ctx));
 	}
 
 	// The attribute of a GenericParam row (`token`), the type or method `owner`'s parameter `number`.

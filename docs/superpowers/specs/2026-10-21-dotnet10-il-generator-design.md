@@ -892,22 +892,25 @@ and `List` copy, and two threads casting one array at once.
      Haxe: Haxe's `check_cs_events` runs for the C# target before DCE (`@:event fields must be private`,
      `Missing event method: add_X`, and the unification error at an add_ or remove_ that is not `T -> Void`),
      and gencs hides every `@:event` var from reflection (`@:skipReflection`), so hxc does too. An `@:event`
-     var of (default, default) access whose `add_X` and `remove_X` are not both empty is a custom event
-     (EventToIl), as gencs's `gen_event` writes it: an Event row and an EventMap row (statics first, then
-     instances, each last declared first), public `add_X(value)` and `remove_X(value)` accessors
-     (SpecialName, Static for a static event, Family for a `@:protected` var; MethodSemantics AddOn and
-     RemoveOn) that call the Haxe methods, which become the private non-virtual `_add_X` and `_remove_X`; the
-     var has no field. Every Haxe call, closure and reflection invoke of add_X and remove_X goes to the accessor,
-     as gencs writes `o.X += h`. The var of an event gencs's C# cannot read is refused (CS0079). Where
-     gencs's C# fails, hxc refuses with a recorded divergence: an instance event of an hxgeneric class, whose
-     accessors would implement its companion interface's add_ and remove_ (CS0686; a `@:nativeGen` generic class's
-     and a static event are written), a Haxe override of an event's add_ or remove_ (CS0115), a read or assignment
-     of the var (CS0079) and an event type that is no delegate (CS0066); and hxc's DCE
-     keeps an event's var and both methods together, where gencs's C# fails with CS1061 under `-dce full`
-     when only one of them is used. An `@:event` var with any other access is a plain variable, as haxeui's
-     builder macro leaves them. Field-like events (both bodies empty, gencs's `public event T X;`) and a
-     Haxe interface's events are not written yet, with no error: hxc compiles a field-like event as a custom
-     one with empty accessors, which keeps no handler.
+     var of (default, default) access is a C# event (EventToIl), as gencs's `gen_event` writes it: an Event row
+     and an EventMap row (statics first, then instances, each last declared first) and public `add_X(value)`
+     and `remove_X(value)` accessors (SpecialName, Static for a static event, Family for a `@:protected` var;
+     MethodSemantics AddOn and RemoveOn); the var has no field and, as in gencs, no attribute (its `@:meta` is
+     dropped). Every Haxe call, closure and reflection invoke of add_X and remove_X goes to the accessor, as
+     gencs writes `o.X += h`. The event is custom when its `add_X` and `remove_X` are not both empty: the
+     accessors call the Haxe methods, which become the private non-virtual `_add_X` and `_remove_X`, and the
+     var has no value to read or assign (CS0079). It is field-like when both are empty (gencs's
+     `public event T X;`): there are no methods, the accessors are Roslyn's (CompilerGenerated, a
+     `Delegate.Combine`/`Delegate.Remove` loop over `Interlocked.CompareExchange<T>` on a private
+     CompilerGenerated backing field named as the var), and the var is that field inside its own class and has
+     no value anywhere else (CS0070). A Haxe interface's `@:event private var` is a C# interface event: its
+     `add_X` and `remove_X` are the abstract accessors (CompilerGenerated), and the accessors of an event of a class
+     that implements one are virtual and sealed; the class must have an `@:event` var of that name, for a .NET
+     interface's event too (else CS0535). Where gencs's C# fails, hxc refuses or does better, each recorded in
+     *Interop divergences from gencs*, and hxc's DCE keeps an event's var and both methods together. An
+     `@:event` var with any other access is a plain variable, as haxeui's builder macro leaves them. With
+     `-D dotnet-nullable`, an event has the Nullable attribute of its type (Roslyn's), and does not count in its
+     type's context.
      Resources are manifest resources (ruling 8): each is named `src.Resources.` plus its name as
      `haxe.Resource` escapes it at run time (`Path.escape(name, true)`, per UTF-16 code unit: every unit but
      `A-Z a-z 0-9 _ . / \` becomes `-x<code>`), which is gencs's name for every ASCII name without `\`. The
@@ -923,7 +926,8 @@ and `List` copy, and two threads casting one array at once.
        parameter;
      - the forwarding stub C# adds where a .NET base class's non-virtual method or property
        implements an interface method or property for a Haxe subclass (ruling S; both are refused
-       until then);
+       until then), and where a Haxe superclass's event implements a Haxe or .NET interface's event
+       for a subclass that lists the interface (`event-interface-event-of-superclass-is-unsupported`);
      - static `@:property` vars with get or set accessors, which gencs makes static properties;
      - .NET extern, overloaded and struct methods as delegate method groups, and a method group
        reached through a `Dynamic` or companion-interface receiver;
@@ -1050,6 +1054,44 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   access the cs package while in a macro". A macro that names `cs.*` types compiles in hxc and fails in Haxe,
   so a program can pass hxc and not Haxe. This is a typer difference, not a resource one; the resource case
   `resource-expression-macro` wraps `main` in `#if !macro` for gencs and is accepted either way.
+- Events defined in Haxe (`@:event` vars): the cases where gencs's C# fails to compile are `dotnet:` errors in
+  hxc that quote the C# error, and the cases where gencs builds and runs differently are listed with what it does.
+  - An instance event of an hxgeneric class (`event-generic-class-is-an-error`): the accessors would implement the
+    members of the class's companion interface, and gencs's C# does not compile: `CS0686: Accessor
+    'G<T>.Changed.add' cannot implement interface member 'G.add_Changed(EventHandler)' for type 'G<T>'. Use an
+    explicit interface implementation.` A `@:nativeGen` generic class has no companion, and a static event needs
+    none, so both are written (`event-nativegen-generic-class`, `event-field-like-nativegen-generic`).
+  - An event of a generic interface (`event-generic-interface-is-an-error`): the add_ and remove_ that mention no
+    type parameter are its companion's, and gencs fails with an internal error in `partition` (gencs.ml:2822,
+    "Filters.check_cs_events makes sure methods are present"). hxc refuses.
+  - A Haxe override of an event's add_ or remove_ (`event-override-accessor-is-an-error`): gencs makes the base
+    method the event's private `_add_X`, so the override has nothing to override: `CS0115:
+    'Sub.add_Changed(EventHandler)': no suitable method found to override.`
+  - Reading or assigning the var of a custom event (`event-read-is-an-error`, `event-write-is-an-error`,
+    `event-static-read-is-an-error`): `CS0079: The event 'A.Changed' can only appear on the left hand side of += or -=`.
+    Reading or assigning a field-like event's var anywhere but its own class, a subclass, another class and a local
+    function's class included (`event-field-like-outside-class-is-an-error`): `CS0070: The event 'A.Changed' can only
+    appear on the left hand side of += or -= (except when used from within the type 'A')`. Inside its class the var
+    is the backing field in both.
+  - An event type that is no delegate (`event-non-delegate-type-is-an-error`): `CS0066: 'A.Changed': event must be of a
+    delegate type`.
+  - A class implementing an interface's event with a plain var of that name, Haxe interface or .NET
+    (`event-interface-plain-var-is-an-error`, `netlib-event-var-not-event-is-an-error`): `CS0535: 'Plain' does not
+    implement interface member 'IPing.Ping'` and `CS0470: Method 'Plain.add_Ping(EventHandler)' cannot implement
+    interface accessor 'IPing.Ping.add' for type 'Plain'. Use an explicit interface implementation.`
+  - Under `-dce full` hxc keeps an event's var, `add_X` and `remove_X` together (`event-dce-full-unread-var`,
+    `event-dce-full-static`, `event-dce-full-field-like`; `event-dce-full-keep` for `@:keep`). Haxe's own rule keeps
+    the methods only when the var is `@:keep`, and DCE removes a var Haxe code never reads, so gencs writes no event and
+    renames the surviving method to `_add_X`: its C# does not compile, `CS1061: 'A' does not contain a definition for
+    'add_Changed' and no accessible extension method 'add_Changed' accepting a first argument of type 'A' could be
+    found`. In hxc the event is there, and its handlers are called.
+  - One empty body (`event-one-empty-body`): gencs takes the event's kind from whichever of add_ and remove_ is declared
+    first, so with the empty one first it writes a field-like event and silently drops the other body (its run prints
+    `done` and not `add body`). hxc makes an event field-like only when both are empty, so the body runs.
+  - hxc hides every `@:event` var from reflection and writes no attribute on an event, as gencs does (gencs adds
+    `@:skipReflection` to all of them, Haxe's own check only to `(default, default)` ones), so a `@:meta` on the var
+    is dropped (`event-meta-on-var-is-dropped`, `event-haxeui-builder-vars-are-not-events`); the attributes of a
+    custom event's add_ stay on its private `_add_X`, and those of a field-like event's methods are dropped with them.
 
 ## Left to the builder
 

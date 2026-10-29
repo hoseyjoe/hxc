@@ -407,7 +407,7 @@ static class Program {
 	// `attrs:<type>`: the CustomAttribute rows of a type and its members, one line per row with its
 	// decoded arguments, so that a dump compares row for row with another compiler's. The type's own rows
 	// come first, then its generic parameters', interface implementations', fields', methods' (each
-	// followed by its generic parameters' and parameters', the return value as #0) and properties', each
+	// followed by its generic parameters' and parameters', the return value as #0), properties' and events', each
 	// kind sorted by name and signature so that member order does not matter; the rows of one parent keep
 	// the table's order.
 	static bool DumpAttributes(MetadataReader md, TypeNames types, string item) {
@@ -454,6 +454,11 @@ static class Program {
 				var p = md.GetPropertyDefinition(ph);
 				var text = "property " + p.DecodeSignature(types, typeArgs).ReturnType + " " + md.GetString(p.Name);
 				members.Add(("3 " + md.GetString(p.Name) + " " + text, () => Print(text, ph)));
+			}
+			foreach (var eh in t.GetEvents()) {
+				var e = md.GetEventDefinition(eh);
+				var text = "event " + types.Of(e.Type, typeArgs) + " " + md.GetString(e.Name);
+				members.Add(("4 " + md.GetString(e.Name) + " " + text, () => Print(text, eh)));
 			}
 			foreach (var (_, print) in members.OrderBy(x => x.key, StringComparer.Ordinal)) print();
 			return true;

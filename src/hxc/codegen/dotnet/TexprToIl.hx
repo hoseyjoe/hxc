@@ -954,11 +954,10 @@ class TexprToIl {
 
 	function staticField(c:TClass, cf:TClassField):{token:Int, sig:IlSigNorm} {
 		g.types.checkKept(TClassDecl(c));
+		// An event's var is its field-like backing field in its own class and has no value elsewhere.
+		if (EventToIl.isEventVar(cf)) EventToIl.checkValue(g, cls, c, cf);
 		var plan = g.ownerOf.get(cf);
-		if (plan == null || !g.fieldTokens.exists(cf)) {
-			if (EventToIl.isEventVar(cf)) throw EventToIl.noValue(c, cf);
-			throw "internal error: no field " + Globals.sTypePath(c.path) + "." + cf.name;
-		}
+		if (plan == null || !g.fieldTokens.exists(cf)) throw "internal error: no field " + Globals.sTypePath(c.path) + "." + cf.name;
 		return {token: g.memberOf(plan, staticOwner(plan), cf), sig: g.fieldSigs.get(cf)};
 	}
 

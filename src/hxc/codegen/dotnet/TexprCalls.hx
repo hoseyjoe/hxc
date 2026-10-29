@@ -998,9 +998,10 @@ class TexprCalls {
 	function instanceField(c:TClass, params:TParams, cf:TClassField):{token:Int, sig:IlSigNorm, owner:IlSigNorm} {
 		g.types.checkKept(TClassDecl(c));
 		cf = declaredField(c, cf);
+		// An event's var is its field-like backing field in its own class and has no value elsewhere.
+		if (EventToIl.isEventVar(cf)) EventToIl.checkValue(g, tl.cls, c, cf);
 		var plan = g.ownerOf.get(cf);
 		if (plan == null || !g.fieldTokens.exists(cf)) {
-			if (EventToIl.isEventVar(cf)) throw EventToIl.noValue(c, cf);
 			if (!TypeFunctions.isPhysicalField(cf)) throw new Unsupported("this kind of field access", false);
 			throw "internal error: no field " + Globals.sTypePath(c.path) + "." + cf.name;
 		}

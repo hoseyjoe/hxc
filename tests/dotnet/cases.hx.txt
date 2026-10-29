@@ -22652,6 +22652,307 @@ class P {
 ===
 [compile]
 P.hx:10: characters 35-42 : dotnet: the event A.Changed has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)
+# gencs's C#: P.hx(10,8): error CS0079: The event 'A.Changed' can only appear on the left hand side of += or -=
+--- event-write-is-an-error
+import cs.system.EventHandler;
+
+// Assigning the var of an event with add_/remove_ bodies is as much a CS0079 as reading it.
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+	public function reset() Changed = null;
+}
+
+class P {
+	static function main() {
+		new A().reset();
+	}
+}
+===
+[compile]
+P.hx:10: characters 26-40 : dotnet: the event A.Changed has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)
+# The same for a static event's var (gencs's C#: P.hx(8,22): error CS0079).
+--- event-static-read-is-an-error
+import cs.system.EventHandler;
+
+class A {
+	@:event static var SChanged:EventHandler;
+	static var handlers:EventHandler;
+	public static function add_SChanged(h:EventHandler):Void handlers = handlers + h;
+	public static function remove_SChanged(h:EventHandler):Void handlers = handlers - h;
+	public static function isEmpty() return SChanged == null;
+}
+
+class P {
+	static function main() {
+		Sys.println(A.isEmpty());
+	}
+}
+===
+[compile]
+P.hx:8: characters 42-50 : dotnet: the event A.SChanged has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)
+# gencs's C#: P.hx(12,24): error CS0070: The event 'A.Changed' can only appear on the left hand side of += or -=
+# (except when used from within the type 'A'), and the same at the other three uses below. A field-like event's
+# var is its backing field only inside its own class: not in a subclass, in another class, in a local function
+# (a class of its own) or for a static event from outside.
+--- event-field-like-outside-class-is-an-error
+import cs.system.EventHandler;
+
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Void {}
+	public function remove_Changed(h:EventHandler):Void {}
+	@:event static var SChanged:EventHandler;
+	public static function add_SChanged(h:EventHandler):Void {}
+	public static function remove_SChanged(h:EventHandler):Void {}
+	public function viaLambda() {
+		var f = () -> Changed == null;
+		return f();
+	}
+}
+
+class B extends A {
+	public function new() super();
+	public function has() return Changed != null;
+}
+
+@:access(A)
+class P {
+	static function main() {
+		var b = new B();
+		b.Changed = null;
+		Sys.println(A.SChanged == null);
+		Sys.println(b.viaLambda());
+	}
+}
+===
+[compile]
+P.hx:19: characters 31-38 : dotnet: the event A.Changed has empty add_/remove_ bodies, so it is field-like: only A itself can read or assign it (C# error CS0070)
+P.hx:26: characters 3-19 : dotnet: the event A.Changed has empty add_/remove_ bodies, so it is field-like: only A itself can read or assign it (C# error CS0070)
+P.hx:27: characters 15-25 : dotnet: the event A.SChanged has empty add_/remove_ bodies, so it is field-like: only A itself can read or assign it (C# error CS0070)
+P.hx:12: characters 17-24 : dotnet: the event A.Changed has empty add_/remove_ bodies, so it is field-like: only A itself can read or assign it (C# error CS0070)
+# gencs's C#: error CS0535: 'Plain' does not implement interface member 'IPing.Ping', and CS0470 for each accessor
+# method. A Haxe class implementing a Haxe interface's event needs an @:event var, as for a .NET interface's.
+--- event-interface-plain-var-is-an-error
+import cs.system.EventHandler;
+
+interface IPing {
+	@:event private var Ping:EventHandler;
+	function add_Ping(h:EventHandler):Void;
+	function remove_Ping(h:EventHandler):Void;
+}
+
+class Plain implements IPing {
+	public function new() {}
+	var Ping:EventHandler;
+	public function add_Ping(h:EventHandler):Void {}
+	public function remove_Ping(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		var i:IPing = new Plain();
+		Sys.println(i != null);
+	}
+}
+===
+[compile]
+P.hx:11: characters 2-24 : dotnet: Plain.Ping implements the event IPing.Ping, so it must be an @:event var (gencs: C# error CS0535)
+P.hx:18: characters 17-28 : dotnet: Plain (left out: Plain.Ping implements the event IPing.Ping, so it must be an @:event var (gencs: C# error CS0535)) is not supported yet
+# gencs's C# compiles this: Base's non-virtual event implements Sub's interface (C# adds a forwarding stub). The CLR
+# needs a virtual accessor, which hxc does not write for a superclass's event yet, so it refuses.
+--- event-interface-event-of-superclass-is-unsupported
+import cs.system.EventHandler;
+
+interface IPing {
+	@:event private var Ping:EventHandler;
+	function add_Ping(h:EventHandler):Void;
+	function remove_Ping(h:EventHandler):Void;
+}
+
+class Base {
+	public function new() {}
+	@:event var Ping:EventHandler;
+	public function add_Ping(h:EventHandler):Void {}
+	public function remove_Ping(h:EventHandler):Void {}
+}
+
+class Sub extends Base implements IPing {
+	public function new() super();
+}
+
+class P {
+	static function main() {
+		var i:IPing = new Sub();
+		i.add_Ping(null);
+	}
+}
+===
+[compile]
+P.hx:11: characters 10-32 : dotnet: an interface event (IPing.Ping) implemented by the non-virtual event of the superclass Base is not supported yet
+P.hx:22: characters 17-26 : dotnet: Sub (left out: an interface event (IPing.Ping) implemented by the non-virtual event of the superclass Base) is not supported yet
+# gencs fails with an internal error here (gencs.ml:2822, "Filters.check_cs_events makes sure methods are present"):
+# the add_ and remove_ of a generic interface that mention no type parameter are its companion's, so the class
+# model does not find them.
+--- event-generic-interface-is-an-error
+import cs.system.EventHandler;
+
+interface IG<T> {
+	@:event private var E:EventHandler;
+	function add_E(h:EventHandler):Void;
+	function remove_E(h:EventHandler):Void;
+	function get():T;
+}
+
+class P {
+	static function main() {
+		var x:IG<Int> = null;
+		Sys.println(x == null);
+	}
+}
+===
+[compile]
+P.hx:4: characters 10-37 : dotnet: an @:event var of a generic interface (E) is not supported yet
+P.hx:12: characters 3-24 : dotnet: IG (left out: an @:event var of a generic interface (E)) is not supported yet
+# A field-like event of a @:nativeGen generic class, which gencs's C# compiles: the backing field and the accessors'
+# loop are the class's own instantiation's. A static one is reached through the instantiation with object.
+--- event-field-like-nativegen-generic @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+@:nativeGen class G<T> {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Void {}
+	public function remove_Changed(h:EventHandler):Void {}
+	public function fire() if (Changed != null) Changed.Invoke("x", EventArgs.Empty);
+	@:event static var SChanged:EventHandler;
+	public static function add_SChanged(h:EventHandler):Void {}
+	public static function remove_SChanged(h:EventHandler):Void {}
+	public static function sfire() if (SChanged != null) SChanged.Invoke("s", EventArgs.Empty);
+}
+
+class P {
+	static function main() {
+		var g = new G<Int>();
+		g.add_Changed(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o)));
+		g.fire();
+		var g2 = new G<String>();
+		g2.fire();
+		G.add_SChanged(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("sgot " + o)));
+		G.sfire();
+		Sys.println(cs.Lib.toNativeType(G).GetEvents().Length);
+	}
+}
+===
+[run]
+got x
+sgot s
+2
+# Under -dce full an unread field-like @:event var is kept with its methods too (gencs's C#: error CS1061).
+--- event-dce-full-field-like + -dce full
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+class A {
+	public function new() {}
+	@:event var Auto:EventHandler;
+	public function add_Auto(h:EventHandler):Void {}
+	public function remove_Auto(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		var a = new A();
+		a.add_Auto(new EventHandler((o:Dynamic, e:EventArgs) -> {}));
+		var t = cs.Lib.toNativeType(A);
+		Sys.println(t.GetEvent("Auto") == null);
+		Sys.println(t.GetMethod("add_Auto").Attributes);
+		Sys.println(t.GetFields(new cs.Flags(cs.system.reflection.BindingFlags.NonPublic) | cs.system.reflection.BindingFlags.Instance).Length);
+	}
+}
+===
+[run]
+False
+Public, HideBySig, SpecialName
+1
+# Under -dce full an unread static @:event var is kept with both its methods, as an instance one is.
+--- event-dce-full-static + -dce full
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+class A {
+	@:event static var SChanged:EventHandler;
+	static var handlers:EventHandler;
+	public static function add_SChanged(h:EventHandler):Void handlers = handlers + h;
+	public static function remove_SChanged(h:EventHandler):Void handlers = handlers - h;
+	public static function fire(tag:String) if (handlers != null) handlers.Invoke(tag, EventArgs.Empty);
+	@:event static var SAuto:EventHandler;
+	public static function add_SAuto(h:EventHandler):Void {}
+	public static function remove_SAuto(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		A.add_SChanged(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o)));
+		A.fire("a");
+		A.add_SAuto(new EventHandler((o:Dynamic, e:EventArgs) -> {}));
+		var t = cs.Lib.toNativeType(A);
+		Sys.println(t.GetEvent("SChanged") == null);
+		Sys.println(t.GetEvent("SAuto") == null);
+		Sys.println(t.GetMethod("add_SChanged").Attributes);
+		Sys.println(t.GetMethod("add_SAuto").Attributes);
+	}
+}
+===
+[run]
+got a
+False
+False
+Public, Static, HideBySig, SpecialName
+Public, Static, HideBySig, SpecialName
+# gencs writes no attribute on an event: the @:meta of an @:event var is dropped. The custom event's attribute
+# on the Haxe add_ stays on its private body _add_, and the field-like event's accessors have only
+# CompilerGenerated.
+--- event-meta-on-var-is-dropped @gencs
+import cs.system.EventHandler;
+
+class A {
+	public function new() {}
+	@:meta(System.Obsolete("old")) @:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	@:meta(System.Obsolete("addbody")) public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+	@:meta(System.Obsolete("fl")) @:event var Auto:EventHandler;
+	public function add_Auto(h:EventHandler):Void {}
+	public function remove_Auto(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(A);
+		for (n in ["Changed", "Auto"]) {
+			var e = t.GetEvent(n);
+			Sys.println(n + " event attrs " + e.GetCustomAttributes(false).Length);
+		}
+		for (n in ["add_Changed", "_add_Changed", "remove_Changed", "add_Auto"]) {
+			var m = t.GetMethod(n, new cs.Flags(cs.system.reflection.BindingFlags.NonPublic) | cs.system.reflection.BindingFlags.Public | cs.system.reflection.BindingFlags.Instance);
+			Sys.println(n + " " + (m == null ? "none" : "attrs " + m.GetCustomAttributes(false).Length));
+		}
+	}
+}
+===
+[run]
+Changed event attrs 0
+Auto event attrs 0
+add_Changed attrs 0
+_add_Changed attrs 1
+remove_Changed attrs 0
+add_Auto attrs 1
 # One of add_/remove_ empty: gencs takes the event's kind from the one declared first, so here it writes a
 # field-like event and silently drops add_Changed's body. hxc makes a field-like event only when both are empty.
 --- event-one-empty-body @gencs
@@ -22680,6 +22981,229 @@ add body
 done
 [gencs]
 done
+# Several event shapes together: two event classes and a third in one module (their EventMap rows are grouped
+# per type), a subclass calling an inherited accessor, a Haxe interface implemented by a custom and a field-like
+# event, a generic delegate type for both kinds, a protected field-like event, closures of add_X (instance and
+# static) and GetEvents on each type.
+--- event-shapes @gencs
+import cs.system.EventHandler;
+import cs.system.EventHandler_1;
+import cs.system.EventArgs;
+
+interface IPing {
+	@:event private var Ping:EventHandler;
+	function add_Ping(h:EventHandler):Void;
+	function remove_Ping(h:EventHandler):Void;
+}
+
+class Base implements IPing {
+	public function new() {}
+	@:event var Ping:EventHandler;
+	var pings:EventHandler;
+	public function add_Ping(h:EventHandler):Void {
+		Sys.println("Base.add_Ping");
+		pings = pings + h;
+	}
+	public function remove_Ping(h:EventHandler):Void pings = pings - h;
+	@:event var Gen:EventHandler_1<EventArgs>;
+	var gens:EventHandler_1<EventArgs>;
+	public function add_Gen(h:EventHandler_1<EventArgs>):Void gens = gens + h;
+	public function remove_Gen(h:EventHandler_1<EventArgs>):Void gens = gens - h;
+	public function firePing() if (pings != null) pings.Invoke("base", EventArgs.Empty);
+	public function fireGen() if (gens != null) gens.Invoke("base", EventArgs.Empty);
+}
+
+class Sub extends Base {
+	public function new() super();
+	@:event var Auto:EventHandler;
+	public function add_Auto(h:EventHandler):Void {}
+	public function remove_Auto(h:EventHandler):Void {}
+	@:event var AutoGen:EventHandler_1<EventArgs>;
+	public function add_AutoGen(h:EventHandler_1<EventArgs>):Void {}
+	public function remove_AutoGen(h:EventHandler_1<EventArgs>):Void {}
+	@:protected @:event var Hidden:EventHandler;
+	public function add_Hidden(h:EventHandler):Void {}
+	public function remove_Hidden(h:EventHandler):Void {}
+	public function watch() {
+		add_Ping(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("sub watched " + o)));
+		add_Gen(new EventHandler_1<EventArgs>((o:Dynamic, e:EventArgs) -> Sys.println("sub generic " + o)));
+		add_Auto(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("auto " + o)));
+		add_AutoGen(new EventHandler_1<EventArgs>((o:Dynamic, e:EventArgs) -> Sys.println("auto generic " + o)));
+		add_Hidden(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("hidden " + o)));
+	}
+	public function fireAuto() {
+		if (Auto != null) Auto.Invoke("sub", EventArgs.Empty);
+		if (AutoGen != null) AutoGen.Invoke("sub", EventArgs.Empty);
+		if (Hidden != null) Hidden.Invoke("sub", EventArgs.Empty);
+	}
+}
+
+class Quiet implements IPing {
+	public function new() {}
+	@:event var Ping:EventHandler;
+	public function add_Ping(h:EventHandler):Void {}
+	public function remove_Ping(h:EventHandler):Void {}
+	@:event static var Shared:EventHandler;
+	public static function add_Shared(h:EventHandler):Void {}
+	public static function remove_Shared(h:EventHandler):Void {}
+	public function raise() if (Ping != null) Ping.Invoke("quiet", EventArgs.Empty);
+	public static function raiseShared() if (Shared != null) Shared.Invoke("shared", EventArgs.Empty);
+}
+
+class P {
+	static function names(t:cs.system.Type) {
+		var f = new cs.Flags(cs.system.reflection.BindingFlags.Public) | cs.system.reflection.BindingFlags.NonPublic | cs.system.reflection.BindingFlags.Instance
+			| cs.system.reflection.BindingFlags.Static | cs.system.reflection.BindingFlags.DeclaredOnly;
+		var evs = t.GetEvents(f);
+		return t.Name + " [" + [for (i in 0...evs.Length) evs[i].Name + ":" + evs[i].GetAddMethod(true).Attributes].join("; ") + "]";
+	}
+	static function main() {
+		var s = new Sub();
+		s.watch();
+		s.firePing();
+		s.fireGen();
+		s.fireAuto();
+		var i:IPing = s;
+		i.add_Ping(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("via interface " + o)));
+		s.firePing();
+		var q = new Quiet();
+		var qi:IPing = q;
+		var add = qi.add_Ping;
+		add(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("closure " + o)));
+		q.raise();
+		var sadd = Quiet.add_Shared;
+		sadd(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("static closure " + o)));
+		Quiet.raiseShared();
+		Reflect.callMethod(q, Reflect.field(q, "add_Ping"), [new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("reflected " + o))]);
+		q.raise();
+		Sys.println(names(cs.Lib.toNativeType(IPing)));
+		Sys.println(names(cs.Lib.toNativeType(Base)));
+		Sys.println(names(cs.Lib.toNativeType(Sub)));
+		Sys.println(names(cs.Lib.toNativeType(Quiet)));
+	}
+}
+===
+[run]
+Base.add_Ping
+sub watched base
+sub generic base
+auto sub
+auto generic sub
+hidden sub
+Base.add_Ping
+sub watched base
+via interface base
+closure quiet
+static closure shared
+closure quiet
+reflected quiet
+IPing [Ping:Public, Virtual, HideBySig, VtableLayoutMask, Abstract, SpecialName]
+Base [Gen:Public, HideBySig, SpecialName; Ping:Public, Final, Virtual, HideBySig, VtableLayoutMask, SpecialName]
+Sub [Hidden:Family, HideBySig, SpecialName; AutoGen:Public, HideBySig, SpecialName; Auto:Public, HideBySig, SpecialName]
+Quiet [Shared:Public, Static, HideBySig, SpecialName; Ping:Public, Final, Virtual, HideBySig, VtableLayoutMask, SpecialName]
+# -D dotnet-nullable's rows for events, against Roslyn's: the [dump] is the row dump of gencs's C# with the server app's
+# `#nullable enable` patch applied by hand (as for attrs-nullable-rows), in hxc's type spellings. An event has the
+# Nullable attribute of its type where its type's context is not that byte (Tied: 0), and does not count in the
+# context's tally, which has the field-like event's backing field and the accessors' parameters; the CompilerGenerated
+# rows of a field-like event's field and accessors, and of an interface's accessors, come after the Nullable ones.
+--- attrs-nullable-events @lib @module=tools.P @dump=attrs:tools.Ev,attrs:tools.Tied,attrs:tools.IEv,attrs:tools.Impl + -D dotnet-nullable=tools
+package tools;
+
+import cs.system.EventHandler;
+import cs.system.EventHandler_1;
+import cs.system.EventArgs;
+
+// Most members are 1, so the type's context is 1 and its events carry no attribute of their own.
+@:nativeGen class Ev {
+	public function new() {}
+	@:event var Custom:EventHandler;
+	var h:EventHandler;
+	public function add_Custom(x:EventHandler):Void h = h + x;
+	public function remove_Custom(x:EventHandler):Void h = h - x;
+	@:event var Auto:EventHandler_1<EventArgs>;
+	public function add_Auto(x:EventHandler_1<EventArgs>):Void {}
+	public function remove_Auto(x:EventHandler_1<EventArgs>):Void {}
+	@:event static var SAuto:EventHandler;
+	public static function add_SAuto(x:EventHandler):Void {}
+	public static function remove_SAuto(x:EventHandler):Void {}
+}
+
+// Eleven boxed ints and the base type are 0, against the events' accessors and bodies and two fields: the context
+// is 0, so the events, the fields and the accessors say 1 themselves.
+@:nativeGen class Tied {
+	public function new() {}
+	public var a:Null<Int> = null;
+	public var b:Null<Int> = null;
+	public var c:Null<Int> = null;
+	public var d:Null<Int> = null;
+	public var e:Null<Int> = null;
+	public var f:Null<Int> = null;
+	public var g:Null<Int> = null;
+	public var h2:Null<Int> = null;
+	public var i:Null<Int> = null;
+	public var j:Null<Int> = null;
+	public var k:Null<Int> = null;
+	@:event var Custom:EventHandler;
+	var h:EventHandler;
+	public function add_Custom(x:EventHandler):Void h = h + x;
+	public function remove_Custom(x:EventHandler):Void h = h - x;
+	@:event var Auto:EventHandler_1<EventArgs>;
+	public function add_Auto(x:EventHandler_1<EventArgs>):Void {}
+	public function remove_Auto(x:EventHandler_1<EventArgs>):Void {}
+}
+
+@:nativeGen interface IEv {
+	@:event private var Ping:EventHandler;
+	function add_Ping(h:EventHandler):Void;
+	function remove_Ping(h:EventHandler):Void;
+}
+
+@:nativeGen class Impl implements IEv {
+	public function new() {}
+	@:event var Ping:EventHandler;
+	public function add_Ping(h:EventHandler):Void {}
+	public function remove_Ping(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {}
+}
+===
+[dump]
+attrs tools.Ev
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  field [mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs> Auto :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field [mscorlib]System.EventHandler SAuto :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void add_Auto([mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs>) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void add_SAuto([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void remove_Auto([mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs>) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void remove_SAuto([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+attrs tools.Tied
+  field [mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs> Auto :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 1)
+  field [mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs> Auto :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  field [mscorlib]System.EventHandler h :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 1)
+  method void _add_Custom([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  method void _remove_Custom([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  method void add_Auto([mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs>) :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  method void add_Auto([mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs>) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void add_Custom([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  method void remove_Auto([mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs>) :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  method void remove_Auto([mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs>) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void remove_Custom([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  event [mscorlib]System.EventHandler`1<[mscorlib]System.EventArgs> Auto :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 1)
+  event [mscorlib]System.EventHandler Custom :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 1)
+attrs tools.IEv
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  method void add_Ping([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void remove_Ping([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+attrs tools.Impl
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  interfaceimpl tools.IEv :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  field [mscorlib]System.EventHandler Ping :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void add_Ping([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
+  method void remove_Ping([mscorlib]System.EventHandler) :: [System.Runtime]System.Runtime.CompilerServices.CompilerGeneratedAttribute()
 # A @:event(...) var with (default, set) access is no event (Haxe's check matches only (default, default) vars): it
 # compiles as the plain property it is, as haxeui's builder macro makes its @:event vars. gencs still hides it from
 # reflection, as it does every @:event var.
@@ -22713,6 +23237,121 @@ clicked
 True
 []
 [set_onClick,onClick]
+# Empty add_/remove_ bodies: gencs writes a field-like C# event, whose private backing field the class reads
+# and writes as the var, and whose compiler-generated accessors combine into it with Interlocked.CompareExchange.
+--- event-field-like @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+// Empty add_/remove_ bodies: gencs writes a field-like C# event (`public event EventHandler Changed;`), whose
+// compiler-generated accessors combine into a private backing field that the class reads as `Changed`.
+class Auto {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Void {}
+	public function remove_Changed(h:EventHandler):Void {}
+	public function fire(tag:String) {
+		if (Changed != null) Changed.Invoke(tag, EventArgs.Empty) else Sys.println("nobody for " + tag);
+	}
+	public function clear() Changed = null;
+
+	@:event static var SChanged:EventHandler;
+	public static function add_SChanged(h:EventHandler):Void {}
+	public static function remove_SChanged(h:EventHandler):Void {}
+	public static function sfire(tag:String) {
+		if (SChanged != null) SChanged.Invoke(tag, EventArgs.Empty) else Sys.println("nobody for " + tag);
+	}
+}
+
+class P {
+	static function main() {
+		var a = new Auto();
+		a.fire("a");
+		var h1 = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("one got " + o));
+		var h2 = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("two got " + o));
+		a.add_Changed(h1);
+		a.add_Changed(h2);
+		a.fire("b");
+		a.remove_Changed(h1);
+		a.fire("c");
+		a.clear();
+		a.fire("d");
+		Auto.add_SChanged(h1);
+		Auto.sfire("e");
+		var t = cs.Lib.toNativeType(Auto);
+		t.GetEvent("Changed").AddEventHandler(a, (cast h2 : cs.system.Delegate));
+		a.fire("f");
+		var e = t.GetEvent("Changed");
+		Sys.println("add " + e.GetAddMethod().Attributes);
+		var f = t.GetField("Changed", new cs.Flags(cs.system.reflection.BindingFlags.NonPublic) | cs.system.reflection.BindingFlags.Instance);
+		Sys.println("backing " + f.Name + " " + f.Attributes);
+		Sys.println(Reflect.fields(a));
+	}
+}
+===
+[run]
+nobody for a
+one got b
+two got b
+two got c
+nobody for d
+one got e
+two got f
+add Public, HideBySig, SpecialName
+backing Changed Private
+[]
+# A Haxe interface's @:event var: the interface declares the event, its accessors are the interface's add_/remove_
+# (abstract, SpecialName, CompilerGenerated), and the class's accessors implement them (virtual final newslot).
+--- event-haxe-interface @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+// A Haxe interface's @:event var is a C# interface event, whose accessors are the interface's add_/remove_.
+interface INotify {
+	@:event private var Changed:EventHandler;
+	function add_Changed(h:EventHandler):Void;
+	function remove_Changed(h:EventHandler):Void;
+}
+
+class Impl implements INotify {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void {
+		Sys.println("Impl.add_Changed");
+		handlers = handlers + h;
+	}
+	public function remove_Changed(h:EventHandler):Void {
+		handlers = handlers - h;
+	}
+	public function fire(tag:String) if (handlers != null) handlers.Invoke(tag, EventArgs.Empty);
+}
+
+class P {
+	static function main() {
+		var i:INotify = new Impl();
+		var h = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o));
+		i.add_Changed(h);
+		(cast i : Impl).fire("a");
+		i.remove_Changed(h);
+		(cast i : Impl).fire("b");
+		for (t in [cs.Lib.toNativeType(INotify), cs.Lib.toNativeType(Impl)]) {
+			var e = t.GetEvent("Changed");
+			Sys.println(t.Name + " " + e.Name + " add=" + e.GetAddMethod().Attributes);
+		}
+		// C#'s `((INotify)x).Changed += h`, through the interface's EventInfo.
+		cs.Lib.toNativeType(INotify).GetEvent("Changed").AddEventHandler(i, (cast h : cs.system.Delegate));
+		(cast i : Impl).fire("c");
+	}
+}
+===
+[run]
+Impl.add_Changed
+got a
+INotify Changed add=Public, Virtual, HideBySig, VtableLayoutMask, Abstract, SpecialName
+Impl Changed add=Public, Final, Virtual, HideBySig, VtableLayoutMask, SpecialName
+Impl.add_Changed
+got c
 # Overriding a .NET event's accessors with @:overload override: gencs writes C# methods (CS0115, and CS0534 for the
 # abstract event), while the CLR overrides add_Virt by name and signature, which hxc already does.
 # Kept as is: the base class's Event row describes the event.
@@ -22775,6 +23414,97 @@ Source.remove_Noted
 generic b
 haxe got c
 no static handler for d
+# A Haxe class implementing a .NET interface's event: C# subscribes with += through the interface
+# (callvirt INotify::add_Noted) and through EventInfo.AddEventHandler.
+--- netlib-event-implements-interface @gencs @netlib=EvLib
+import ev.*;
+class Src implements INotify {
+  public function new() {}
+  @:event var Noted:Note;
+  var h:Note;
+  public function add_Noted(n:Note):Void { Sys.println("Src.add_Noted"); h = h + n; }
+  public function remove_Noted(n:Note):Void { Sys.println("Src.remove_Noted"); h = h - n; }
+  public function fire(s:String) { if (h != null) h.Invoke(s); else Sys.println("nobody for " + s); }
+}
+class Plain {
+  public function new() {}
+  @:event var Changed:Note;
+  var h:Note;
+  public function add_Changed(n:Note):Void { h = h + n; }
+  public function remove_Changed(n:Note):Void { h = h - n; }
+  public function fire(s:String) { if (h != null) h.Invoke(s); else Sys.println("nobody for " + s); }
+  @:event static var SChanged:Note;
+  static var sh:Note;
+  public static function add_SChanged(n:Note):Void { sh = sh + n; }
+  public static function remove_SChanged(n:Note):Void { sh = sh - n; }
+  public static function sfire(s:String) { if (sh != null) sh.Invoke(s); else Sys.println("nobody for " + s); }
+}
+class P {
+  static function main() {
+    var s = new Src();
+    Use.Subscribe(s, "cs");
+    s.fire("a");
+    var i:INotify = s;
+    var d = new Note((x) -> Sys.println("haxe got " + x));
+    i.add_Noted(d);
+    s.fire("b");
+    i.remove_Noted(d);
+    s.fire("c");
+    Sys.println(Use.Events(cs.Lib.toNativeType(Src)));
+    Sys.println(Use.Reflect(s, "Noted"));
+    s.fire("d");
+    var p = new Plain();
+    Sys.println(Use.Events(cs.Lib.toNativeType(Plain)));
+    Sys.println(Use.Reflect(p, "Changed"));
+    p.fire("e");
+    Sys.println(Use.Reflect(cs.Lib.toNativeType(Plain), "SChanged"));
+    Plain.sfire("f");
+    p.add_Changed(d);
+    p.fire("g");
+    Reflect.callMethod(p, Reflect.field(p, "remove_Changed"), [d]);
+    p.fire("h");
+    Sys.println(Type.getInstanceFields(Plain).filter(f -> f.indexOf("Changed") >= 0));
+    Sys.println(Type.getClassFields(Plain).filter(f -> f.indexOf("Changed") >= 0));
+  }
+}
+===
+[run]
+Src.add_Noted
+cs got a
+Src.add_Noted
+cs got b
+haxe got b
+Src.remove_Noted
+cs got c
+Src events [Noted:Note]
+Src.add_Noted
+event Noted : Note attrs=None add=add_Noted(Public, Final, Virtual, HideBySig, VtableLayoutMask, SpecialName) remove=remove_Noted(Public, Final, Virtual, HideBySig, VtableLayoutMask, SpecialName) multicast=True
+cs got d
+reflected handler got d
+Plain events [SChanged:Note; Changed:Note]
+event Changed : Note attrs=None add=add_Changed(Public, HideBySig, SpecialName) remove=remove_Changed(Public, HideBySig, SpecialName) multicast=True
+reflected handler got e
+event SChanged : Note attrs=None add=add_SChanged(Public, Static, HideBySig, SpecialName) remove=remove_SChanged(Public, Static, HideBySig, SpecialName) multicast=True
+reflected handler got f
+reflected handler got g
+haxe got g
+reflected handler got h
+[add_Changed,remove_Changed,Changed]
+[add_SChanged,remove_SChanged,SChanged]
+# A plain var implementing a .NET interface's event: gencs's C# fails (CS0535, CS0470).
+--- netlib-event-var-not-event-is-an-error @netlib=EvLib
+import ev.*;
+class Src implements INotify {
+  public function new() {}
+  var Noted:Note;
+  public function add_Noted(n:Note):Void { Sys.println("add"); }
+  public function remove_Noted(n:Note):Void {}
+}
+class P { static function main() { Use.Subscribe(new Src(), "cs"); } }
+===
+[compile]
+P.hx:4: characters 3-18 : dotnet: Src.Noted implements the event ev.INotify.Noted, so it must be an @:event var (gencs: C# error CS0535)
+P.hx:8: characters 50-59 : dotnet: Src (left out: Src.Noted implements the event ev.INotify.Noted, so it must be an @:event var (gencs: C# error CS0535)) is not supported yet
 # `+=` on an event in inline C# stays outside the 4b subset.
 --- inline-cs-event-plus-equals-is-an-error @netlib=EvLib
 import ev.*;
