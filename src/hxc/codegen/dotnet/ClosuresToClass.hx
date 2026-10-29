@@ -616,7 +616,8 @@ class ClosuresToClass {
 		var rt = TypeFunctions.mk(TTypeExpr(TClassDecl(runtime)), TypeFunctions.tDynamic, pos);
 
 		var unpack:Array<TExpr> = [];
-		function declare(a:TFuncArg, value:TExpr) unpack.push(TypeFunctions.mk(TVarExpr(a.v, value), basic.tvoid, pos));
+		// No Haxe line wrote the unpacking: under -debug its statements are hidden points.
+		function declare(a:TFuncArg, value:TExpr) unpack.push(TypeFunctions.mk(TVarExpr(a.v, value), basic.tvoid, Position.nullPos));
 		// The Dynamic half of an argument, or its default value where it is null.
 		function fromDynamic(a:TFuncArg, d:TExpr):TExpr {
 			var t = a.v.type;

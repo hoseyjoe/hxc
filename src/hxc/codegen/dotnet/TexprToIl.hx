@@ -103,6 +103,8 @@ class TexprToIl {
 	// Whether lowering records sequence points: under -debug, in the methods that hold the user's
 	// expressions (TclassToIl.emitMethod).
 	public var points = false;
+	// The position of the statement, condition or catch whose point was recorded last.
+	var statementPos:Null<Position> = null;
 
 	public function new(g:DotnetCtx, code:IlCode, ret:IlSigNorm) {
 		this.g = g;
@@ -238,13 +240,40 @@ class TexprToIl {
 		if (!points) return;
 		switch (e.expr) {
 			case TBlock(_) | TVarExpr(_, null):
-			case _: code.point(e.pos);
+			case _:
+				statementPos = e.pos;
+				code.point(e.pos);
 		}
 	}
 
 	// A sequence point at a condition or a switch's subject, inside its parentheses.
 	function conditionPoint(e:TExpr):Void {
-		if (points) code.point(strip(e).pos);
+		if (!points) return;
+		statementPos = strip(e).pos;
+		code.point(statementPos);
+	}
+
+	// A sequence point at a catch's variable, where its handler starts with the exception on the stack.
+	function catchPoint(v:TVar):Void {
+		if (!points) return;
+		statementPos = v.pos;
+		code.point(v.pos, true);
+	}
+
+	// Before a part of the current statement that may record points of its own (a value block's
+	// statements, a value `try`'s catches): what resumePoint needs, or -1 without points.
+	function pointMark():Int {
+		return points ? code.pointEdits : -1;
+	}
+
+	// After that part, where the stack is empty again (a value block's last expression, the end of a
+	// value `try`): if it recorded points, the statement's again, so that the rest of the statement, and
+	// a throw in it, has the statement's line. The JIT maps a stack frame back to the last IL offset where
+	// the stack was empty, so a point anywhere later would not count.
+	function resumePoint(mark:Int, outer:Null<Position>):Void {
+		if (mark < 0) return;
+		statementPos = outer;
+		if (code.pointEdits != mark && outer != null) code.point(outer);
 	}
 
 	public function texpr(ret:Ret, e:TExpr):Void {
@@ -262,6 +291,8 @@ class TexprToIl {
 	public function finish():Void {
 		if (!code.reachable()) return;
 		if (!ret.match(LVoid)) throw Unsupported.bug(code.what + " falls off its end without a return (an hxc reachability bug)");
+		// No Haxe line wrote the implicit return.
+		if (points) code.point(null);
 		code.op(IlOps.RET, 0, 0);
 	}
 
@@ -940,10 +971,13 @@ class TexprToIl {
 			coerce(LVoid, ret);
 			return;
 		}
+		// A value block's statements have points of their own, inside the statement around the block, which
+		// takes its value's.
+		var outer = statementPos, mark = needVal(ret) ? pointMark() : -1;
 		for (i in 0...el.length) {
 			var s = el[i];
 			var r = i == el.length - 1 ? ret : RVoid;
-			if (!needVal(r)) statementPoint(s);
+			if (!needVal(r)) statementPoint(s) else resumePoint(mark, outer);
 			// The statement giving the block's value fails with the statement around the block: the code
 			// after it expects the value on the stack.
 			if (onError == null || needVal(r)) {

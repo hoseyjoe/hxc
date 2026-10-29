@@ -3,7 +3,7 @@
 #   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>] [-j <jobs>]
 #                       [--no-gencs-cache]
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
-# [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds]
+# [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds] [@optimized]
 # [+ extra hxc args]`, its source, `===`,
 # and the expected result. The source goes in the module's file; a source line `//// <path>` starts
 # another file, at <path> relative to the case directory (not in a @gencs case, whose source gencs gets
@@ -15,7 +15,9 @@
 # called from many threads at once), and a @stress-arrayforward case's HxcCheck's stress-arrayforward
 # (its P.toInts making the first cast of one array from many threads at once). A @runtimeconfig case
 # is not run; its <name>.runtimeconfig.json is the result instead, so a case can build for a .NET
-# version this machine does not have.
+# version this machine does not have. An @optimized case's program (hxc's build) runs with
+# DOTNET_TieredCompilation=0: the fully optimized JIT from the first call, as a stack trace from a
+# long-running program sees it.
 # ILVerify's report fails a case, unless the expectation has a [verify] section holding exactly that report.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
@@ -586,7 +588,7 @@ gencs_prepare() {
 # not exist yet, and prints its report.
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 limit t n netargs=()
+	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 limit t n netargs=()
 	for t in $tags; do
 		case "$t" in
 			@lib) lib=1 ;;
@@ -597,6 +599,7 @@ run_case() {
 			@run-timeout=*) ;;
 			@stress-fieldlookup | @stress-arrayforward) stress="$stress ${t#@}" ;;
 			@runtimeconfig) config=1 ;;
+			@optimized) optimized=1 ;;
 			@netlib | @netlib=?*) ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
 		esac
@@ -690,7 +693,11 @@ run_case() {
 		elif [ $lib = 0 ]; then
 			local rout hdll="a/P/${dll##*/}" args=()
 			[ $serial = 1 ] && args=(gen h.gen.txt)
-			run_program "$casedir" "$limit" "$hdll" "${args[@]}"
+			if [ $optimized = 1 ]; then
+				DOTNET_TieredCompilation=0 run_program "$casedir" "$limit" "$hdll" "${args[@]}"
+			else
+				run_program "$casedir" "$limit" "$hdll" "${args[@]}"
+			fi
 			rout="$ran"
 			[ -n "$rout" ] && result="${result:+$result$'\n'}[run]"$'\n'"$rout"
 			if [ $gencs = 1 ] && [ -f "$gencsroot/$name/out" ]; then

@@ -288,6 +288,8 @@ class TexprFlow {
 		var outermost = tl.tryDepth == 0;
 		var open = code.openTries;
 		var frames = tl.handlers.length;
+		// A value try's catches have points of their own, inside the statement around the try.
+		var outer = tl.statementPos, mark = needVal(ret) ? tl.pointMark() : -1;
 		tl.tryDepth++;
 		try {
 			code.beginTry();
@@ -296,6 +298,7 @@ class TexprFlow {
 			for (i in 0...catches.length) {
 				// The handler starts with the exception on the stack.
 				code.beginCatch(g.typeTokenOf(classes[i]));
+				tl.catchPoint(catches[i].v);
 				var local = {arg: false, index: code.addLocal(classes[i]), sig: classes[i]};
 				tl.store(local);
 				tl.slots.set(catches[i].v.id, local);
@@ -315,6 +318,7 @@ class TexprFlow {
 		tl.tryDepth--;
 		if (outermost) returnAfterTry();
 		code.markIfUsed(end);
+		tl.resumePoint(mark, outer);
 		if (t == null) tl.coerce(LVoid, ret) else if (code.reachable()) {
 			code.ldloc(result);
 			tl.coerce(t, ret);
@@ -327,6 +331,8 @@ class TexprFlow {
 		if (tl.retLabel < 0) return;
 		code.markIfUsed(tl.retLabel);
 		if (code.reachable()) {
+			// No Haxe line wrote it.
+			if (tl.points) code.point(null);
 			if (tl.ret.match(LVoid)) {
 				code.op(IlOps.RET, 0, 0);
 			} else {

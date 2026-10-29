@@ -451,43 +451,58 @@ static class Program {
 	// `document <name> <sha256|other> <csharp|language GUID>`, then for an EmbeddedSource entry whether its
 	// text has the document's hash.
 	static string DocumentLine(MetadataReader pdb, DocumentHandle h) {
-		var d = pdb.GetDocument(h);
-		var language = pdb.GetGuid(d.Language);
-		var line = "document " + pdb.GetString(d.Name) + " " + (pdb.GetGuid(d.HashAlgorithm) == Sha256Algorithm ? "sha256" : "other") + " "
-			+ (language == CSharpLanguage ? "csharp" : language.ToString());
-		foreach (var ch in pdb.GetCustomDebugInformation(h)) {
-			var cdi = pdb.GetCustomDebugInformation(ch);
-			if (pdb.GetGuid(cdi.Kind) != EmbeddedSourceKind) continue;
-			// A format of 0 is the text as it is; above 0, the length of the deflated text.
-			var blob = pdb.GetBlobBytes(cdi.Value);
-			var text = blob.AsSpan(4).ToArray();
-			if (BitConverter.ToInt32(blob, 0) > 0) {
-				using var inflated = new MemoryStream();
-				using (var deflate = new System.IO.Compression.DeflateStream(new MemoryStream(text), System.IO.Compression.CompressionMode.Decompress))
-					deflate.CopyTo(inflated);
-				text = inflated.ToArray();
+		try {
+			var d = pdb.GetDocument(h);
+			var language = pdb.GetGuid(d.Language);
+			var line = "document " + pdb.GetString(d.Name) + " " + (pdb.GetGuid(d.HashAlgorithm) == Sha256Algorithm ? "sha256" : "other") + " "
+				+ (language == CSharpLanguage ? "csharp" : language.ToString());
+			foreach (var ch in pdb.GetCustomDebugInformation(h)) {
+				var cdi = pdb.GetCustomDebugInformation(ch);
+				if (pdb.GetGuid(cdi.Kind) != EmbeddedSourceKind) continue;
+				// A format of 0 is the text as it is; above 0, the length of the deflated text.
+				var blob = pdb.GetBlobBytes(cdi.Value);
+				if (blob.Length < 4) return "bad pdb: document " + MetadataTokens.GetRowNumber(h) + "'s EmbeddedSource is " + blob.Length + " bytes";
+				var text = blob.AsSpan(4).ToArray();
+				if (BitConverter.ToInt32(blob, 0) > 0) {
+					using var inflated = new MemoryStream();
+					using (var deflate = new System.IO.Compression.DeflateStream(new MemoryStream(text), System.IO.Compression.CompressionMode.Decompress))
+						deflate.CopyTo(inflated);
+					text = inflated.ToArray();
+				}
+				line += SHA256.HashData(text).AsSpan().SequenceEqual(pdb.GetBlobBytes(d.Hash)) ? " embedded ok" : " embedded mismatch";
 			}
-			line += SHA256.HashData(text).AsSpan().SequenceEqual(pdb.GetBlobBytes(d.Hash)) ? " embedded ok" : " embedded mismatch";
+			return line;
+		} catch (Exception e) when (e is BadImageFormatException || e is InvalidDataException || e is ArgumentException) {
+			return "bad pdb: document " + MetadataTokens.GetRowNumber(h) + ": " + e.Message;
 		}
-		return line;
 	}
 
 	// `pdb:<type>`: each method of the type that has sequence points, in MethodDef order, then a line per
 	// point in IL order: its document and span, or `hidden`.
 	static bool DumpSequencePoints(MetadataReader md, MetadataReader pdb, string item) {
+		var rows = pdb.GetTableRowCount(TableIndex.MethodDebugInformation);
 		foreach (var h in md.TypeDefinitions) {
 			if (TypeName(md, h) != item) continue;
 			foreach (var mh in md.GetTypeDefinition(h).GetMethods()) {
-				var info = pdb.GetMethodDebugInformation(mh);
-				if (info.SequencePointsBlob.IsNil) continue;
-				Console.WriteLine("method " + item + "::" + md.GetString(md.GetMethodDefinition(mh).Name));
-				foreach (var sp in info.GetSequencePoints()) {
-					if (sp.IsHidden) {
-						Console.WriteLine("  hidden");
-						continue;
+				var name = item + "::" + md.GetString(md.GetMethodDefinition(mh).Name);
+				if (MetadataTokens.GetRowNumber(mh) > rows) {
+					Console.WriteLine("bad pdb: " + name + " has no MethodDebugInformation row");
+					continue;
+				}
+				try {
+					var info = pdb.GetMethodDebugInformation(mh);
+					if (info.SequencePointsBlob.IsNil) continue;
+					Console.WriteLine("method " + name);
+					foreach (var sp in info.GetSequencePoints()) {
+						if (sp.IsHidden) {
+							Console.WriteLine("  hidden");
+							continue;
+						}
+						var doc = pdb.GetString(pdb.GetDocument(sp.Document).Name);
+						Console.WriteLine("  " + doc + " " + sp.StartLine + ":" + sp.StartColumn + "-" + sp.EndLine + ":" + sp.EndColumn);
 					}
-					var doc = pdb.GetString(pdb.GetDocument(sp.Document).Name);
-					Console.WriteLine("  " + doc + " " + sp.StartLine + ":" + sp.StartColumn + "-" + sp.EndLine + ":" + sp.EndColumn);
+				} catch (Exception e) when (e is BadImageFormatException || e is ArgumentException) {
+					Console.WriteLine("bad pdb: " + name + ": " + e.Message);
 				}
 			}
 			return true;

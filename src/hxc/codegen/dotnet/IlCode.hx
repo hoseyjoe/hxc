@@ -138,6 +138,8 @@ class IlCode {
 
 	// The sequence points in IL order, when the PDB wants them (-debug); null otherwise.
 	public var points:Null<Array<SeqPoint>> = null;
+	// How many times `points` has changed, so a caller can tell whether lowering a part recorded any.
+	public var pointEdits(default, null):Int = 0;
 
 	// `what` names the method in internal errors.
 	public function new(what:String) {
@@ -152,13 +154,24 @@ class IlCode {
 
 	public inline function reachable():Bool return depth >= 0;
 
-	// A sequence point at the current offset, where reachable code starts on an empty stack. It replaces
-	// one already there, whose statement emitted no IL.
-	public function point(pos:Null<hxc.ast.Position>):Void {
-		if (points == null || depth != 0) return;
-		var p = {offset: code.length, pos: pos};
+	// A sequence point at the current offset, where reachable code starts on an empty stack, or with
+	// `onStack` anywhere reachable (a catch's start, with the exception on the stack). It replaces one
+	// already there, whose statement emitted no IL, and adds nothing after one at the same position.
+	public function point(pos:Null<hxc.ast.Position>, onStack = false):Void {
+		if (points == null || depth < 0 || depth != 0 && !onStack) return;
 		var last = points.length - 1;
-		if (last >= 0 && points[last].offset == p.offset) points[last] = p else points.push(p);
+		if (last >= 0 && points[last].offset == code.length) {
+			points.pop();
+			pointEdits++;
+			last--;
+		}
+		if (last >= 0 && samePos(points[last].pos, pos)) return;
+		points.push({offset: code.length, pos: pos});
+		pointEdits++;
+	}
+
+	static function samePos(a:Null<hxc.ast.Position>, b:Null<hxc.ast.Position>):Bool {
+		return a == null ? b == null : b != null && a.file == b.file && a.min == b.min && a.max == b.max;
 	}
 
 	function fail(msg:String):Dynamic {

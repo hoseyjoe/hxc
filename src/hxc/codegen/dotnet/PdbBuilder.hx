@@ -82,9 +82,10 @@ class PdbBuilder {
 	}
 
 	// A point's Document row and span, with 1-based columns and the end column exclusive; null for a
-	// hidden point.
+	// hidden point. A position hxc cannot resolve (Position.nullPos, file `?`, a negative offset, a file
+	// neither on disk nor in hxc's runtime) is hidden: Position.getInfos would give it line 1.
 	function resolve(pos:Null<Position>):Null<{doc:Int, line:Int, column:Int, endLine:Int, endColumn:Int}> {
-		if (pos == null) return null;
+		if (pos == null || pos.file == "?" || pos.min < 0 || pos.max < 0) return null;
 		var doc = document(pos.file);
 		if (doc == 0) return null;
 		var p = Position.getInfos(pos);
@@ -101,10 +102,11 @@ class PdbBuilder {
 	function document(file:String):Int {
 		var row = fileRows.get(file);
 		if (row != null) return row;
+		// A runtime file's text, through Position's cache, so that getInfos resolves its lines.
+		var content = RuntimeSources.content(file) != null ? Position.getFileContent(file) : null;
 		var name = paths.name(file);
 		row = nameRows.get(name);
 		if (row == null) {
-			var content = RuntimeSources.content(file);
 			var bytes = content != null ? Bytes.ofString(content)
 				: sys.FileSystem.exists(file) && !sys.FileSystem.isDirectory(file) ? sys.io.File.getBytes(file) : null;
 			if (bytes == null) {

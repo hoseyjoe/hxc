@@ -51,6 +51,7 @@ method P::main
   P.hx 5:14-5:17
   P.hx 6:10-6:15
   P.hx 6:17-6:20
+  hidden
 method P::f
   P.hx 8:22-8:30
 # Under -D keep-inline-positions an inlined function's statements keep their own file, so one method's
@@ -83,6 +84,7 @@ method P::main
   Q.hx 4:3-4:8
   Q.hx 5:3-5:8
   P.hx 4:3-4:8
+  hidden
 # The code after a throw is dropped, and so is its point; @:analyzer(ignore) keeps the analyzer
 # from dropping it first.
 --- pdb-dead-code @dump=pdb:P + -debug
@@ -102,6 +104,448 @@ Unhandled exception. x
 method P::main
   P.hx 3:7-3:29
   P.hx 4:4-4:9
+  hidden
+# An else branch, a do-while's condition after its body, a statement switch's subject and case
+# bodies, a call whose arguments span two lines, a catch at its variable, and a local function's own
+# method, whose unpacking of its arguments is hxc's and hidden (its constructor has no points); a method
+# that falls off its end returns at a hidden point.
+--- pdb-flow @dump=pdb:P,pdb:P_main_11__Fun + -debug
+class P {
+	static function main() {
+		var a = Sys.args().length;
+		if (a > 0) a++ else a--;
+		do a++ while (a < 3);
+		switch (a) {
+			case 3: Sys.println("three");
+			case 4: Sys.println("four");
+			case _: Sys.println("other");
+		}
+		var f = function(x:Int) return x * 2;
+		Sys.println(f(1)
+			+ f(2));
+		try {
+			Sys.println("try");
+		} catch (e:haxe.Exception) {
+			Sys.println("caught");
+		}
+	}
+}
+===
+[run]
+three
+6
+try
+[dump]
+method P::main
+  P.hx 3:3-3:29
+  P.hx 4:7-4:12
+  P.hx 4:14-4:17
+  P.hx 4:23-4:26
+  P.hx 5:6-5:9
+  P.hx 5:17-5:22
+  P.hx 6:11-6:12
+  P.hx 7:12-7:32
+  P.hx 8:12-8:31
+  P.hx 9:12-9:32
+  P.hx 11:3-11:40
+  P.hx 12:3-13:11
+  P.hx 15:4-15:22
+  P.hx 16:12-16:13
+  P.hx 17:4-17:25
+  hidden
+method P_main_11__Fun::__hx_invoke1_f
+  hidden
+  P.hx 11:27-11:39
+# A position hxc cannot resolve (here a macro's, in a file that does not exist) is a hidden point.
+--- pdb-unresolved-positions @lib @dump=doc:nowhere.hx,pdb:P + -debug
+import haxe.macro.Context;
+class P {
+	static macro function nowhere() {
+		return macro @:pos(Context.makePosition({min: 0, max: 5, file: "nowhere.hx"})) Sys.println("n");
+	}
+	public static function g() {
+		nowhere();
+		Sys.println("after");
+	}
+}
+===
+[dump]
+missing doc:nowhere.hx
+method P::g
+  hidden
+  P.hx 8:3-8:23
+  hidden
+# A value block's own statements (an inlined function's, under -D keep-inline-positions) do not take
+# the rest of the statement around it: a throw after them names the statement's line. @:analyzer(ignore)
+# keeps the analyzer from moving the block's statements out first.
+--- pdb-inline-value-block + -debug -D keep-inline-positions
+class P {
+	@:analyzer(ignore) static function main() {
+		try {
+			var b = Q.g() + baz();
+			Sys.println(b);
+		} catch (e:haxe.Exception) {
+			for (l in (cast e.native : cs.system.Exception).StackTrace.split("\n"))
+				if (l.indexOf(".hx:line ") >= 0) Sys.println("net " + StringTools.trim(l.substr(l.indexOf(" in ") + 4)));
+		}
+	}
+
+	static function baz():Int {
+		throw new haxe.Exception("boom");
+	}
+}
+//// Q.hx
+class Q {
+	public static inline function g():Int {
+		var y = Sys.args().length;
+		Sys.println("g " + y);
+		return y + 1;
+	}
+}
+===
+[run]
+g 0
+net P.hx:line 13
+net P.hx:line 4
+# Stack traces from a build with -debug name the .hx line of the throw and of each caller: Haxe's
+# CallStack.exceptionStack (filled only by a catch of a type other than haxe.Exception, as in Haxe), a
+# haxe.Exception's own stack (what details() prints) and .NET's trace. The traces are printed outside
+# main: a loop in a catch handler makes the JIT optimize the method, and it would inline outer.
+--- pdb-stack-trace + -debug
+class P {
+	static function main() {
+		try {
+			outer();
+		} catch (e:Dynamic) {
+			report(e);
+		}
+	}
+
+	static function outer() {
+		var n = 1;
+		inner(n);
+	}
+
+	static function inner(n:Int) {
+		if (n > 0) throw new haxe.Exception("boom");
+	}
+
+	static function report(e:Dynamic) {
+		for (item in haxe.CallStack.exceptionStack(true))
+			switch (item) {
+				case FilePos(_, file, line, _) if (file == "P.hx"): Sys.println("haxe " + file + ":" + line);
+				case _:
+			}
+		var hx:haxe.Exception = e;
+		for (item in hx.stack)
+			switch (item) {
+				case FilePos(_, file, line, _) if (file == "P.hx"): Sys.println("stack " + file + ":" + line);
+				case _:
+			}
+		for (l in (e : cs.system.Exception).StackTrace.split("\n"))
+			if (l.indexOf("P.hx:line ") >= 0) Sys.println("net " + StringTools.trim(l.substr(l.indexOf(" in ") + 4)));
+	}
+}
+===
+[run]
+haxe P.hx:16
+haxe P.hx:12
+haxe P.hx:4
+stack P.hx:16
+stack P.hx:12
+stack P.hx:4
+net P.hx:line 16
+net P.hx:line 12
+net P.hx:line 4
+# Under the fully optimized JIT the JIT may inline outer, dropping its frame; inner, which throws, keeps
+# its own.
+--- pdb-stack-trace-optimized @optimized + -debug
+class P {
+	static function main() {
+		try {
+			outer();
+		} catch (e:Dynamic) {
+			var lines = [for (item in haxe.CallStack.exceptionStack(true)) switch (item) {
+				case FilePos(_, "P.hx", line, _): line;
+				case _: -1;
+			}].filter(l -> l >= 0);
+			Sys.println("first " + lines[0]);
+			Sys.println("known " + Lambda.foreach(lines, l -> l == 4 || l == 17 || l == 21));
+		}
+	}
+
+	static function outer() {
+		var n = 1;
+		inner(n);
+	}
+
+	static function inner(n:Int) {
+		if (n > 0) throw new haxe.Exception("boom");
+	}
+}
+===
+[run]
+first 21
+known true
+--- pdb-trace-nested-block + -debug
+class P {
+	static function main() {
+		try {
+			nested(3);
+		} catch (e:Dynamic) {
+			report(e);
+		}
+	}
+
+	static function nested(n:Int) {
+		if (n > 0) {
+			var i = 0;
+			while (i < n) {
+				i++;
+				if (i == 2) throw new haxe.Exception("boom");
+			}
+		}
+	}
+
+	static function report(e:Dynamic) {
+		for (item in haxe.CallStack.exceptionStack(true))
+			switch (item) {
+				case FilePos(_, file, line, _) if (file == "P.hx"): Sys.println("haxe " + file + ":" + line);
+				case _:
+			}
+		for (l in (e : cs.system.Exception).StackTrace.split("\n"))
+			if (l.indexOf("P.hx:line ") >= 0) Sys.println("net " + StringTools.trim(l.substr(l.indexOf(" in ") + 4)));
+	}
+}
+===
+[run]
+haxe P.hx:15
+haxe P.hx:4
+net P.hx:line 15
+net P.hx:line 4
+# A local function's frame names its own line.
+--- pdb-trace-closure + -debug
+class P {
+	static function main() {
+		try {
+			caller();
+		} catch (e:Dynamic) {
+			report(e);
+		}
+	}
+
+	static function caller() {
+		var fail = function(n:Int) {
+			if (n > 0) throw new haxe.Exception("boom");
+		};
+		fail(1);
+	}
+
+	static function report(e:Dynamic) {
+		for (item in haxe.CallStack.exceptionStack(true))
+			switch (item) {
+				case FilePos(_, file, line, _) if (file == "P.hx"): Sys.println("haxe " + file + ":" + line);
+				case _:
+			}
+		for (l in (e : cs.system.Exception).StackTrace.split("\n"))
+			if (l.indexOf("P.hx:line ") >= 0) Sys.println("net " + StringTools.trim(l.substr(l.indexOf(" in ") + 4)));
+	}
+}
+===
+[run]
+haxe P.hx:12
+haxe P.hx:14
+haxe P.hx:4
+net P.hx:line 12
+net P.hx:line 14
+net P.hx:line 4
+# An inlined function's throw is at its call site (Haxe's positions for inlined code)...
+--- pdb-trace-inline + -debug
+class P {
+	static function main() {
+		try {
+			caller(1);
+		} catch (e:Dynamic) {
+			report(e);
+		}
+	}
+
+	static function caller(n:Int) {
+		var before = n + 1;
+		check(before);
+		Sys.println("after " + before);
+	}
+
+	static inline function check(n:Int) {
+		if (n > 0) throw new haxe.Exception("boom");
+	}
+
+	static function report(e:Dynamic) {
+		for (item in haxe.CallStack.exceptionStack(true))
+			switch (item) {
+				case FilePos(_, file, line, _) if (file == "P.hx"): Sys.println("haxe " + file + ":" + line);
+				case _:
+			}
+		for (l in (e : cs.system.Exception).StackTrace.split("\n"))
+			if (l.indexOf("P.hx:line ") >= 0) Sys.println("net " + StringTools.trim(l.substr(l.indexOf(" in ") + 4)));
+	}
+}
+===
+[run]
+haxe P.hx:12
+haxe P.hx:4
+net P.hx:line 12
+net P.hx:line 4
+# ...and under -D keep-inline-positions at its own line.
+--- pdb-trace-inline-kept + -debug -D keep-inline-positions
+class P {
+	static function main() {
+		try {
+			caller(1);
+		} catch (e:Dynamic) {
+			report(e);
+		}
+	}
+
+	static function caller(n:Int) {
+		var before = n + 1;
+		check(before);
+		Sys.println("after " + before);
+	}
+
+	static inline function check(n:Int) {
+		if (n > 0) throw new haxe.Exception("boom");
+	}
+
+	static function report(e:Dynamic) {
+		for (item in haxe.CallStack.exceptionStack(true))
+			switch (item) {
+				case FilePos(_, file, line, _) if (file == "P.hx"): Sys.println("haxe " + file + ":" + line);
+				case _:
+			}
+		for (l in (e : cs.system.Exception).StackTrace.split("\n"))
+			if (l.indexOf("P.hx:line ") >= 0) Sys.println("net " + StringTools.trim(l.substr(l.indexOf(" in ") + 4)));
+	}
+}
+===
+[run]
+haxe P.hx:17
+haxe P.hx:4
+net P.hx:line 17
+net P.hx:line 4
+# An instance field initializer, which the constructor runs, keeps its own line.
+--- pdb-trace-field-init + -debug
+class P {
+	var x = thrower();
+
+	function new() {}
+
+	static function main() {
+		try {
+			new P();
+		} catch (e:Dynamic) {
+			report(e);
+		}
+	}
+
+	static function thrower():Int {
+		throw new haxe.Exception("boom");
+	}
+
+	static function report(e:Dynamic) {
+		for (item in haxe.CallStack.exceptionStack(true))
+			switch (item) {
+				case FilePos(_, file, line, _) if (file == "P.hx"): Sys.println("haxe " + file + ":" + line);
+				case _:
+			}
+		for (l in (e : cs.system.Exception).StackTrace.split("\n"))
+			if (l.indexOf("P.hx:line ") >= 0) Sys.println("net " + StringTools.trim(l.substr(l.indexOf(" in ") + 4)));
+	}
+}
+===
+[run]
+haxe P.hx:15
+haxe P.hx:2
+haxe P.hx:8
+net P.hx:line 15
+net P.hx:line 2
+net P.hx:line 8
+# A catch that throws its exception again keeps the original throw's trace: `throw e` of a native catch's
+# own variable is a rethrow (`throw e` of a haxe.Exception, a new local, throws anew, as gencs's does).
+--- pdb-trace-rethrow + -debug
+class P {
+	static function main() {
+		try {
+			middle();
+		} catch (e:Dynamic) {
+			report(e);
+		}
+	}
+
+	static function middle() {
+		try {
+			inner();
+		} catch (e:cs.system.Exception) {
+			throw e;
+		}
+	}
+
+	static function inner() {
+		throw new haxe.Exception("boom");
+	}
+
+	static function report(e:Dynamic) {
+		for (item in haxe.CallStack.exceptionStack(true))
+			switch (item) {
+				case FilePos(_, file, line, _) if (file == "P.hx"): Sys.println("haxe " + file + ":" + line);
+				case _:
+			}
+		for (l in (e : cs.system.Exception).StackTrace.split("\n"))
+			if (l.indexOf("P.hx:line ") >= 0) Sys.println("net " + StringTools.trim(l.substr(l.indexOf(" in ") + 4)));
+	}
+}
+===
+[run]
+haxe P.hx:19
+haxe P.hx:12
+haxe P.hx:4
+net P.hx:line 19
+net P.hx:line 12
+net P.hx:line 4
+# A static initializer's throw reaches main as .NET's TypeInitializationException; its inner exception's
+# frames name the throw and the initializer's line.
+--- pdb-trace-static-init + -debug
+class P {
+	static function main() {
+		try {
+			Sys.println(Q.x);
+		} catch (e:haxe.Exception) {
+			var n:cs.system.Exception = cast e.native;
+			if (Std.isOfType(n, cs.system.TypeInitializationException)) n = n.InnerException;
+			for (item in haxe.NativeStackTrace.toHaxe(new cs.system.diagnostics.StackTrace(n, true)))
+				switch (item) {
+					case FilePos(_, file, line, _) if (file == "P.hx"): Sys.println("haxe " + file + ":" + line);
+					case _:
+				}
+			for (l in n.StackTrace.split("\n"))
+				if (l.indexOf("P.hx:line ") >= 0) Sys.println("net " + StringTools.trim(l.substr(l.indexOf(" in ") + 4)));
+		}
+	}
+}
+
+class Q {
+	public static var x:Int = thrower();
+
+	static function thrower():Int {
+		throw new haxe.Exception("boom");
+	}
+}
+===
+[run]
+haxe P.hx:23
+haxe P.hx:20
+net P.hx:line 23
+net P.hx:line 20
 # A file under the build folder is named relative to it, a Haxe std file by haxe-std/ and its path under
 # the std root; -D dotnet-pathmap replaces a path prefix, and the trace's own position keeps Haxe's name.
 --- pdb-names-relative @lib @module=pack.Mod @dump=doc:pack/Mod.hx,doc:haxe-std/haxe/Log.hx + -debug

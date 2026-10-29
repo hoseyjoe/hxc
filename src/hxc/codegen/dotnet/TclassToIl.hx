@@ -2434,10 +2434,14 @@ class TclassToIl {
 		lower.cls = plan.c;
 		if (m.hasThis) lower.thisSig = plan.thisSig;
 		// Under -debug, the methods that lower the user's expressions or field initializers have sequence
-		// points; the others, which hxc writes itself, have none.
+		// points; the others, which hxc writes itself, have none. A closure class's constructor is hxc's too.
 		if (g.pdb != null) {
 			code.points = [];
-			lower.points = m.kind.match(MField(_) | MImplicitCtor | MClonedCtor(_) | MStaticCtor(_) | MCctor);
+			lower.points = switch (m.kind) {
+				case MField(cf): !g.closureOwners.exists(plan.c) || cf != plan.c.constructor;
+				case MImplicitCtor | MClonedCtor(_) | MStaticCtor(_) | MCctor: !g.closureOwners.exists(plan.c);
+				case _: false;
+			}
 		}
 		try {
 			g.types.inParams(plan.classParams, [], () -> switch (m.kind) {
