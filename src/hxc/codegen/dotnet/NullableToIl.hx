@@ -155,7 +155,10 @@ class NullableToIl {
 		var interfaces = [for (s in plan.interfaces) {sig: s, bytes: oblivious(s)}];
 		for (i in interfaces) counts.add(common(i.bytes));
 		// gencs writes the `where` clauses of a @:nativeGen class outside its class model, and drops the others.
-		var constrained = plan.c != null && TypeFunctions.hasMeta(":nativeGen", plan.c.meta) && !HxGen.isHxGen(TClassDecl(plan.c));
+		// The classes of local functions are outside it in hxc's model, but gencs writes them no `where` clause
+		// (closuresToClass copies the parameters, not their constraints).
+		var constrained = plan.c != null && TypeFunctions.hasMeta(":nativeGen", plan.c.meta) && !HxGen.isHxGen(TClassDecl(plan.c))
+			&& !g.closureOwners.exists(plan.c);
 		if (constrained) checkParams(g, plan.c.params, plan.hxPath, plan.c.pos);
 		for (_ in plan.classParams) counts.add(2);
 		for (f in plan.fields) counts.add(common(bytes(f.sig)));

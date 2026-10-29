@@ -24583,3 +24583,31 @@ F events: SEv,Ev
 G`1 methods: add_SEv,remove_SEv,__hx_ctor__G,__hx_cast,st,G_cast,m1,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
 G`1 fields by token: t,sv,SEv,__hx_init_called
 G`1 events: SEv
+# -D dotnet-nullable on the classes of local functions in a constrained generic method of a class in gencs's class
+# model (the server app's ARCADataHelper.byId): gencs writes no `where` clause for the method or the closures'
+# classes, so the parameters' rows are the unconstrained ones (genericparam 2) and nothing is refused.
+--- attrs-nullable-closure-of-constrained-method @lib @module=tools.P @dump=attrs:tools.P,attrs:tools.P_byId_11__Fun`1 + -D dotnet-nullable=tools
+package tools;
+
+class Item {
+	public var id:Int = 0;
+	public function new() {}
+}
+
+class P {
+	static function read<T>(r:() -> T):T return r();
+	static function byId<T:Item>(items:() -> Array<T>, id:Int):T {
+		return read(() -> items().filter((i) -> i.id == id)[0]);
+	}
+}
+===
+[dump]
+attrs tools.P
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  method !!0 byId<T>(haxe.lang.Function, int32) genericparam T :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 2)
+  method !!0 read<T>(haxe.lang.Function) genericparam T :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 2)
+attrs tools.P_byId_11__Fun`1
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableContextAttribute(uint8 1)
+  type :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 0)
+  genericparam T :: [System.Runtime]System.Runtime.CompilerServices.NullableAttribute(uint8 2)
