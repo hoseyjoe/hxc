@@ -353,6 +353,7 @@ class CompanionToIl {
 			ctors: null,
 			emptyCtor: null,
 			properties: [],
+			events: [],
 			token: 0
 		};
 	}

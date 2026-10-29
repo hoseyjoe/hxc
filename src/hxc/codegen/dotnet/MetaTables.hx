@@ -100,6 +100,8 @@ class MetaTables {
 	public final classLayout:Array<Row> = [];
 	public final fieldLayout:Array<Row> = [];
 	public final standAloneSig:Array<Row> = [];
+	public final eventMap:Array<Row> = [];
+	public final event:Array<Row> = [];
 	public final propertyMap:Array<Row> = [];
 	public final property:Array<Row> = [];
 	public final methodSemantics:Array<Row> = [];
@@ -131,6 +133,8 @@ class MetaTables {
 			{table: T.IClassLayout, rows: classLayout, schema: [U16, U32, T.ITypeDef]},
 			{table: T.IFieldLayout, rows: fieldLayout, schema: [U32, T.IField]},
 			{table: T.IStandAloneSig, rows: standAloneSig, schema: [BLOB]},
+			{table: T.IEventMap, rows: eventMap, schema: [T.ITypeDef, T.IEvent]},
+			{table: T.IEvent, rows: event, schema: [U16, STR, T.ITypeDefOrRef]},
 			{table: T.IPropertyMap, rows: propertyMap, schema: [T.ITypeDef, T.IProperty]},
 			{table: T.IProperty, rows: property, schema: [U16, STR, BLOB]},
 			{table: T.IMethodSemantics, rows: methodSemantics, schema: [U16, T.IMethod, T.IHasSemantics]},
@@ -173,6 +177,7 @@ class MetaTables {
 		sortBy(methodSemantics, [2]);
 		sortBy(methodImpl, [0]);
 		checkSorted("InterfaceImpl", interfaceImpl, [0, 1]);
+		checkSorted("EventMap", eventMap, [0]);
 		checkSorted("PropertyMap", propertyMap, [0]);
 		checkSorted("GenericParam", genericParam, [2, 0]);
 		checkSorted("GenericParamConstraint", genericParamConstraint, [0]);

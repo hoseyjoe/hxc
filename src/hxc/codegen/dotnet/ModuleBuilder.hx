@@ -175,10 +175,22 @@ class ModuleBuilder {
 		return (T.IProperty << 24) | tables.property.length;
 	}
 
-	// A MethodSemantics row making `method` (a MethodDef token) the accessor of `property` (a Property token):
-	// Getter 0x0002, Setter 0x0001. The table is sorted by association when it is written.
-	public function methodSemantics(semantics:Int, method:Int, property:Int):Void {
-		tables.methodSemantics.push([semantics, row(method), coded(T.IHasSemantics, property)]);
+	// An Event row of the type `owner` (a TypeDef token) whose handler type is the delegate `type` (a TypeDefOrRef
+	// coded index), with its EventMap row when it is the type's first: added grouped by type, in TypeDef order,
+	// like Property rows.
+	public function event(owner:Int, name:String, type:Int):Int {
+		var last = tables.eventMap.length == 0 ? 0 : tables.eventMap[tables.eventMap.length - 1][0];
+		if (row(owner) < last) throw "internal error: Event rows are not grouped by type";
+		tables.event.push([0, heaps.strings.add(name), type]);
+		if (row(owner) != last) tables.eventMap.push([row(owner), tables.event.length]);
+		return (T.IEvent << 24) | tables.event.length;
+	}
+
+	// A MethodSemantics row making `method` (a MethodDef token) the accessor of `owner` (a Property or Event
+	// token): Getter 0x0002, Setter 0x0001, AddOn 0x0008, RemoveOn 0x0010. The table is sorted by association
+	// when it is written.
+	public function methodSemantics(semantics:Int, method:Int, owner:Int):Void {
+		tables.methodSemantics.push([semantics, row(method), coded(T.IHasSemantics, owner)]);
 	}
 
 	// A fat header must start 4-aligned; a tiny one, whose low two bits are 2, need not.

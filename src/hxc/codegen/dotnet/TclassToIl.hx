@@ -10,6 +10,7 @@ import hxc.core.TypeUnification;
 import hxc.codegen.dotnet.CompanionToIl;
 import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.EnumToIl;
+import hxc.codegen.dotnet.EventToIl;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.codegen.dotnet.HxGen;
 import hxc.codegen.dotnet.IlCode;
@@ -61,6 +62,9 @@ enum MethodKind {
 	MCompanionMember;
 	// The public accessor of a CLR property (PropertyPlan), its getter or (`isSet`) its setter.
 	MPropertyAccessor(p:PropertyPlan, isSet:Bool);
+	// The public accessor of a CLR event (EventPlan), its add or (`isRemove`) its remove, which calls the
+	// private body the Haxe add_X or remove_X became.
+	MEventAccessor(e:EventPlan, isRemove:Bool);
 	// An accessor of an indexer gencs gives a class with `__get` and `__set` (IndexerToIl), its getter or
 	// (`isSet`) its setter, which calls `get` or `set`; `explicit` the element type of the explicit
 	// implementation of the companion interface's indexer, null for the class's own.
@@ -160,6 +164,8 @@ typedef ClassPlan = {
 	emptyCtor:Null<MethodPlan>,
 	// The CLR properties, in the order gencs writes them.
 	properties:Array<PropertyPlan>,
+	// The CLR events (EventToIl): the statics', then the instances', each last declared first.
+	events:Array<EventPlan>,
 	token:Int,
 	// A StructLayout's Pack and Size, a ClassLayout row when either is not 0.
 	?layout:{pack:Int, size:Int}
@@ -222,6 +228,8 @@ class MethodAttrs {
 class SemanticsAttrs {
 	public static inline var SETTER = 0x1;
 	public static inline var GETTER = 0x2;
+	public static inline var ADD_ON = 0x8;
+	public static inline var REMOVE_ON = 0x10;
 }
 
 class FieldAttrs {
@@ -348,6 +356,7 @@ class TclassToIl {
 		var impls = isInterface ? null : interfaceImpls(g, c, interfaces);
 		var implementing = impls == null ? new ObjectMap<TClassField, Bool>() : impls.own;
 		var props = isInterface ? null : planProperties(g, c, interfaces, implementing);
+		var events = isInterface ? null : EventToIl.planEvents(g, c, implementing);
 		var path = DotnetNames.typePath(TClassDecl(c));
 		inline function site(name:String):AttributesToIl.AttrSite return {name: name, ns: path.ns};
 
@@ -359,6 +368,8 @@ class TclassToIl {
 		function addFields(list:Array<TClassField>, isStatic:Bool) {
 			for (cf in list) {
 				if (TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
+				// An @:event var is no field: its event has accessors (EventToIl).
+				if (events != null && events.vars.exists(cf)) continue;
 				// gencs's gen_prop makes a static property of a static @:property var with an accessor, its
 				// accessors private static _get_X/_set_X; hxc does not write one yet.
 				if (isStatic && !TypeFunctions.isPhysicalField(cf) && isCallVar(cf) && TypeFunctions.hasMeta(":property", cf.meta))
@@ -432,13 +443,16 @@ class TclassToIl {
 				if (isCtor && !isStruct && !hasSuperCall(f.expr)) checkParameterlessBase(g, c);
 				// The body of a property's accessor, which takes no slot: its public accessor does.
 				var prop = isStatic || props == null ? null : props.bodies.get(f);
-				var shape = prop == null && !isStatic && !isCtor && !isInterface && isOverride(f) ? overrideShape(g, c, TypeFunctions.extractParamTypes(c.params), f, sig) : OSame;
+				// And of an event's, static or not (EventToIl).
+				var event = events == null ? null : events.bodies.get(f);
+				var shape = prop == null && event == null && !isStatic && !isCtor && !isInterface && isOverride(f) ? overrideShape(g, c, TypeFunctions.extractParamTypes(c.params), f, sig) : OSame;
 				var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG;
 				if (prop != null) flags = MethodAttrs.PRIVATE | MethodAttrs.HIDE_BY_SIG;
+				else if (event != null) flags = MethodAttrs.PRIVATE | MethodAttrs.HIDE_BY_SIG | (isStatic ? MethodAttrs.STATIC : 0);
 				else if (isStatic) flags |= MethodAttrs.STATIC;
 				else if (isCtor) flags |= MethodAttrs.SPECIAL_NAME | MethodAttrs.RT_SPECIAL_NAME;
 				else flags |= virtuality(c, f, isStruct, implementing.exists(f) || CompanionToIl.isMember(g, c, f), !shape.match(OOverload(_)));
-				var name = isCtor ? ".ctor" : prop != null ? "_" + f.name : DotnetNames.fieldName(c, f.name);
+				var name = isCtor ? ".ctor" : prop != null || event != null ? "_" + f.name : DotnetNames.fieldName(c, f.name);
 				var generics = [for (p in f.params) p.name];
 				if (!shape.match(OSame) && TypeFunctions.hasClassFieldFlag(f, CfAbstract))
 					throw new Unsupported("abstract overrides that change the signature", true);
@@ -447,7 +461,7 @@ class TclassToIl {
 				if (made != null) for (b in made) methods.push(bridgeMethod(g, c, b));
 				switch (shape) {
 					case OSame:
-						if (prop == null && f == cf && cf.overloads.length == 0) for (o in optionalOverloads(g, c, f, flags, name, isStatic, isCtor, sig)) methods.push(o);
+						if (prop == null && event == null && f == cf && cf.overloads.length == 0) for (o in optionalOverloads(g, c, f, flags, name, isStatic, isCtor, sig)) methods.push(o);
 						var m:MethodPlan = {
 							kind: MField(f),
 							name: name,
@@ -464,6 +478,7 @@ class TclassToIl {
 						if (prop != null) {
 							if (f.name.charAt(0) == "s") prop.setBody = m else prop.getBody = m;
 						}
+						if (event != null) EventToIl.setBody(event, f, m);
 					case OInline(slot):
 						methods.push({
 							kind: MField(f),
@@ -560,7 +575,11 @@ class TclassToIl {
 			checkParameterlessBase(g, c);
 			methods.push(implicitCtor(c.pos, TypeFunctions.hasClassFlag(c, CAbstract)));
 		}
-		// gencs writes the properties after the constructors.
+		// gencs writes the events, then the properties, after the constructors.
+		if (events != null) for (e in events.list) {
+			methods.push(e.adder);
+			methods.push(e.remover);
+		}
 		if (props != null) for (p in props.list) {
 			if (p.getter != null) methods.push(p.getter);
 			if (p.setter != null) methods.push(p.setter);
@@ -664,6 +683,7 @@ class TclassToIl {
 			ctors: ctors,
 			emptyCtor: emptyCtor,
 			properties: staticProps.concat(props == null ? [] : props.list).concat(instanceProps).concat(indexers),
+			events: events == null ? [] : events.list,
 			token: 0,
 			layout: pseudo.layout
 		};
@@ -1694,6 +1714,7 @@ class TclassToIl {
 			ctors: null,
 			emptyCtor: null,
 			properties: [],
+			events: [],
 			token: 0
 		};
 	}
@@ -1765,6 +1786,7 @@ class TclassToIl {
 				g.methodSigs.set(cf, {ret: pair.accessor.ret, args: pair.accessor.args});
 			}
 		}
+		EventToIl.write(g, plan);
 		NullableToIl.write(g, plan);
 	}
 
@@ -1852,7 +1874,8 @@ class TclassToIl {
 		}
 		if (c != null) {
 			for (cf in c.orderedFields.concat(c.orderedStatics)) {
-				if (!cf.kind.match(Var(_)) || done.exists(cf) || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) continue;
+				// gencs writes no attribute on an event; the @:meta of its add_ and remove_ stay on their bodies.
+				if (!cf.kind.match(Var(_)) || done.exists(cf) || TypeFunctions.hasClassFieldFlag(cf, CfExtern) || EventToIl.isEventVar(cf)) continue;
 				var m = TypeFunctions.getMetaOpt(":meta", cf.meta);
 				if (m == null) continue;
 				var accessor = switch (cf.kind) {
@@ -1920,7 +1943,7 @@ class TclassToIl {
 	}
 
 	// A TypeDefOrRef coded index for a class signature.
-	static function sigToken(g:DotnetCtx, s:IlSigNorm):Int {
+	public static function sigToken(g:DotnetCtx, s:IlSigNorm):Int {
 		return switch (s) {
 			case LClass(p, []): g.mb.typeToken(p, false);
 			case _: ModuleBuilder.coded(hxc.codegen.dotnet.IlMeta.TableIdx.ITypeDefOrRef, g.typeTokenOf(s));
@@ -1952,7 +1975,7 @@ class TclassToIl {
 			case MInterfaceBridge(b): b.im.name;
 			case MCast(_, _): m.name;
 			case MCompanionMember: m.name;
-			case MPropertyAccessor(_, _): m.name;
+			case MPropertyAccessor(_, _) | MEventAccessor(_, _): m.name;
 			case MIndexer(_, _, _, _): m.name;
 			case MOptionalOverload(cf, _): cf.name;
 		}
@@ -2390,6 +2413,8 @@ class TclassToIl {
 					throw "internal error: a companion member with a body";
 				case MPropertyAccessor(p, isSet):
 					if (p.backing != null) backingAccessorBody(g, plan, p, isSet, code) else accessorBody(p, isSet, code);
+				case MEventAccessor(e, isRemove):
+					EventToIl.accessorBody(g, plan, e, isRemove, code);
 				case MIndexer(get, set, isSet, explicit):
 					IndexerToIl.emit(g, plan, m, get, set, isSet, explicit, code);
 				case MOptionalOverload(cf, n):

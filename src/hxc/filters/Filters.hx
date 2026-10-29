@@ -691,6 +691,44 @@ class Filters {
 		}
 	}
 
+	// Haxe's check_cs_events (filters.ml), for the C# target, on each class that is not extern: an @:event var
+	// with (default, default) access must be private (at the var), and its class must have the methods
+	// add_X and remove_X (same table, else "Missing event method" at the var), each of exactly the type
+	// (var type) -> Void (else the unification error at the method). The methods are marked @:pure(false),
+	// so the analyzer keeps a call of one whose body is empty. gencs also hides every @:event var, whatever
+	// its access, from reflection (@:skipReflection). Haxe marks the methods @:keep when the var is; hxc's DCE
+	// keeps the var and both methods together instead (Dce.eventSiblings).
+	public static function checkCsEvents(com:Context, t:ModuleType):Void {
+		var c = switch (t) {
+			case TClassDecl(c) if (!TypeFunctions.hasClassFlag(c, CExtern)): c;
+			case _: return;
+		}
+		function check(cf:TClassField, table:StringMap<TClassField>):Void {
+			if (!cf.kind.match(Var(_)) || !TypeFunctions.hasMeta(":event", cf.meta)) return;
+			if (!TypeFunctions.hasMeta(":skipReflection", cf.meta))
+				cf.meta = ([{name: ":skipReflection", params: [], pos: Position.nullPos}] : Metadata).concat(cf.meta);
+			if (!hxc.codegen.dotnet.EventToIl.isEventVar(cf)) return;
+			if (TypeFunctions.hasClassFieldFlag(cf, CfPublic)) com.addDiagnostic("@:event fields must be private", cf.pos);
+			var expected = TFun(new TSignature([new TSignatureArg("", false, cf.type)], com.basic.tvoid));
+			for (prefix in ["add_", "remove_"]) {
+				var m = table.get(prefix + cf.name);
+				if (m == null) {
+					com.addDiagnostic("Missing event method: " + prefix + cf.name, cf.pos);
+					continue;
+				}
+				try {
+					TypeUnification.typeEq(TypeUnification.defaultUnificationContext, m.type, expected);
+				} catch (e:UnifyError) {
+					for (line in hxc.core.TPrinting.unifyErrorLines(e.errors)) com.addDiagnostic(line, m.pos);
+				}
+				if (!hxc.context.PurityState.getPurityFromMeta(m.meta).match(Impure))
+					m.meta = ([{name: ":pure", params: [new Expr(EConst(CIdent("false")), Position.nullPos)], pos: Position.nullPos}] : Metadata).concat(m.meta);
+			}
+		}
+		for (cf in c.orderedFields) check(cf, c.fields);
+		for (cf in c.orderedStatics) check(cf, c.statics);
+	}
+
 	public static function checkVoidField(t:ModuleType):Void {
 		switch (t) {
 			case TClassDecl(c):
@@ -1024,6 +1062,8 @@ class Filters {
 				hxc.typing.Typer.ensureInheritedCtor(tctx, cls);
 			case _:
 		}
+		// Before the expression filters and DCE, whose purity and reachability decisions read the metadata it adds.
+		if (com.platform == Cs) for (t in newTypes) checkCsEvents(com, t);
 		{
 			var hc = Sys.getEnv("HXC_DBG_HEAPCENSUS");
 			if (hc != null) {

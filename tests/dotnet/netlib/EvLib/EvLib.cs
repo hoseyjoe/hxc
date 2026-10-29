@@ -52,6 +52,21 @@ namespace ev {
 			var call = System.Linq.Expressions.Expression.Convert(System.Linq.Expressions.Expression.Call(System.Linq.Expressions.Expression.Constant(target), mi, arg), typeof(object));
 			return System.Linq.Expressions.Expression.Lambda<System.Func<object>>(call).Compile()();
 		}
+		// C#'s `o.Name += handler` on an object only known at run time (a Type stands for its static event): subscribes a
+		// handler that prints `tag got <text>` and returns it, for Detach's `-=`.
+		public static Note Attach(object o, string name, string tag) {
+			var t = o as Type ?? o.GetType();
+			var target = o is Type ? null : o;
+			var e = t.GetEvent(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
+			Note d = s => Console.WriteLine(tag + " got " + s);
+			e.AddEventHandler(target, d);
+			return d;
+		}
+		public static void Detach(object o, string name, Note d) {
+			var t = o as Type ?? o.GetType();
+			var target = o is Type ? null : o;
+			t.GetEvent(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static).RemoveEventHandler(target, d);
+		}
 		static void Got(string s) { Console.WriteLine("reflected handler got " + s); }
 		public static string Events(Type t) {
 			var r = "";

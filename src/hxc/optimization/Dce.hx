@@ -243,6 +243,23 @@ class Dce {
 		curclass.module.extra.features.set(s, true);
 	}
 
+	// For a C# event (Filters.checkCsEvents), the other two of its three parts: an @:event var and its add_X and
+	// remove_X methods live and die together, as one C# event. Haxe keeps the methods only when the var is
+	// @:keep, so a var that is never read loses its event while gencs's C# still calls add_X (CS1061).
+	function eventSiblings(c:TClass, cf:TClassField, stat:Bool):Array<TClassField> {
+		if (!com.platform.match(Cs) || TypeFunctions.hasClassFlag(c, CExtern)) return [];
+		var name = cf.name;
+		if (cf.kind.match(Method(_))) {
+			if (StringTools.startsWith(name, "add_")) name = name.substr(4);
+			else if (StringTools.startsWith(name, "remove_")) name = name.substr(7);
+			else return [];
+		}
+		var tbl = stat ? c.statics : c.fields;
+		var v = tbl.get(name);
+		if (v == null || !hxc.codegen.dotnet.EventToIl.isEventVar(v)) return [];
+		return [for (n in [name, "add_" + name, "remove_" + name]) if (tbl.exists(n) && tbl.get(n) != cf) tbl.get(n)];
+	}
+
 	// Mark a field as kept.
 	function markField(c:TClass, cf:TClassField, stat:Bool):Void {
 		function add(cf:TClassField):Void {
@@ -252,6 +269,7 @@ class Dce {
 				addedFields.unshift({c: c, cf: cf, stat: stat});
 				markedFields.unshift(cf);
 				checkFeature(Context.sTypePath(c.path) + "." + cf.name);
+				for (s in eventSiblings(c, cf, stat)) markField(c, s, stat);
 			}
 		}
 		if (cf.name == "new") {

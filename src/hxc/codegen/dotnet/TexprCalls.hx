@@ -1000,6 +1000,7 @@ class TexprCalls {
 		cf = declaredField(c, cf);
 		var plan = g.ownerOf.get(cf);
 		if (plan == null || !g.fieldTokens.exists(cf)) {
+			if (EventToIl.isEventVar(cf)) throw EventToIl.noValue(c, cf);
 			if (!TypeFunctions.isPhysicalField(cf)) throw new Unsupported("this kind of field access", false);
 			throw "internal error: no field " + Globals.sTypePath(c.path) + "." + cf.name;
 		}

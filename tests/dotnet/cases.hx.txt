@@ -22165,3 +22165,630 @@ plain 5 ok
 True
 manifest src.Resources.a-x240-x159-x152-x128b
 manifest src.Resources.plain
+# Events defined in Haxe (4c): an @:event var with add_/remove_ bodies is a C# event whose public accessors call
+# the bodies, renamed _add_X/_remove_X and private (gencs's gen_event). Haxe calls of add_X/remove_X go through
+# the accessors (gencs writes s.Changed += h). The var is no field and no reflection field (@:skipReflection);
+# Type.getInstanceFields sees the event through .NET reflection.
+--- event-custom-instance-and-static @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+import cs.system.reflection.BindingFlags;
+
+class Src {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void {
+		Sys.println("add_Changed");
+		handlers = handlers + h;
+	}
+	public function remove_Changed(h:EventHandler):Void {
+		Sys.println("remove_Changed");
+		handlers = handlers - h;
+	}
+	public function fire(tag:String) {
+		if (handlers != null) handlers.Invoke(tag, EventArgs.Empty) else Sys.println("nobody for " + tag);
+	}
+
+	@:event static var SChanged:EventHandler;
+	static var shandlers:EventHandler;
+	public static function add_SChanged(h:EventHandler):Void {
+		Sys.println("add_SChanged");
+		shandlers = shandlers + h;
+	}
+	public static function remove_SChanged(h:EventHandler):Void {
+		shandlers = shandlers - h;
+	}
+	public static function sfire(tag:String) {
+		if (shandlers != null) shandlers.Invoke(tag, EventArgs.Empty) else Sys.println("nobody for " + tag);
+	}
+}
+
+class P {
+	static function main() {
+		var s = new Src();
+		var h = new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("handler got " + o));
+		s.add_Changed(h);
+		s.fire("a");
+		s.remove_Changed(h);
+		s.fire("b");
+		Src.add_SChanged(h);
+		Src.sfire("c");
+		Src.remove_SChanged(h);
+		Src.sfire("d");
+		// What C# sees: an event per @:event var, whose public accessors call the Haxe add_/remove_.
+		var t = cs.Lib.toNativeType(Src);
+		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var evs = t.GetEvents(all);
+		for (i in 0...evs.Length) {
+			var e = evs[i];
+			var add = e.GetAddMethod(true), rem = e.GetRemoveMethod(true);
+			Sys.println("event " + e.Name + " : " + e.EventHandlerType + " attrs=" + e.Attributes + " add=" + add.Name + " (" + add.Attributes + ")"
+				+ " remove=" + rem.Name + " (" + rem.Attributes + ")");
+		}
+		var fs = t.GetFields(all);
+		var names = [for (i in 0...fs.Length) fs[i].Name];
+		names.sort(Reflect.compare);
+		Sys.println("fields " + names);
+		// C#'s `s.Changed += h`, through reflection.
+		t.GetEvent("Changed").AddEventHandler(s, (cast h : cs.system.Delegate));
+		s.fire("e");
+		t.GetEvent("SChanged").AddEventHandler(null, (cast h : cs.system.Delegate));
+		Src.sfire("f");
+		// Haxe reflection reaches add_/remove_ as methods, and the event var is no field of it.
+		Reflect.callMethod(s, Reflect.field(s, "remove_Changed"), [h]);
+		s.fire("g");
+		Sys.println(Reflect.fields(s));
+		Sys.println(Type.getInstanceFields(Src).filter(f -> f.indexOf("Changed") >= 0));
+		Sys.println(Type.getClassFields(Src).filter(f -> f.indexOf("Changed") >= 0));
+	}
+}
+===
+[run]
+add_Changed
+handler got a
+remove_Changed
+nobody for b
+add_SChanged
+handler got c
+nobody for d
+event SChanged : System.EventHandler attrs=None add=add_SChanged (Public, Static, HideBySig, SpecialName) remove=remove_SChanged (Public, Static, HideBySig, SpecialName)
+event Changed : System.EventHandler attrs=None add=add_Changed (Public, HideBySig, SpecialName) remove=remove_Changed (Public, HideBySig, SpecialName)
+fields [handlers,shandlers]
+add_Changed
+handler got e
+add_SChanged
+handler got f
+remove_Changed
+nobody for g
+[handlers]
+[add_Changed,remove_Changed,Changed]
+[add_SChanged,remove_SChanged,SChanged]
+# C# code subscribes to a Haxe-defined event with `+=` and `-=` (here through reflection, from an object only known
+# at run time) and the Haxe body runs; for the static event the object is its Type.
+--- event-csharp-subscribes @gencs @netlib=EvLib
+import ev.*;
+
+class Src {
+	public function new() {}
+	@:event var Changed:Note;
+	var handlers:Note;
+	public function add_Changed(h:Note):Void {
+		Sys.println("add_Changed");
+		handlers = handlers + h;
+	}
+	public function remove_Changed(h:Note):Void {
+		Sys.println("remove_Changed");
+		handlers = handlers - h;
+	}
+	public function fire(s:String) {
+		if (handlers != null) handlers.Invoke(s) else Sys.println("nobody for " + s);
+	}
+
+	@:event static var SChanged:Note;
+	static var shandlers:Note;
+	public static function add_SChanged(h:Note):Void {
+		Sys.println("add_SChanged");
+		shandlers = shandlers + h;
+	}
+	public static function remove_SChanged(h:Note):Void {
+		Sys.println("remove_SChanged");
+		shandlers = shandlers - h;
+	}
+	public static function sfire(s:String) {
+		if (shandlers != null) shandlers.Invoke(s) else Sys.println("nobody for " + s);
+	}
+}
+
+class P {
+	static function main() {
+		var s = new Src();
+		var d = Use.Attach(s, "Changed", "cs");
+		s.fire("a");
+		Use.Detach(s, "Changed", d);
+		s.fire("b");
+		var t = cs.Lib.toNativeType(Src);
+		var sd = Use.Attach(t, "SChanged", "cs");
+		Src.sfire("c");
+		Use.Detach(t, "SChanged", sd);
+		Src.sfire("d");
+		// A Haxe subscriber beside C#'s.
+		var h = new Note(x -> Sys.println("haxe got " + x));
+		s.add_Changed(h);
+		var d2 = Use.Attach(s, "Changed", "cs2");
+		s.fire("e");
+		Use.Detach(s, "Changed", d2);
+		s.remove_Changed(h);
+		s.fire("f");
+	}
+}
+===
+[run]
+add_Changed
+cs got a
+remove_Changed
+nobody for b
+add_SChanged
+cs got c
+remove_SChanged
+nobody for d
+add_Changed
+add_Changed
+haxe got e
+cs2 got e
+remove_Changed
+remove_Changed
+nobody for f
+# @:protected on the var makes the C# event protected (gencs's get_fun_modifiers).
+--- event-protected @gencs
+import cs.system.EventHandler;
+import cs.system.reflection.BindingFlags;
+
+class A {
+	public function new() {}
+	@:protected @:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+}
+
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(A);
+		Sys.println(t.GetEvent("Changed") == null);
+		var e = t.GetEvent("Changed", new cs.Flags(BindingFlags.NonPublic) | BindingFlags.Instance);
+		Sys.println(e.Name + " add=" + e.GetAddMethod(true).Attributes + " remove=" + e.GetRemoveMethod(true).Attributes);
+	}
+}
+===
+[run]
+True
+Changed add=Family, HideBySig, SpecialName remove=Family, HideBySig, SpecialName
+# gencs declares a class's events in the reverse of their order in the class, statics first, so .NET
+# reflection lists them that way.
+--- event-declaration-order @gencs
+import cs.system.EventHandler;
+
+class A {
+	public function new() {}
+	@:event var First:EventHandler;
+	public function add_First(h:EventHandler):Void {}
+	public function remove_First(h:EventHandler):Void {}
+	@:event var Second:EventHandler;
+	public function add_Second(h:EventHandler):Void Sys.println("second");
+	public function remove_Second(h:EventHandler):Void Sys.println("second");
+	@:event static var SFirst:EventHandler;
+	public static function add_SFirst(h:EventHandler):Void {}
+	public static function remove_SFirst(h:EventHandler):Void {}
+	@:event var Third:EventHandler;
+	public function add_Third(h:EventHandler):Void Sys.println("third");
+	public function remove_Third(h:EventHandler):Void Sys.println("third");
+	@:event static var SSecond:EventHandler;
+	public static function add_SSecond(h:EventHandler):Void {}
+	public static function remove_SSecond(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		var evs = cs.Lib.toNativeType(A).GetEvents();
+		Sys.println([for (i in 0...evs.Length) evs[i].Name]);
+	}
+}
+===
+[run]
+[SSecond,SFirst,Third,Second,First]
+# Under -dce full a @:event var Haxe never reads is removed. gencs then renames add_ to a private _add_Changed,
+# DCE has removed the unused remove_Changed, and no event is written, so its C# fails:
+#   P.hx(18,5): error CS1061: 'A' does not contain a definition for 'add_Changed'
+# hxc keeps an @:event var and both its methods together, so the event is there.
+--- event-dce-full-unread-var + -dce full
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+	public function fire(tag:String) if (handlers != null) handlers.Invoke(tag, EventArgs.Empty);
+}
+
+class P {
+	static function main() {
+		var a = new A();
+		a.add_Changed(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o)));
+		a.fire("a");
+		var t = cs.Lib.toNativeType(A);
+		Sys.println(t.GetEvent("Changed") == null);
+		Sys.println(t.GetMethod("add_Changed").Attributes);
+	}
+}
+===
+[run]
+got a
+False
+Public, HideBySig, SpecialName
+# With @:keep the var survives -dce full, and so does its event (Haxe also keeps add_/remove_ then).
+--- event-dce-full-keep @gencs + -dce full
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+class A {
+	public function new() {}
+	@:keep @:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+	public function fire(tag:String) if (handlers != null) handlers.Invoke(tag, EventArgs.Empty);
+}
+
+class P {
+	static function main() {
+		var a = new A();
+		a.add_Changed(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o)));
+		a.fire("a");
+		var t = cs.Lib.toNativeType(A);
+		Sys.println(t.GetEvent("Changed") == null);
+		Sys.println(t.GetMethod("add_Changed").Attributes);
+	}
+}
+===
+[run]
+got a
+False
+Public, HideBySig, SpecialName
+# Haxe 4.3.7's own checks (filters.ml check_cs_events, run for cs on every non-extern class before DCE).
+--- event-public-is-an-error
+import cs.system.EventHandler;
+
+class A {
+	public function new() {}
+	@:event public var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Void {}
+	public function remove_Changed(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		new A();
+	}
+}
+===
+[compile]
+P.hx:5: characters 10-42 : @:event fields must be private
+#
+--- event-missing-method-is-an-error
+import cs.system.EventHandler;
+
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Void {}
+}
+
+class P {
+	static function main() {
+		new A();
+	}
+}
+===
+[compile]
+P.hx:5: characters 10-35 : Missing event method: remove_Changed
+#
+--- event-method-signature-is-an-error
+import cs.system.EventHandler;
+
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function add_Changed(h:EventHandler):Bool return true;
+	public function remove_Changed(h:String):Void {}
+}
+
+class P {
+	static function main() {
+		new A();
+	}
+}
+===
+[compile]
+P.hx:6: characters 2-62 : (h : cs.system.EventHandler) -> Bool should be cs.system.EventHandler -> Void
+P.hx:6: characters 2-62 : Cannot unify return types
+P.hx:6: characters 2-62 : Bool should be Void
+P.hx:7: characters 2-50 : (h : String) -> Void should be cs.system.EventHandler -> Void
+P.hx:7: characters 2-50 : Cannot unify argument 1
+P.hx:7: characters 2-50 : String should be cs.system.EventHandler
+# gencs's C#: P.cs(27,3): error CS0686: Accessor 'G<T>.Changed.add' cannot implement interface member
+# 'G.add_Changed(EventHandler)' for type 'G<T>'. Use an explicit interface implementation.
+--- event-generic-class-is-an-error
+import cs.system.EventHandler;
+
+// An @:event var of a generic class: gencs's event accessors would have to implement the companion interface's
+// add_/remove_, which C# refuses (CS0686).
+class G<T> {
+	public function new() {}
+	public var v:T;
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+}
+
+class P {
+	static function main() {
+		new G<Int>().add_Changed(null);
+	}
+}
+===
+[compile]
+P.hx:8: characters 10-35 : dotnet: an @:event var of a generic class (G.Changed) is not supported (gencs: C# error CS0686)
+# gencs's C#: P.cs(172,23): error CS0115: 'Sub.add_Changed(EventHandler)': no suitable method found to override.
+--- event-override-accessor-is-an-error
+import cs.system.EventHandler;
+
+// gencs makes Base's add_Changed the event's private body _add_Changed, so the override has nothing to
+// override (C# error CS0115).
+class Base {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+}
+
+class Sub extends Base {
+	override public function add_Changed(h:EventHandler):Void {
+		Sys.println("Sub.add_Changed");
+		super.add_Changed(h);
+	}
+}
+
+class P {
+	static function main() {
+		var b:Base = new Sub();
+		b.add_Changed(null);
+	}
+}
+===
+[compile]
+P.hx:14: lines 14-17 : dotnet: Sub.add_Changed overrides the add_ method of the event Base.Changed, which is no virtual method (gencs: C# error CS0115)
+# A @:nativeGen generic class has no companion interface for its accessors to clash with, so gencs's C# compiles its
+# events (and a static event of any generic class); their accessors reach the private bodies through the class's own
+# instantiation.
+--- event-nativegen-generic-class @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+@:nativeGen class G<T> {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void {
+		Sys.println("add");
+		handlers = handlers + h;
+	}
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+	public function fire() if (handlers != null) handlers.Invoke("x", EventArgs.Empty);
+	@:event static var SChanged:EventHandler;
+	static var sh:EventHandler;
+	public static function add_SChanged(h:EventHandler):Void {
+		Sys.println("sadd");
+		sh = sh + h;
+	}
+	public static function remove_SChanged(h:EventHandler):Void sh = sh - h;
+	public static function sfire() if (sh != null) sh.Invoke("s", EventArgs.Empty);
+}
+
+class P {
+	static function main() {
+		var g = new G<Int>();
+		g.add_Changed(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("got " + o)));
+		g.fire();
+		G.add_SChanged(new EventHandler((o:Dynamic, e:EventArgs) -> Sys.println("sgot " + o)));
+		G.sfire();
+		Sys.println(cs.Lib.toNativeType(G).GetEvents().Length);
+	}
+}
+===
+[run]
+add
+got x
+sadd
+sgot s
+2
+# A C# event has a delegate type (C# error CS0066); a Haxe function type is no delegate.
+--- event-non-delegate-type-is-an-error
+class A {
+	public function new() {}
+	@:event var Changed:Void->Void;
+	public function add_Changed(h:Void->Void):Void {}
+	public function remove_Changed(h:Void->Void):Void {}
+}
+class P { static function main() { new A(); } }
+===
+[compile]
+P.hx:3: characters 10-33 : dotnet: the type of the @:event var Changed is no .NET delegate type (C# error CS0066)
+P.hx:7: characters 36-43 : dotnet: A (left out: the type of the @:event var Changed is no .NET delegate type (C# error CS0066)) is not supported yet
+# gencs's C#: P.hx(10,17): error CS0079: The event 'A.Changed' can only appear on the left hand side of += or -=.
+--- event-read-is-an-error
+import cs.system.EventHandler;
+
+// An event with add_/remove_ bodies has no value: C# lets it appear only on the left of += and -= (CS0079).
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	var handlers:EventHandler;
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+	public function isEmpty() return Changed == null;
+}
+
+class P {
+	static function main() {
+		Sys.println(new A().isEmpty());
+	}
+}
+===
+[compile]
+P.hx:10: characters 35-42 : dotnet: the event A.Changed has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)
+# One of add_/remove_ empty: gencs takes the event's kind from the one declared first, so here it writes a
+# field-like event and silently drops add_Changed's body. hxc makes a field-like event only when both are empty.
+--- event-one-empty-body @gencs
+import cs.system.EventHandler;
+import cs.system.EventArgs;
+
+// One of add_/remove_ empty: gencs takes the event's kind from whichever of the two comes first in the class.
+// Here remove_ comes first and is empty, so gencs writes a field-like event and drops add_'s body.
+class A {
+	public function new() {}
+	@:event var Changed:EventHandler;
+	public function remove_Changed(h:EventHandler):Void {}
+	public function add_Changed(h:EventHandler):Void Sys.println("add body");
+}
+
+class P {
+	static function main() {
+		var a = new A();
+		a.add_Changed(new EventHandler((o:Dynamic, e:EventArgs) -> {}));
+		Sys.println("done");
+	}
+}
+===
+[run]
+add body
+done
+[gencs]
+done
+# A @:event(...) var with (default, set) access is no event (Haxe's check matches only (default, default) vars): it
+# compiles as the plain property it is, as haxeui's builder macro makes its @:event vars. gencs still hides it from
+# reflection, as it does every @:event var.
+--- event-haxeui-builder-vars-are-not-events @gencs
+class Btn {
+	public function new() {}
+	@:event(1) public var onClick(default, set):Void->Void;
+	function set_onClick(v:Void->Void):Void->Void {
+		Sys.println("set_onClick");
+		return onClick = v;
+	}
+	public function click() if (onClick != null) onClick() else Sys.println("no handler");
+}
+
+class P {
+	static function main() {
+		var b = new Btn();
+		b.click();
+		b.onClick = () -> Sys.println("clicked");
+		b.click();
+		Sys.println(cs.Lib.toNativeType(Btn).GetEvent("onClick") == null);
+		Sys.println(Reflect.fields(b));
+		Sys.println(Type.getInstanceFields(Btn).filter(f -> f.indexOf("onClick") >= 0));
+	}
+}
+===
+[run]
+no handler
+set_onClick
+clicked
+True
+[]
+[set_onClick,onClick]
+# Overriding a .NET event's accessors with @:overload override: gencs writes C# methods (CS0115, and CS0534 for the
+# abstract event), while the CLR overrides add_Virt by name and signature, which hxc already does.
+# Kept as is: the base class's Event row describes the event.
+--- netlib-event-accessor-override @netlib=EvLib
+import ev.*;
+class Der extends Base {
+  public function new() super();
+  var a:Note;
+  @:overload override public function add_Virt(n:Note):Void { Sys.println("Der.add_Virt"); super.add_Virt(n); }
+  @:overload override public function remove_Virt(n:Note):Void { super.remove_Virt(n); }
+  @:overload public function add_Abs(n:Note):Void { Sys.println("Der.add_Abs"); a = a + n; }
+  @:overload public function remove_Abs(n:Note):Void { a = a - n; }
+  public function fireAbs(s:String) if (a != null) a.Invoke(s);
+}
+class P {
+  static function main() {
+    var d = new Der();
+    Use.SubscribeVirt(d, "cs");
+    d.FireVirt("v");
+    Use.SubscribeAbs(d, "cs");
+    d.fireAbs("x");
+  }
+}
+===
+[run]
+Der.add_Virt
+Base.add_Virt
+cs virt got v
+Der.add_Abs
+cs abs got x
+# Consuming .NET events (4a; no gap): instance, static, generic EventHandler<T>, and through an interface.
+--- netlib-event-consume @gencs @netlib=EvLib
+import ev.*;
+class P { static function main() {
+  var s = new Source();
+  var d = new Note(x -> Sys.println("haxe got " + x));
+  s.add_Noted(d);
+  var i:INotify = s;
+  var d2 = new Note(x -> Sys.println("via interface " + x));
+  i.add_Noted(d2);
+  s.add_Generic(new cs.system.EventHandler_1<NoteArgs>((o:Dynamic, a:NoteArgs) -> Sys.println("generic " + a.Text)));
+  s.Fire("a");
+  i.remove_Noted(d2);
+  s.remove_Noted(d);
+  s.Fire("b");
+  Source.add_StaticNoted(d);
+  Source.FireStatic("c");
+  Source.remove_StaticNoted(d);
+  Source.FireStatic("d");
+} }
+===
+[run]
+Source.add_Noted
+Source.add_Noted
+haxe got a
+via interface a
+generic a
+Source.remove_Noted
+Source.remove_Noted
+generic b
+haxe got c
+no static handler for d
+# `+=` on an event in inline C# stays outside the 4b subset.
+--- inline-cs-event-plus-equals-is-an-error @netlib=EvLib
+import ev.*;
+
+// `+=` on an event in inline C#: C# subscribes through add_Noted, but compound assignment is outside the
+// inline C# subset; Haxe code writes s.add_Noted(d).
+class P {
+	static function main() {
+		var s = new Source();
+		var d = new Note(x -> Sys.println("inline got " + x));
+		cs.Syntax.code("{0}.Noted += {1}", s, d);
+		s.Fire("a");
+	}
+}
+===
+[compile]
+P.hx:9: characters 3-43 : dotnet: assignment is not part of the inline C# subset; write it in Haxe (a .NET indexer's setter is x.set_Item(a, b, value))
