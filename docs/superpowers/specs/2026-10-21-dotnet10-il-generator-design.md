@@ -850,8 +850,8 @@ and `List` copy, and two threads casting one array at once.
      - ILVerify of the server DLL against the deployed assemblies gives only the line gencs's DLL gives
        (`haxe.lang.BoxedPointer`'s unmanaged pointer). The server app's own no-browser export check, run on
        gencs's DLL and on hxc's, prints the same results. The CLR shape of the 24 classes 4a measured and of
-       the AI tool models has the same members as gencs's; only their order differs (static members, a
-       recorded divergence in *Interop divergences from gencs*).
+       the AI tool models had the same members as gencs's, and differed only in their order (static members);
+       4c writes gencs's order, so that difference is gone (`member-order-every-member-kind`).
      - Known limit: a field-level `addMetadata`/`addTypePatch` aimed at a class the core types load before
        the init macros run (`StringTools` on cs, `haxe.EnumTools`) is still missed, where Haxe 4.3.7
        applies it. Only class-level metadata (an added `@:build`) is applied late, and a late patch aimed at
@@ -1016,10 +1016,13 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   compile: `CS1061` for the missing `__set`, `CS0535` for the missing implementation, and `CS0111: Type
   'IVec' already defines a member called 'this' with the same parameter types` where the companion also
   declares `__get` and `__set`.
-- Member order within a type: gencs writes the static members (`__hx_ctor_*`, static methods, `.cctor`, static
-  fields) right after the constructors, while hxc writes them after the instance methods, in the order milestone 3
-  pinned. The members and the instance methods' order are identical; only reflection's enumeration order can see
-  the difference. Matching gencs's order is an optional 4c item.
+- Member order of events' private members: hxc writes every member in gencs's order (entry point, `.cctor`,
+  constructors, static events' accessors, `__hx_ctor_*`, statics, instance events' accessors, properties, the
+  instance members), except two things of an `@:event` var. The private bodies `_add_X` and `_remove_X` of a
+  non-field-like event are in their Haxe declaration position in hxc, where gencs writes them later and in reverse
+  (a static event's after the statics, an instance event's after the reflection members, before `ToString`), and
+  the backing field of a field-like event is in the instance fields' declaration order in hxc, where gencs puts it
+  ahead of the other instance fields. Only reflection's enumeration order of non-public members sees either.
 - A `@:struct` with no instance fields: Roslyn gives gencs's struct a ClassLayout row of size 1, and hxc
   writes no row. The runtime sizes both at 1 byte, so only metadata sees it: `Type.StructLayoutAttribute.Size`
   is 1 for gencs's struct and 0 for hxc's. hxc keeps this so that a DLL without explicit layout is unchanged

@@ -446,6 +446,25 @@ class TclassToIl {
 
 		var renamed = renamedTypeParams(c);
 		var methods:Array<MethodPlan> = [];
+		// gencs's order (C# source order, which Roslyn keeps): the entry point, the static constructor, the
+		// constructors, the static events, __hx_ctor_*, the statics, then the instance members.
+		if (g.mainClass == c && c.path.name != "Main") methods.push(entryPoint(c.pos));
+		var hasCctor = c.init != null;
+		for (f in fields) if (f.flags & FieldAttrs.STATIC != 0 && f.cf.expr != null) hasCctor = true;
+		if (hasCctor) {
+			methods.push({
+				kind: MCctor,
+				name: ".cctor",
+				flags: MethodAttrs.PRIVATE | MethodAttrs.STATIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME | MethodAttrs.RT_SPECIAL_NAME,
+				hasThis: false,
+				ret: LVoid,
+				args: [],
+				argNames: [],
+				generics: [],
+				pos: c.pos,
+				token: 0
+			});
+		}
 		function addMethod(cf:TClassField, isStatic:Bool, isCtor:Bool) {
 			switch (cf.kind) {
 				case Method(MethMacro | MethDynamic): return;
@@ -609,8 +628,26 @@ class TclassToIl {
 			checkParameterlessBase(g, c);
 			methods.push(implicitCtor(c.pos, TypeFunctions.hasClassFlag(c, CAbstract)));
 		}
-		// gencs writes the events, then the properties, after the constructors.
-		if (events != null) for (e in events.list) {
+		// gencs writes the static events, then __hx_ctor_*, then the statics, after the constructors.
+		if (events != null) for (e in events.list) if (e.isStatic) {
+			methods.push(e.adder);
+			methods.push(e.remover);
+		}
+		// gencs adds each overload's static constructor in front of the earlier ones, after the main one:
+		// the overloads come in reverse, the main one (listed last) still last.
+		if (staticCtors.length > 1) {
+			var main = staticCtors.pop();
+			staticCtors.reverse();
+			staticCtors.push(main);
+		}
+		for (m in staticCtors) methods.push(m);
+		if (isStruct && impls != null && (impls.bridges.length > 0 || impls.overloads.keys().hasNext()))
+			throw new Unsupported("interface methods implemented with other types", true);
+		var casts = CompanionToIl.castMethods(g, c);
+		for (m in casts) if (!m.hasThis) methods.push(m);
+		for (cf in c.orderedStatics) addMethod(cf, true, false);
+		// Then the instance events, then the properties.
+		if (events != null) for (e in events.list) if (!e.isStatic) {
 			methods.push(e.adder);
 			methods.push(e.remover);
 		}
@@ -618,12 +655,8 @@ class TclassToIl {
 			if (p.getter != null) methods.push(p.getter);
 			if (p.setter != null) methods.push(p.setter);
 		}
-		if (isStruct && impls != null && (impls.bridges.length > 0 || impls.overloads.keys().hasNext()))
-			throw new Unsupported("interface methods implemented with other types", true);
 		// gencs adds each bridge in front of the class's fields, so the last one made comes first, after
 		// the static __hx_cast and before the cast methods.
-		var casts = CompanionToIl.castMethods(g, c);
-		for (m in casts) if (!m.hasThis) methods.push(m);
 		if (impls != null) for (b in impls.bridges) methods.push(bridgeMethod(g, c, b));
 		for (m in casts) if (m.hasThis) methods.push(m);
 		for (cf in c.orderedFields) addMethod(cf, false, false);
@@ -655,33 +688,6 @@ class TclassToIl {
 			var surface = nullSurface(c, g.types.toSig(TInst(c, TypeFunctions.extractParamTypes(c.params))));
 			var slot = 0;
 			for (m in surface) methods.insert(slot++, m);
-		}
-		// gencs adds each overload's static constructor in front of the earlier ones, after the main one:
-		// the overloads come in reverse, the main one (listed last) still last.
-		if (staticCtors.length > 1) {
-			var main = staticCtors.pop();
-			staticCtors.reverse();
-			staticCtors.push(main);
-		}
-		for (m in staticCtors) methods.push(m);
-		for (cf in c.orderedStatics) addMethod(cf, true, false);
-		if (g.mainClass == c && c.path.name != "Main") methods.push(entryPoint(c.pos));
-
-		var hasCctor = c.init != null;
-		for (f in fields) if (f.flags & FieldAttrs.STATIC != 0 && f.cf.expr != null) hasCctor = true;
-		if (hasCctor) {
-			methods.push({
-				kind: MCctor,
-				name: ".cctor",
-				flags: MethodAttrs.PRIVATE | MethodAttrs.STATIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME | MethodAttrs.RT_SPECIAL_NAME,
-				hasThis: false,
-				ret: LVoid,
-				args: [],
-				argNames: [],
-				generics: [],
-				pos: c.pos,
-				token: 0
-			});
 		}
 
 		checkDistinctSignatures(methods);

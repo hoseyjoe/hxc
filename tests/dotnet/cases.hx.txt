@@ -172,11 +172,11 @@ class P {
 ===
 [dump]
 type public beforefieldinit P extends haxe.lang.HxObject
+  method public static hidebysig void Main()
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
   method family static hidebysig void __hx_ctor__P(P)
   method public static hidebysig void main()
-  method public static hidebysig void Main()
 entrypoint P::Main
 --- entry-point-class-for-main @module=Main @dump=Main,EntryPoint__Main,entrypoint
 class Main {
@@ -800,6 +800,8 @@ type public beforefieldinit pack.Thing extends haxe.lang.HxObject implements hax
   field public string other
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor_pack_Thing(pack.Thing)
+  method public static hidebysig pack.Thing make()
   method public virtual hidebysig newslot void run(int32)
   method public hidebysig void stop()
   method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
@@ -808,15 +810,13 @@ type public beforefieldinit pack.Thing extends haxe.lang.HxObject implements hax
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
-  method family static hidebysig void __hx_ctor_pack_Thing(pack.Thing)
-  method public static hidebysig pack.Thing make()
 type public sealed beforefieldinit pack.Sealed extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
+  method private static hidebysig void __hx_ctor_pack_Sealed(pack.Sealed)
   method public hidebysig void go()
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
-  method private static hidebysig void __hx_ctor_pack_Sealed(pack.Sealed)
 --- structs-and-field-updates @dump=Vec
 @:struct class Vec {
 	public var x:Int;
@@ -946,26 +946,26 @@ Ex 6
 type public abstract beforefieldinit Shape extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor__Shape(Shape)
   method public virtual hidebysig newslot abstract float64 area()
   method public virtual hidebysig newslot string describe()
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
-  method family static hidebysig void __hx_ctor__Shape(Shape)
 type public sealed beforefieldinit Fin extends haxe.lang.HxObject implements Named, haxe.lang.IHxObject
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
+  method private static hidebysig void __hx_ctor__Fin(Fin)
   method public final virtual hidebysig newslot string name()
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
-  method private static hidebysig void __hx_ctor__Fin(Fin)
 type public beforefieldinit Over extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor__Over(Over)
   method public virtual hidebysig newslot string f(int32)
   method public virtual hidebysig newslot string f(string)
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
-  method family static hidebysig void __hx_ctor__Over(Over)
 # A Dynamic method overridden with a String return, and a cast from G<String> to G<Int>. This was
 # class-declarations-that-are-errors, whose cast was refused until plan 3c; it goes through __hx_cast now, as
 # gencs's does.
@@ -1239,6 +1239,7 @@ type public beforefieldinit pack.Box`1<T> extends haxe.lang.HxObject implements 
   field public !0 value
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(!0)
+  method family static hidebysig void __hx_ctor_pack_Box<T_c>(pack.Box`1<!!0>, !!0)
   method public static hidebysig object __hx_cast<T_c_c>(pack.Box)
   method public virtual hidebysig newslot object pack_Box_cast<T_c>()
   method public virtual hidebysig newslot !0 pick<S>(!!0)
@@ -1248,7 +1249,6 @@ type public beforefieldinit pack.Box`1<T> extends haxe.lang.HxObject implements 
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
-  method family static hidebysig void __hx_ctor_pack_Box<T_c>(pack.Box`1<!!0>, !!0)
 --- constrained-generic-names @lib @module=pack.Keyed @dump=pack.Keyed`2,pack.Based`1
 package pack;
 class Base {
@@ -1281,6 +1281,7 @@ type public beforefieldinit pack.Keyed`2<K, V> extends haxe.lang.HxObject implem
   field public Array`1<!0> keys
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor()
+  method family static hidebysig void __hx_ctor_pack_Keyed<K_c, V_c>(pack.Keyed`2<!!0, !!1>)
   method public static hidebysig object __hx_cast<K_c_c, V_c_c>(pack.Keyed)
   method public virtual hidebysig newslot object pack_Keyed_cast<K_c, V_c>()
   method public virtual hidebysig newslot void add(!0, !1)
@@ -1291,11 +1292,11 @@ type public beforefieldinit pack.Keyed`2<K, V> extends haxe.lang.HxObject implem
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
-  method family static hidebysig void __hx_ctor_pack_Keyed<K_c, V_c>(pack.Keyed`2<!!0, !!1>)
 type public beforefieldinit pack.Based`1<K> extends haxe.lang.HxObject implements haxe.lang.IGenericObject, pack.Based
   field public !0 k
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(!0)
+  method family static hidebysig void __hx_ctor_pack_Based<K_c>(pack.Based`1<!!0>, !!0)
   method public static hidebysig object __hx_cast<K_c_c>(pack.Based)
   method public virtual hidebysig newslot object pack_Based_cast<K_c>()
   method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
@@ -1303,7 +1304,6 @@ type public beforefieldinit pack.Based`1<K> extends haxe.lang.HxObject implement
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
-  method family static hidebysig void __hx_ctor_pack_Based<K_c>(pack.Based`1<!!0>, !!0)
 --- constrained-type-parameters @gencs
 class Base {
 	public var name:String;
@@ -1517,9 +1517,13 @@ type public Counter`1<T> extends haxe.lang.HxObject implements Counter, haxe.lan
   field public static int32 made
   field public static string log
   field private static bool __hx_init_called
+  method private static hidebysig specialname rtspecialname void .cctor()
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(!0)
+  method family static hidebysig void __hx_ctor__Counter<T_c>(Counter`1<!!0>, !!0)
   method public static hidebysig object __hx_cast<T_c_c>(Counter)
+  method public static hidebysig int32 start()
+  method public static hidebysig string describe()
   method public virtual hidebysig newslot object Counter_cast<T_c>()
   method public virtual hidebysig newslot object boxed()
   method public virtual hidebysig newslot !0 orDefault(bool)
@@ -1530,10 +1534,6 @@ type public Counter`1<T> extends haxe.lang.HxObject implements Counter, haxe.lan
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
   method public virtual hidebysig object __hx_invokeField(string, int32, object[])
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
-  method family static hidebysig void __hx_ctor__Counter<T_c>(Counter`1<!!0>, !!0)
-  method public static hidebysig int32 start()
-  method public static hidebysig string describe()
-  method private static hidebysig specialname rtspecialname void .cctor()
 --- generic-casts-once-refused @gencs
 // Casts plan 3c refused until X<Dynamic> was typed as the companion interface: a type parameter cast to
 // Box<Int>, Dynamic to Box<Int>, Array<Int> to Array<Dynamic>.
@@ -2431,22 +2431,22 @@ type public beforefieldinit pk.Base extends haxe.lang.HxObject
   field public int32 a
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(int32)
+  method family static hidebysig void __hx_ctor_pk_Base(pk.Base, int32)
   method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
   method public virtual hidebysig object __hx_setField(string, int32, object, bool)
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
-  method family static hidebysig void __hx_ctor_pk_Base(pk.Base, int32)
 type public beforefieldinit pk.Thing extends pk.Base
   field public int32 p
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(int32, string)
+  method family static hidebysig void __hx_ctor_pk_Thing(pk.Thing, int32, string)
   method public virtual hidebysig float64 __hx_setField_f(string, int32, float64, bool)
   method public virtual hidebysig object __hx_setField(string, int32, object, bool)
   method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
   method public virtual hidebysig float64 __hx_getField_f(string, int32, bool, bool)
   method public virtual hidebysig void __hx_getFields(Array`1<string>)
-  method family static hidebysig void __hx_ctor_pk_Thing(pk.Thing, int32, string)
 type public beforefieldinit pk.NG extends [mscorlib]System.Object
   field public int32 q
   method public hidebysig specialname rtspecialname void .ctor()
@@ -2688,12 +2688,12 @@ type public beforefieldinit Ov extends haxe.lang.HxObject
   method public hidebysig specialname rtspecialname void .ctor(float64, float64)
   method public hidebysig specialname rtspecialname void .ctor(string)
   method public hidebysig specialname rtspecialname void .ctor(int32)
-  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
-  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
-  method public virtual hidebysig void __hx_getFields(Array`1<string>)
   method family static hidebysig void __hx_ctor__Ov(Ov, string)
   method family static hidebysig void __hx_ctor__Ov(Ov, float64, float64)
   method family static hidebysig void __hx_ctor__Ov(Ov, int32)
+  method public virtual hidebysig object __hx_setField(string, int32, object, bool)
+  method public virtual hidebysig object __hx_getField(string, int32, bool, bool, bool)
+  method public virtual hidebysig void __hx_getFields(Array`1<string>)
 type public beforefieldinit OvC extends Ov
   method public hidebysig specialname rtspecialname void .ctor(haxe.lang.EmptyObject)
   method public hidebysig specialname rtspecialname void .ctor(float64, float64)
@@ -16311,8 +16311,8 @@ class P {
 }
 ===
 [compile]
-P.hx:5: characters 10-14 : dotnet: hxc cannot tell which .NET indexer of ValLib.IdxProt an int argument selects
 P.hx:7: characters 65-69 : dotnet: hxc cannot tell which .NET indexer of ValLib.IdxProt an int argument selects
+P.hx:5: characters 10-14 : dotnet: hxc cannot tell which .NET indexer of ValLib.IdxProt an int argument selects
 # A protected method is a candidate from a subclass through a receiver of the subclass: C# binds Go(string).
 --- netlib-extern-protected-from-subclass @gencs @netlib
 @:native("ValLib.Prot") extern class HProt {
@@ -19047,9 +19047,9 @@ class P {
 }
 ===
 [compile]
+P.hx:11: characters 23-38 : dotnet: the inline C# name hello is no local, member or type here (C# error CS0103)
 P.hx:6: characters 23-37 : dotnet: a method group is not part of the inline C# subset; call the method, or write a Haxe function
 P.hx:7: characters 23-42 : dotnet: a method group is not part of the inline C# subset; call the method, or write a Haxe function
-P.hx:11: characters 23-38 : dotnet: the inline C# name hello is no local, member or type here (C# error CS0103)
 # A dynamic method is a variable's value (gencs: a haxe.lang.Function field, so its C# `f(1)` is CS1955), which
 # inline C# does not call.
 --- inline-cs-dynamic-method-call-is-an-error
@@ -21724,10 +21724,10 @@ type public sealed sequential beforefieldinit haxe.lang.Null`1<T> extends [mscor
   method public static hidebysig haxe.lang.Null`1<!0> _ofDynamic(object)
   method public static hidebysig specialname haxe.lang.Null`1<!0> op_Implicit(!0)
   method public hidebysig specialname rtspecialname void .ctor(!0, bool)
+  method public static hidebysig haxe.lang.Null`1<!!0> ofDynamic<D>(object)
   method public hidebysig object toDynamic()
   method public hidebysig string toString()
   method public virtual hidebysig string ToString()
-  method public static hidebysig haxe.lang.Null`1<!!0> ofDynamic<D>(object)
 # hxcs's @:classCode members of haxe.lang.Null<T> that C# calls: op_Implicit(T) (SpecialName) and _ofDynamic.
 # The fixture's C# converts a bool to the Haxe method's ?b:Bool parameter through that operator, as the server
 # app's C# does where it passes a bool to a Haxe optional Bool.
@@ -24352,3 +24352,123 @@ n null threw System.ArgumentException
 plain live made
 plain live 3
 plain null threw System.ArgumentException
+# gencs's method order, seen through .NET reflection: the static members (sm) come right after the constructors,
+# before the instance methods. Type.getClassFields and getInstanceFields keep hxc's own order, which is the same.
+--- member-order-statics-after-constructors @gencs
+class C {
+	public var a:Int = 1;
+	public static var s1 = 2;
+	public function new() {}
+	public function m1() {}
+	public static function sm() {}
+	public function m2() {}
+	public static var s2 = 3;
+}
+class P {
+	static function main() {
+		Sys.println(Type.getClassFields(C));
+		Sys.println(Type.getInstanceFields(C));
+		var t = cs.Lib.toNativeType(C);
+		Sys.println([for (m in t.GetMethods()) if (m.DeclaringType == t) m.Name].join(","));
+		Sys.println([for (m in t.GetFields()) m.Name].join(","));
+	}
+}
+===
+[run]
+[sm,s1,s2]
+[m1,m2,a]
+sm,m1,m2,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
+a,s1,s2
+# The order for a class with every member kind, as gencs writes it (MethodDef order, which GetMethods follows): the
+# entry point, the static constructor and the constructors, the static events' accessors, __hx_ctor_*, the statics
+# in declaration order (a generic class's static __hx_cast first), then the instance events' accessors, the
+# properties' accessors, the cast and the other instance methods, and last the reflection members and ToString.
+# An interface keeps its own order, a struct writes its static method before the instance one.
+--- member-order-every-member-kind @gencs
+import cs.system.EventHandler;
+import cs.system.reflection.BindingFlags;
+
+class C {
+	public var a:Int = 1;
+	public static var s1 = 2;
+	@:property public var ip:Int = 3;
+	@:property public static var sip:Int = 4;
+	@:property public var pa(get, set):Int;
+	function get_pa() return a;
+	function set_pa(v) return a = v;
+	@:event var Ev:EventHandler;
+	public function add_Ev(h:EventHandler):Void {}
+	public function remove_Ev(h:EventHandler):Void {}
+	@:event static var SEv:EventHandler;
+	public static function add_SEv(h:EventHandler):Void {}
+	public static function remove_SEv(h:EventHandler):Void {}
+	public function new(?x:Int, ?y:String) {}
+	public function m1() {}
+	public static function sm() {}
+	public function m2() {}
+	public static var s2 = 3;
+	public var dyn:Void->Void = function() {};
+	public function toString() return "C";
+	public static function __init__() { s2 = 7; }
+}
+
+class D<T> extends C {
+	public var t:T;
+	public function new(t:T) {
+		super();
+		this.t = t;
+	}
+	public static function sd() {}
+	public function md(x:T) {}
+}
+
+interface I {
+	function im():Void;
+	var iv(get, never):Int;
+}
+
+class Impl implements I {
+	public function new() {}
+	public function im() {}
+	public var iv(get, never):Int;
+	function get_iv() return 1;
+	public static function sx() {}
+}
+
+@:struct class S {
+	public var x:Int;
+	public function new(x:Int) {
+		this.x = x;
+	}
+	public static function ss() {}
+	public function sm() {}
+}
+
+class P {
+	static var z = 5;
+	static function main() {
+		new C();
+		new D<Int>(1);
+		new Impl();
+		new S(1);
+		var all = new cs.Flags(BindingFlags.Public) | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		for (t in [cs.Lib.toNativeType(C), cs.Lib.toNativeType(D), cs.Lib.toNativeType(I), cs.Lib.toNativeType(Impl), cs.Lib.toNativeType(S), cs.Lib.toNativeType(P)]) {
+			var ms = t.GetMethods(all);
+			Sys.println(t.Name + ": " + [for (i in 0...ms.Length) ms[i].Name].join(","));
+		}
+		var c = cs.Lib.toNativeType(C);
+		var ps = c.GetProperties(all), es = c.GetEvents(all);
+		Sys.println("properties " + [for (i in 0...ps.Length) ps[i].Name].join(","));
+		Sys.println("events " + [for (i in 0...es.Length) es[i].Name].join(","));
+	}
+}
+===
+[run]
+C: add_SEv,remove_SEv,__hx_ctor__C,get_sip,set_sip,sm,add_Ev,remove_Ev,get_pa,set_pa,get_ip,set_ip,_get_pa,_set_pa,m1,m2,toString,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields,ToString
+D`1: __hx_ctor__D,__hx_cast,sd,D_cast,md,__hx_setField_f,__hx_setField,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
+I: get_iv,im
+Impl: __hx_ctor__Impl,sx,im,get_iv,__hx_getField,__hx_getField_f,__hx_invokeField,__hx_getFields
+S: ss,sm
+P: Main,__hx_ctor__P,main
+properties sip,pa,ip
+events SEv,Ev
