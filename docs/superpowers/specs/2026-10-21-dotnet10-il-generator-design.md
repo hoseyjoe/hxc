@@ -1229,6 +1229,11 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   error is `CS0594: Floating-point constant is outside the range of type 'float'`, and the text says so. The
   midpoint between `float.MaxValue` and 2^128 rounds up, so it is out of range, and a literal just below it whose
   double equals it is refused with it, where Roslyn would accept it.
+- Two metadata-only differences in a class's InterfaceImpl rows, which no runtime check sees. The rows are in another
+  order than Roslyn writes them, and an `hxgeneric` class has no InterfaceImpl row for `haxe.lang.IHxObject`, where
+  Roslyn lists the closure of its interfaces. `is`, `Type.GetInterfaces()` and casts
+  agree with gencs's DLL. With `-D dotnet-nullable`, the missing row can move a tied nullable-context count, but the
+  rows stay consistent with each other, so `NullabilityInfoContext` reads the same.
 
 ## Left to the builder
 
