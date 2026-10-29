@@ -385,6 +385,8 @@ class ExternMembers {
 		}
 		if (call != null && !overloaded) {
 			// Ruling K: a Haxe-compiled argument keeps its own type, which converts as ruling J says.
+			// `typeParams`: an unconstrained type parameter's argument carries its own type; a constrained one keeps the
+			// declared type either way, as gencs's C# casts it to that.
 			function argsBy(typeParams:Bool) return [
 				for (i in 0...want.length) {
 					var s = i < call.argTypes.length ? call.argTypes[i] : null;
@@ -392,7 +394,8 @@ class ExternMembers {
 					// argument to a declared Null<T> included, ruling Q), and casts a basic-typed argument to
 					// another declared basic type (ruling N).
 					if (s == null || types.isNullOf(s) != types.isNullOf(want[i]) && (types.isNullOf(s) || isBasic(s))
-						|| isBasic(s) && isBasic(want[i]) || !typeParams && s.match(LTypeParam(_) | LMethodTypeParam(_))) want[i] else s;
+						|| isBasic(s) && isBasic(want[i])
+						|| s.match(LTypeParam(_) | LMethodTypeParam(_)) && (!typeParams || i < call.args.length && hasConstraint(call.args[i].type))) want[i] else s;
 				}
 			];
 			// The method `args` bind, if it is the one `want` does.
@@ -411,31 +414,23 @@ class ExternMembers {
 			// Ruling F′: both bind the same method; its type arguments are the arguments' own, as C# infers
 			// them, and `bound` checks the return with them.
 			var byArgs = argsBy(true);
-			var plain = argsBy(false);
 			if (!IlPaths.sigsEq(byArgs, want)) {
-				// An unconstrained type parameter's own type is among the arguments: C# binds by it (`Ovl.G(x)` is
-				// `G<!0>`), so the method it selects is the one called, whichever the declared types selected. A
-				// constrained one (gencs's C# casts it to the declared type, or its class's `where` selects) keeps
-				// the declared type, as does one no method accepts, where gencs's C# fails (CS1503).
-				var ownType = false;
-				for (i in 0...want.length)
-					if (!IlPaths.sigEq(byArgs[i], plain[i]) && i < call.args.length && !hasConstraint(call.args[i].type)) ownType = true;
-				byValue = false;
-				byNull = false;
-				var r = resolve(links, name, isStatic, byArgs, cf.params.length, caller, receiverStatic, candInst, kinds, false, ownType);
-				var rebound:Null<Bound> = switch (r) {
-					case RBound(b) if (ownType || b.link == found.link && b.index == found.index): b;
-					case _: null;
-				}
-				if (rebound == null) {
-					if (ownType && !r.match(RNone)) refuse(byArgs);
-					byArgs = plain;
-					if (!IlPaths.sigsEq(byArgs, want)) {
-						rebound = bindsSame(byArgs);
-						if (rebound == null) refuse(byArgs);
+				var rebound:Null<Bound> = null;
+				if (!IlPaths.sigsEq(byArgs, argsBy(false))) {
+					// An unconstrained type parameter's own type is among the arguments: C# binds by it (`Ovl.G(x)` is
+					// `G<!0>`), so the method it selects is the one called, whichever the declared types selected; if
+					// none or no single one is selected (CS1503, CS0121 in gencs's C#), the call is refused.
+					byValue = false;
+					byNull = false;
+					switch (resolve(links, name, isStatic, byArgs, cf.params.length, caller, receiverStatic, candInst, kinds, false, true)) {
+						case RBound(b): rebound = b;
+						case _:
 					}
+				} else {
+					rebound = bindsSame(byArgs);
 				}
-				if (rebound != null) found = rebound;
+				if (rebound == null) refuse(byArgs);
+				found = rebound;
 			}
 		}
 		var link = links[found.link];

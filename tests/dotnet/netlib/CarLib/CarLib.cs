@@ -36,6 +36,11 @@ namespace car {
 		public static string Only(object o) => "Only(object)";
 		public static string P(object o) => "P(object)";
 		public static string P<T>(T x) => "P<" + typeof(T).Name + ">";
+		public static string Q(object o, string s) => "Q(object,string)";
+		public static string Q<T>(T x, string s) => "Q<" + typeof(T).Name + ">";
+		public static string R(object a, object b) => "R(object,object)";
+		public static string R<T>(T a, object b) => "R1<" + typeof(T).Name + ">";
+		public static string R<T>(object a, T b) => "R2<" + typeof(T).Name + ">";
 	}
 	// g. converts refinements
 	public static class Conv {

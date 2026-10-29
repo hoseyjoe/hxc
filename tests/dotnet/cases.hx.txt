@@ -23968,6 +23968,40 @@ class P {
 P<Int32>
 P<String>
 P(object)
+# A call that passes an unconstrained and a constrained type parameter: the unconstrained one is its own type
+# (Q<T>(T, string) by identity), the constrained one is cast to the declared String, as gencs's C# does.
+--- netlib-extern-type-parameter-argument-mixed @gencs @netlib=CarLib
+@:native("car.Ovl") extern class O { static function Q(x:Any, y:String):String; }
+class H<U, V:String> {
+	public function new() {}
+	public function q(x:U, y:V):String return O.Q(x, y);
+}
+class P {
+	static function main() {
+		Sys.println(new H<Int, String>().q(1, "a"));
+		Sys.println(new H<String, String>().q("s", "a"));
+	}
+}
+===
+[run]
+Q<Int32>
+Q<String>
+# The declared types bind R(object, object), but C# with the arguments' own types (U, U) finds R<T>(T, object)
+# and R<T>(object, T) equally good (gencs's C# fails: CS0121), so hxc refuses where it would bind the declared one.
+--- netlib-extern-type-parameter-argument-ambiguous @netlib=CarLib
+@:native("car.Ovl") extern class O { static function R(x:Any, y:Any):String; }
+class H<U> {
+	public function new() {}
+	public function r(x:U):String return O.R(x, x);
+}
+class P {
+	static function main() {
+		Sys.println(new H<Int>().r(1));
+	}
+}
+===
+[compile]
+P.hx:4: characters 39-48 : dotnet: the .NET overload of car.Ovl.R depends on the argument types (!0, !0); declare it with @:overload
 # A type parameter constrained to String, passed to a hand-written extern's String parameter (Conv.M(string), which
 # has an overload with a Nullable<long> parameter): the argument is the declared parameter's type, not the type
 # parameter, which converts to object alone, so the call keeps binding M(string).
