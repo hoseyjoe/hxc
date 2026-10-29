@@ -1155,6 +1155,8 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
     'Sub.add_Changed(EventHandler)': no suitable method found to override.`
   - Reading or assigning the var of a custom event (`event-read-is-an-error`, `event-write-is-an-error`,
     `event-static-read-is-an-error`): `CS0079: The event 'A.Changed' can only appear on the left hand side of += or -=`.
+    So is a custom event's initializer, static or not (`event-static-initializer-is-an-error`,
+    `event-instance-initializer-is-an-error`): gencs writes it as an assignment in the (static) constructor.
     Reading or assigning a field-like event's var anywhere but its own class, a subclass, another class and a local
     function's class included (`event-field-like-outside-class-is-an-error`): `CS0070: The event 'A.Changed' can only
     appear on the left hand side of += or -= (except when used from within the type 'A')`. Inside its class the var

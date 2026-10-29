@@ -24652,3 +24652,50 @@ class P {
 	}
 }
 ===
+# gencs's C#: P.cs(8,13): error CS0079: The event 'A.SChanged' can only appear on the left hand side of += or -=
+# (from `static A() { global::A.SChanged = global::A.mk(); }`).
+--- event-static-initializer-is-an-error
+import cs.system.EventHandler;
+
+// A custom event has no value, so no initializer either: gencs writes the initializer as an assignment in the static
+// constructor, next to `public static event EventHandler SChanged { add {...} remove {...} }`, which is CS0079. hxc
+// once dropped the initializer (and its side effects) without a word.
+class A {
+	static var handlers:EventHandler;
+	static function mk():EventHandler { Sys.println("initializer ran"); return null; }
+	@:event static var SChanged:EventHandler = mk();
+	public static function add_SChanged(h:EventHandler):Void { Sys.println("add body"); handlers = handlers + h; }
+	public static function remove_SChanged(h:EventHandler):Void handlers = handlers - h;
+}
+
+class P {
+	static function main() {
+		A.add_SChanged(null);
+	}
+}
+===
+[compile]
+P.hx:9: characters 45-49 : dotnet: the event A.SChanged has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)
+P.hx:16: characters 3-23 : dotnet: A (left out: the event A.SChanged has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)) is not supported yet
+--- event-instance-initializer-is-an-error
+import cs.system.EventHandler;
+
+// The same for an instance event (CS0079 in gencs's C#, `this.Changed = A.mk()` in the constructor).
+class A {
+	var handlers:EventHandler;
+	static function mk():EventHandler return null;
+	@:event var Changed:EventHandler = mk();
+	public function new() {}
+	public function add_Changed(h:EventHandler):Void handlers = handlers + h;
+	public function remove_Changed(h:EventHandler):Void handlers = handlers - h;
+}
+
+class P {
+	static function main() {
+		new A();
+	}
+}
+===
+[compile]
+P.hx:7: characters 37-41 : dotnet: the event A.Changed has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)
+P.hx:15: characters 3-10 : dotnet: A (left out: the event A.Changed has add_/remove_ bodies, so it has no value to read or assign (C# error CS0079)) is not supported yet

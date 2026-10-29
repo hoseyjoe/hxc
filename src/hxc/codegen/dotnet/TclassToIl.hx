@@ -398,6 +398,9 @@ class TclassToIl {
 				// it is field-like.
 				var event = events == null ? null : events.vars.get(cf);
 				if (event != null) {
+					// C# has no initializer for an event with accessors of its own (CS0079), and hxc would drop
+					// a static one's.
+					if (!event.fieldLike && cf.expr != null) throw at(EventToIl.noValue(c, cf), cf.expr.pos);
 					if (event.backing != null) fields.push(event.backing);
 					continue;
 				}
