@@ -734,7 +734,7 @@ class P {
 runtime frame true
 [dump]
 document hxc-runtime/cs/internal/Runtime.hx sha256 csharp embedded ok
-# -D dotnet-debug-jit writes DebuggableAttribute(DisableOptimizations | EnableEditAndContinue | Default |
+# -D dotnet-debug-jit writes DebuggableAttribute(DisableOptimizations | Default |
 # IgnoreSymbolStoreSequencePoints = 0x103) on the assembly, so the JIT keeps what .hx stepping needs.
 --- pdb-debug-jit + -debug -D dotnet-debug-jit
 class P {
