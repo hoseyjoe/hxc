@@ -25171,8 +25171,9 @@ HasInlineAnon HasInlineAnon HasInlineAnon
 HasClassStatics haxe.lang.HxObject haxe.lang.HxObject
 HasEnumStatics haxe.lang.HxObject haxe.lang.HxObject
 # Runtime's field calls on a receiver typed as a Haxe class go through its HxObject overloads, as C# picks them in
-# gencs's output (a null receiver included); an interface, an anonymous structure, a Dynamic and a @:nativeGen class
-# keep the Dynamic overloads.
+# gencs's output (a null receiver included); an interface, an anonymous structure, a Dynamic, a type parameter, a
+# @:nativeGen class and a class below a @:nativeGen or an extern .NET class (which do not derive from HxObject) keep the
+# Dynamic overloads.
 --- reflect-hxobject-receiver @gencs
 interface I {}
 class Pt implements I {
@@ -25191,7 +25192,20 @@ class G<T> {
 	public var y:Int = 4;
 	public function new() {}
 }
+class S extends N {
+	public var z:Int = 5;
+}
+class X extends cs.system.Exception {
+	public var w:Int = 6;
+	public function new() super();
+}
+abstract Ab(Pt) {
+	public function new(p:Pt) this = p;
+	public function get():Dynamic return Reflect.field(this, "x");
+}
 class P {
+	static function tp<T>(v:T):Dynamic return Reflect.field(v, "n");
+	static function tpf<T>(v:T):Float return Reflect.field(v, "x");
 	static function run(name:String, f:Void->Dynamic) {
 		try Sys.println(name + ": " + Std.string(f())) catch (e:Dynamic) Sys.println(name + ": EXC " + Type.getClassName(Type.getClass(e)));
 	}
@@ -25218,6 +25232,14 @@ class P {
 		run("call", () -> Reflect.callMethod(p, Reflect.field(p, "m"), [1]));
 		var dn:Dynamic = nothing;
 		run("dyn null", () -> dn.x);
+		run("native base", () -> Reflect.field(new S(), "z"));
+		run("native base set", () -> { var s = new S(); Reflect.setField(s, "z", 8); s.z; });
+		run("extern base", () -> Reflect.field(new X(), "w"));
+		run("abstract this", () -> new Ab(p).get());
+		run("type param", () -> tp(p));
+		run("type param float", () -> tpf(p));
+		run("type param null", () -> tp(nothing));
+		run("type param null float", () -> tpf(nothing));
 	}
 }
 ===

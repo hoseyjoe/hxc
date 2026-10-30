@@ -327,7 +327,7 @@ class TexprDynamic {
 	function fieldReceiver(obj:TExpr):IlSigNorm {
 		var hx = g.runtimeClass("cs.internal.HxObject");
 		var first = LObject;
-		if (hx != null && extendsHxObject(strip(obj).type) && !g.types.isCompanionTyped(obj.type)) {
+		if (hx != null && extendsHxObject(obj.type) && !g.types.isCompanionTyped(obj.type)) {
 			first = tl.sig(TInst(hx, []));
 		}
 		tl.texpr(RValue(first), obj);
@@ -339,10 +339,11 @@ class TexprDynamic {
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, _) if (!c.kind.match(KTypeParameter(_) | KAbstractImpl(_)) && !TypeFunctions.hasClassFlag(c, CInterface)
 				&& !TypeFunctions.hasMeta(":struct", c.meta) && HxGen.isHxGen(TClassDecl(c))):
-				// The root of its superclasses, which a native class would make the base instead.
+				// The root of its superclasses has to be the class that extends HxObject (TclassToIl): a
+				// @:nativeGen or an extern root makes the base of the whole chain instead.
 				var root = c;
 				while (root.superClass != null) root = root.superClass.c;
-				!TypeFunctions.hasClassFlag(root, CExtern);
+				HxGen.hasCtorModel(root) && !TypeFunctions.hasMeta(":struct", root.meta);
 			case _: false;
 		}
 	}
