@@ -51,6 +51,13 @@ class Inline {
 		return TypeFunctions.hasClassFieldFlag(cf, CfExtern) || TypeFunctions.hasMeta(":extern", cf.meta);
 	}
 
+	static function isDynamicArray(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(_, [p]): TypeFunctions.follow(p).match(TDynamic(_));
+			case _: false;
+		}
+	}
+
 	public static function tryInline(ctx:TyperContext, e:TExpr, params:Array<TExpr>, tret:T, p:Position, forceInline = false, useUnoptimized = true):Null<TExpr> {
 		if (depth > 32) return null;
 		var cf:TClassField = null;
@@ -73,6 +80,11 @@ class Inline {
 			case _:
 				return null;
 		}
+		// hxc's runtime Array marks map and filter with this: an Array<Dynamic> as receiver or result is
+		// the non-generic companion, which reaches every member by name, so the call stays.
+		if (ethis != null && TypeFunctions.hasMeta(":inlineUnlessDynamic", cf.meta)
+			&& (isDynamicArray(ethis.type) || isDynamicArray(tret)))
+			return null;
 		switch (cf.kind) {
 			case Method(MethInline):
 				// -D no-inline suppresses regular inlining; an extern-inline (a member of an extern class,

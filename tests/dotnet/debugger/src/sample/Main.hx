@@ -23,5 +23,7 @@ class Main {
 			trace("caught " + e);
 		}
 		trace("field " + Reflect.field({answer: 42}, "answer"));
+		var mapped = [1, 2].map(x -> x + 1);
+		trace("mapped " + mapped);
 	}
 }

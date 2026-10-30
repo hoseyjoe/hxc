@@ -85,6 +85,25 @@ method P::main
   Q.hx 5:3-5:8
   P.hx 4:3-4:8
   hidden
+# An inlined map's points are the call site's: no point names the runtime's Array.hx.
+--- pdb-inlined-map-call-site @dump=pdb:P + -debug
+class P {
+	static function main() {
+		var a = [1, 2].map(x -> x + 1);
+		Sys.println(a);
+	}
+}
+===
+[run]
+[2,3]
+[dump]
+method P::main
+  P.hx 3:11-3:33
+  P.hx 3:3-3:34
+  P.hx 3:11-3:33
+  P.hx 3:3-3:34
+  P.hx 4:3-4:17
+  hidden
 # The code after a throw is dropped, and so is its point; @:analyzer(ignore) keeps the analyzer
 # from dropping it first.
 --- pdb-dead-code @dump=pdb:P + -debug
@@ -12414,6 +12433,147 @@ map dynamic: [1,x]
 filter dynamic: [1,x]
 sources: [1,2,3] [a,b] [1,x]
 
+--- array-map-filter-inlined @gencs
+// The lambdas run in the caller's loop, as gencs's inlined loops: no closure frame (hxc still has the class,
+// which only a forwarding array instantiates).
+class Pt {
+	public var x:Int;
+	public function new(x) this.x = x;
+}
+class P {
+	static var log = [];
+	static function viaClosure():Bool return Std.string(haxe.CallStack.callStack()).indexOf("__Fun") >= 0;
+	static function recv(a:Array<Int>) { log.push("recv"); return a; }
+	static function fn() { log.push("fn"); return (x:Int) -> x + 1; }
+	static function gen<T>(a:Array<T>, f:T->T):Array<T> return a.map(f).filter(x -> x != null);
+	static function main() {
+		Sys.println([1, 2, 3].map(x -> x * 2));
+		Sys.println([1, 2, 3, 4].filter(x -> x % 2 == 0));
+		Sys.println(["a"].map(s -> s + "!"));
+		Sys.println([1.5].map(f -> Std.int(f)));
+		Sys.println([new Pt(3)].map(p -> p.x));
+		Sys.println([1, 2].map(x -> x > 1 ? null : x));
+		var nn:Array<Null<Int>> = [1, null];
+		Sys.println(nn.filter(x -> x != null));
+		Sys.println(recv([1]).map(fn()));
+		Sys.println(log);
+		Sys.println(gen([1, 2], x -> x));
+		Sys.println(gen(["z"], x -> x));
+		Sys.println([[1], [2]].map(a -> a.map(x -> x + 1)));
+		Sys.println([1].map(x -> viaClosure()));
+		Sys.println([1].filter(x -> viaClosure()).length);
+		var f = [1, 2].map;
+		Sys.println(f(x -> x + 10));
+		var d:Dynamic = [1, 2];
+		Sys.println(d.map(x -> x));
+		Sys.println(Reflect.callMethod([3], Reflect.field([3], "map"), [x -> x]));
+		var none:Array<Int> = null;
+		try Sys.println(none.map(x -> x)) catch (e:Dynamic) Sys.println("EXC " + Type.getClassName(Type.getClass(e)));
+		try Sys.println([1, 2].map(x -> { if (x == 2) throw "boom"; x; })) catch (e:String) Sys.println(e);
+	}
+}
+===
+--- array-map-filter-mutating @gencs
+class P {
+	static function main() {
+		var a = [1, 2, 3];
+		Sys.println(a.map(x -> { if (x == 1) a.push(9); x * 2; }));
+		Sys.println(a);
+		var b = [1];
+		Sys.println(b.map(x -> { b[5] = 7; x; }));
+		var c = [1, 2, 3];
+		Sys.println(c.map(x -> { if (x == 1) { c.push(4); c[2] = 30; } x; }));
+		var d = [1, 2, 3];
+		Sys.println(d.filter(x -> { if (x == 1) d.shift(); x > 0; }));
+		var e = [1, 2, 3];
+		Sys.println(e.map(x -> { if (x == 1) e.unshift(0); x; }));
+		var f = [1, 2, 3];
+		Sys.println(f.filter(x -> { if (x == 1) f.pop(); x > 1; }));
+	}
+}
+===
+# Recorded #8314 divergence 1 (spec, the forward's typed storage), sibling of cast-array-forward-storage: the
+# write through `i` shows through `o`, where gencs's lands in a copy. Expected [run]: hxc's output; gencs's is
+# the [gencs] section.
+--- array-map-forwarding @gencs
+// A forwarding array keeps its results through map and filter.
+class P {
+	static function main() {
+		var o:Array<Any> = haxe.Json.parse("[1,2,3]");
+		var i:Array<Int> = cast o;
+		Sys.println(o.map(x -> Std.string(x) + "!"));
+		Sys.println(o.filter(x -> (x : Int) > 1));
+		Sys.println(i.map(x -> x + 1));
+		i[1] = 20;
+		Sys.println(o.map(x -> x));
+	}
+}
+===
+[run]
+[1!,2!,3!]
+[2,3]
+[2,3,4]
+[1,20,3]
+[gencs]
+[1!,2!,3!]
+[2,3]
+[2,3,4]
+[1,2,3]
+
+--- array-map-dynamic-not-inlined
+// Array<Dynamic> keeps today's call: its lambda keeps its class, where gencs inlines and throws on a view.
+class P {
+	static function viaClosure():Bool return Std.string(haxe.CallStack.callStack()).indexOf("__Fun") >= 0;
+	static function main() {
+		var d:Array<Dynamic> = [1, "x"];
+		Sys.println(d.map(x -> viaClosure()));
+		var ai = [1, 2];
+		var view:Array<Dynamic> = ai;
+		Sys.println(view.map(x -> x * 2));
+	}
+}
+===
+[run]
+[true,true]
+[2,4]
+--- array-map-dynamic-result @gencs
+// The result is Array<Dynamic>, from the callback, from the expected type, or only after the call is typed.
+class Pt {
+	public var x = 3;
+	public function new() {}
+}
+class P {
+	static function main() {
+		Sys.println([new Pt()].map(p -> Reflect.field(p, "x")));
+		Sys.println([1, 2].map(x -> (x : Dynamic)));
+		var e:Array<Dynamic> = [1, 2].map(x -> x);
+		e.push("s");
+		Sys.println(e);
+		var later = [1].map(x -> null);
+		var d:Array<Dynamic> = later;
+		d.push("s");
+		Sys.println(d);
+	}
+}
+===
+--- array-map-no-inline @gencs + -D no-inline
+class P {
+	static function main() {
+		Sys.println([1, 2, 3].map(x -> x * 2));
+		Sys.println([1, 2, 3].filter(x -> x > 1));
+	}
+}
+===
+--- array-map-dce-full @gencs + -dce full
+// Under full DCE an inlined map no longer keeps the method for a by-name caller, as in gencs.
+class P {
+	static function main() {
+		Sys.println([1].map(x -> x));
+		var d:Dynamic = [1, 2];
+		try Sys.println(d.map(x -> x)) catch (e:Dynamic) Sys.println("EXC");
+	}
+}
+===
 # `super` in a subclass of Base<Dynamic> is the class, not the companion: its calls stay direct.
 --- dynamic-argument-subclass-super
 class Base<T> {

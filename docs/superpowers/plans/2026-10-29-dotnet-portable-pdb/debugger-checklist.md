@@ -8,8 +8,8 @@ wrong, with the exact text of any message).
 
 1. Build the sample: in `tests/dotnet/debugger` (relative to the repo root), run `hxc build.hxml` (with
    `HAXE_STD_PATH=C:/HaxeToolkit/haxe/std` set). `out/out.dll` and `out/out.pdb` appear.
-2. `dotnet out/out.dll` prints five lines, each naming `src/sample/Main.hx` and a line number:
-   `total 28`, `inner 56`, `closure 15`, `caught side too large: 3`, `field 42`.
+2. `dotnet out/out.dll` prints six lines, each naming `src/sample/Main.hx` and a line number:
+   `total 28`, `inner 56`, `closure 15`, `caught side too large: 3`, `field 42`, `mapped [2,3]`.
 3. The PDB names files by short paths (`src/sample/Main.hx`, `src/sample/Shapes.hx`, `haxe-std/...`,
    `hxc-runtime/...`), so each debugger has to be told where those folders are (below).
 
@@ -27,6 +27,8 @@ The lines used below (1-based):
 | `src/sample/Main.hx` | 19 | `trace("closure " + add(5));` |
 | `src/sample/Main.hx` | 21 | `shapes.fail(3);` (inside the `try`) |
 | `src/sample/Main.hx` | 25 | `trace("field " + Reflect.field(...));` |
+| `src/sample/Main.hx` | 26 | `var mapped = [1, 2].map(x -> x + 1);` |
+| `src/sample/Main.hx` | 27 | `trace("mapped " + mapped);` |
 | `src/sample/Shapes.hx` | 11 | `var squared = side * side;` |
 | `src/sample/Shapes.hx` | 12 | `var result = squared * scale;` |
 | `src/sample/Shapes.hx` | 18 | `throw "side too large: " + side;` |
@@ -87,6 +89,12 @@ same way; the sample uses no library.)
     `.hx` files and lines. Then press F5 and let the exception run to its catch. (Ticking "All Exceptions"
     instead stops first on first-chance exceptions inside the runtime, because `justMyCode` is false;
     press Continue past those, and write down what they were.)
+    Result:
+11. **Stepping over an inlined `map`.** Remove other breakpoints, set one on `src/sample/Main.hx` line 26
+    and restart. When it stops there, press F10. Execution moves to line 27, and no tab for hxc's runtime
+    `Array.hx` opens. Restart, stop on line 26 again and press F11 a few times: stepping stays in
+    `src/sample/Main.hx` (the lambda body `x + 1` is on that line), and the Call Stack shows
+    `sample.Main.main`, not an `Array` frame.
     Result:
 
 ## Visual Studio 2022 or later
@@ -159,4 +167,10 @@ Write in item 1's Result how you started the program, and which of these setting
     `src/sample/Shapes.hx` line 18 and `sample.Main.main` at `src/sample/Main.hx` line 21. (With Just My
     Code off, an exception setting may stop first inside the runtime; the breakpoint on line 18 avoids
     that. Write down what the stops were.)
+    Result:
+11. **Stepping over an inlined `map`.** Remove other breakpoints, set one on `src/sample/Main.hx` line 26
+    and restart. When it stops there, press F10. The yellow arrow moves to line 27, and no document for
+    hxc's runtime `Array.hx` opens. Restart, stop on line 26 again and press F11 a few times: stepping stays
+    in `src/sample/Main.hx` (the lambda body `x + 1` is on that line), and the Call Stack shows
+    `sample.Main.main`, not an `Array` frame.
     Result:

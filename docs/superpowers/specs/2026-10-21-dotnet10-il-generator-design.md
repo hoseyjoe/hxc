@@ -1143,8 +1143,9 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   a value that is no `Exception`, so `WrapNonExceptionThrows` changes nothing.
 - hxc writes more closure classes than gencs (3,759 against 2,251 in the server app). Every name gencs writes is
   there; the others are local functions that gencs does not have a class for, such as a predicate passed to
-  `Array.filter`, which gencs inlines, and the `_Fun_N` numbering that follows. Only reflection over the assembly's
-  types sees them.
+  `Array.filter` on an `Array<Dynamic>` (hxc's `map` and `filter` inline on any other array, as gencs's do, with no
+  closure allocated on the plain path; the class stays for the call on a forwarding array, which an ordinary
+  array never reaches), and the `_Fun_N` numbering that follows. Only reflection over the assembly's types sees them.
 - A resource name with a non-ASCII character or a `\` is found by `haxe.Resource` in hxc
   (`resource-non-ascii-name`, `resource-backslash-name`). gencs escapes the name's UTF-8 bytes into the file
   name (`é` is `-x195-x169`) and turns `\` into `-x92`, where `haxe.Resource` escapes the UTF-16 code units at

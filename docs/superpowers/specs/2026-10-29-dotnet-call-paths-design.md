@@ -82,7 +82,8 @@ Calls made by the writer of this document (check these):
 
 1. `a.map(f)` and `a.filter(f)` on hxc's runtime `Array<T>` are `inline`, as in Haxe 4.3.7's
    `std/cs/_std/Array.hx`, except on a receiver or a result typed `Array<Dynamic>`, which keep today's
-   call. With a function literal, the call becomes a loop with no closure and no boxing per element.
+   call. With a function literal, the call becomes a loop with no closure allocated on the plain path and no
+   boxing per element.
 2. A method of a Haxe class used as a value (static, or an instance's) is still a `haxe.lang.Closure`,
    now carrying a generated typed invoker that calls the method directly. It behaves exactly as today's
    `Closure` does, apart from speed and the stack-trace frames named above.

@@ -30,9 +30,10 @@ import haxe.iterators.ArrayKeyValueIterator;
 // storage does so through the typed array (`__hx_resolve()`), so a write through either reference shows
 // through the other, converting as Runtime.genericCast does. The typed array keeps `__hx_from`, and
 // writes the forwarder's `length` wherever it writes its own, so `length` stays a field that callers,
-// ArrayIterator, reflection and C# read directly. map, filter, iterator, keyValueIterator,
-// __unsafe_get and __unsafe_set are not inline, as gencs emits them as methods too, so no caller reads
-// `__a` itself. The members this adds never show in reflection: the vars and the bodies of the Equals
+// ArrayIterator, reflection and C# read directly. map and filter are inline, as in hxcs, except on an
+// Array<Dynamic> (`@:inlineUnlessDynamic`, typing/Inline.hx); iterator, keyValueIterator, __unsafe_get
+// and __unsafe_set are not inline, as gencs emits them as methods too, so no caller reads `__a`
+// itself. The members this adds never show in reflection: the vars and the bodies of the Equals
 // and GetHashCode overrides skip it, and the helpers are extern inline, so no method exists for them;
 // none of them is a member of the `Array` companion interface. Equality sees an array and its forward as
 // one array.
@@ -629,14 +630,18 @@ final class Array<T> implements ArrayAccess<T> {
 		return false;
 	}
 
-	public function map<S>(f:T->S):Array<S> {
-		if (__hx_fwd != null)
-			return __hx_resolve().map(f);
-		var ret = alloc(length);
-		for (i in 0...length)
-			ret.__unsafe_set(i, f(__unsafe_get(i)));
-		return ret;
+	// hxc: inline as in hxcs, so a function literal passed in is substituted into the caller's loop; the
+	// forward branch is a method of its own, as an inline body cannot call itself.
+	@:inlineUnlessDynamic public inline function map<S>(f:T->S):Array<S> {
+		return if (__hx_fwd != null) __hx_mapForward(f) else {
+			var ret = alloc(length);
+			for (i in 0...length)
+				ret.__unsafe_set(i, f(__unsafe_get(i)));
+			ret;
+		}
 	}
+
+	@:keep @:skipReflection private function __hx_mapForward<S>(f:T->S):Array<S> return __hx_resolve().map(f);
 
 	public function contains(x:T):Bool {
 		if (__hx_fwd != null) {
@@ -657,17 +662,19 @@ final class Array<T> implements ArrayAccess<T> {
 		return false;
 	}
 
-	public function filter(f:T->Bool):Array<T> {
-		if (__hx_fwd != null)
-			return cast __hx_resolve().filter(f);
-		var ret = [];
-		for (i in 0...length) {
-			var elt = __unsafe_get(i);
-			if (f(elt))
-				ret.push(elt);
+	@:inlineUnlessDynamic public inline function filter(f:T->Bool):Array<T> {
+		return if (__hx_fwd != null) __hx_filterForward(f) else {
+			var ret = [];
+			for (i in 0...length) {
+				var elt = __unsafe_get(i);
+				if (f(elt))
+					ret.push(elt);
+			}
+			ret;
 		}
-		return ret;
 	}
+
+	@:keep @:skipReflection private function __hx_filterForward(f:T->Bool):Array<T> return cast __hx_resolve().filter(f);
 
 	public function copy():Array<T> {
 		var len = length;
