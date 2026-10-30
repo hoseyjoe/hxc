@@ -337,13 +337,7 @@ class TexprDynamic {
 	// Whether a value typed `t` is of a class that derives from haxe.lang.HxObject.
 	function extendsHxObject(t:T):Bool {
 		return switch (TypeFunctions.follow(t)) {
-			case TInst(c, _) if (!c.kind.match(KTypeParameter(_) | KAbstractImpl(_)) && !TypeFunctions.hasClassFlag(c, CInterface)
-				&& !TypeFunctions.hasMeta(":struct", c.meta) && HxGen.isHxGen(TClassDecl(c))):
-				// The root of its superclasses has to be the class that extends HxObject (TclassToIl): a
-				// @:nativeGen or an extern root makes the base of the whole chain instead.
-				var root = c;
-				while (root.superClass != null) root = root.superClass.c;
-				HxGen.hasCtorModel(root) && !TypeFunctions.hasMeta(":struct", root.meta);
+			case TInst(c, _): HxGen.derivesFromHxObject(c);
 			case _: false;
 		}
 	}

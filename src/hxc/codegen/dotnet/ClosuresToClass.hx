@@ -26,7 +26,8 @@ private typedef Captures = {vars:Array<TVar>, params:Array<TClass>};
 // function is replaced by `new <Class>(captured)`, or without captures and type parameters by the
 // class's cached `__hx_current`. A function converted to a .NET delegate takes gencs's delegate branch
 // instead (`delegate`). The mapped expressions go to DotnetCtx.closureExprs and closureInits: the typed
-// AST is shared with the compilation server and never changed.
+// AST is shared with the compilation server and never changed. A method used as a value is not a local
+// function, but its typed invoker class is made here too (MethodInvokers).
 
 @:access(hxc.codegen.dotnet.TexprDynamic)
 class ClosuresToClass {
@@ -57,6 +58,8 @@ class ClosuresToClass {
 	var field = "";
 	var created:Array<TClass> = [];
 	var inSplitCtor = false;
+	// What makes the invoker classes of the methods used as values; null without a runtime ClosureInvoker.
+	var invokers:Null<MethodInvokers> = null;
 
 	function new(g:DotnetCtx, fn:TClass, runtime:TClass) {
 		this.g = g;
@@ -70,6 +73,8 @@ class ClosuresToClass {
 		var fn = g.runtimeClass("cs.internal.Function"), runtime = g.runtimeClass("cs.internal.Runtime");
 		if (fn == null || runtime == null || !runtime.statics.exists("undefined")) return [];
 		var pass = new ClosuresToClass(g, fn, runtime);
+		var invoker = g.runtimeClass("cs.internal.ClosureInvoker");
+		if (invoker != null) pass.invokers = new MethodInvokers(g, pass, invoker);
 		for (c in candidates) pass.mapClass(c);
 		return pass.added;
 	}
@@ -89,7 +94,7 @@ class ClosuresToClass {
 		if (!split) ctorCode(c, "new", false);
 		field = "Anon";
 		var init = c.init;
-		if (init != null && hasFunction(init)) g.closureInits.set(c, map(init));
+		if (init != null && needsMapping(init)) g.closureInits.set(c, map(init));
 		for (cf in c.orderedStatics) if (isInitialized(cf)) value(cf);
 		rename();
 	}
@@ -131,7 +136,7 @@ class ClosuresToClass {
 	function method(f:TClassField, name:String):Void {
 		if (f.expr == null) return;
 		switch (f.expr.expr) {
-			case TFunction(tf) if (hasFunction(tf.expr)):
+			case TFunction(tf) if (needsMapping(tf.expr)):
 				field = name;
 				g.closureExprs.set(f, TypeFunctions.mk(TFunction(new TFunc(tf.args, tf.type, map(tf.expr))), f.expr.type, f.expr.pos));
 			case _:
@@ -140,7 +145,7 @@ class ClosuresToClass {
 
 	// A variable's initializer or a dynamic method's function, which becomes a class itself.
 	function value(cf:TClassField):Void {
-		if (!hasFunction(cf.expr)) return;
+		if (!needsMapping(cf.expr)) return;
 		if (!cf.kind.match(Method(MethDynamic)) || field == "Anon") {
 			g.closureExprs.set(cf, map(cf.expr));
 			return;
@@ -175,8 +180,18 @@ class ClosuresToClass {
 		return TypeFunctions.mk(TCall(TypeFunctions.mk(TIdent("__refused__"), TypeFunctions.tDynamic, e.pos), [msg]), e.type, e.pos);
 	}
 
-	static function hasFunction(e:TExpr):Bool {
-		return e.expr.match(TFunction(_)) || delegateCall(e) != null || TexprTools.checkExpr(hasFunction, e);
+	// Whether `e` holds something `map` replaces or notes: a local function, a conversion to a .NET delegate
+	// or a method value that gets an invoker.
+	function needsMapping(e:TExpr):Bool {
+		return switch (e.expr) {
+			case TCall({expr: TField(obj, _)}, args): needsMapping(obj) || Lambda.exists(args, needsMapping);
+			case TField(_, FStatic(c, cf)) if (getsInvoker(c, cf)): true;
+			case _: e.expr.match(TFunction(_)) || delegateCall(e) != null || TexprTools.checkExpr(needsMapping, e);
+		}
+	}
+
+	function getsInvoker(c:TClass, cf:TClassField):Bool {
+		return invokers != null && MethodInvokers.eligible(g, c, cf, true);
 	}
 
 	// The `__delegate__(f)` call of a conversion to a .NET delegate, `cast __delegate__(f)` as the delegate
@@ -282,6 +297,13 @@ class ClosuresToClass {
 				useGeneric(v, v.type, e);
 			case TArray({expr: TLocal(v)}, _) if (generics.exists(v.id)):
 				useGeneric(v, elementType(v.type), e);
+			case TCall(callee = {expr: TField(obj, fa)}, args):
+				// A call of a method does not make it a value.
+				var target = map(obj);
+				TypeFunctions.mk(TCall(TypeFunctions.mk(TField(target, fa), callee.type, callee.pos), [for (a in args) map(a)]), e.type, e.pos);
+			case TField(_, FStatic(c, cf)) if (getsInvoker(c, cf)):
+				invokers.note(c, cf, true);
+				e;
 			case _:
 				TexprTools.mapExpr(map, e);
 		}

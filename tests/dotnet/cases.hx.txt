@@ -6474,6 +6474,383 @@ typed: Int32 Int32 Int32
 kept: Int32 Int32 Double
 dynamic: Int32 Int32
 numbers: Double Int32 8
+--- method-value-direct-shapes
+// Which method values take the direct path: `via` looks for the by-name path's frame on the stack.
+class C {
+	public function new() {}
+}
+enum E { A; }
+@:nativeGen class NG {
+	public static function m(a:Int):String return P.via();
+}
+class O {
+	@:overload public static function ov(a:Int):String return P.via();
+	@:overload public static function ov(a:String):String return P.via();
+}
+class P {
+	public static function via():String
+		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
+	static function sInt(a:Int):String return via();
+	static function sFloat(a:Float):String return via();
+	static function sBool(a:Bool):String return via();
+	static function sStr(a:String):String return via();
+	static function sClass(a:C):String return via();
+	static function sEnum(a:E):String return via();
+	static function sDyn(a:Dynamic):String return via();
+	static function sFive(a:Int, b:Float, c:String, d:Bool, e:C):String return via();
+	static function sVoid():Void Sys.println("void " + via());
+	static inline function sInline(a:Int):String return via();
+	static function sOpt(a:Int, ?b:Int):String return via();
+	static function sDefault(a = 1):String return via();
+	static function sRest(...r:Int):String return via();
+	static function sSix(a:Int, b:Int, c:Int, d:Int, e:Int, f:Int):String return via();
+	static function sGeneric<T>(a:T):String return via();
+	static function sNull(a:Null<Int>):String return via();
+	static function sFun(a:Int->Int):String return via();
+	static function sArr(a:Array<Int>):String return via();
+	static dynamic function sDynamic(a:Int):String return via();
+	static function main() {
+		var c = new C();
+		var f1 = sInt; Sys.println("int " + f1(1));
+		var f2 = sFloat; Sys.println("float " + f2(1.5));
+		var f3 = sBool; Sys.println("bool " + f3(true));
+		var f4 = sStr; Sys.println("string " + f4("s"));
+		var f4n = sStr; Sys.println("null string " + f4n(null));
+		var f5 = sClass; Sys.println("class " + f5(c));
+		var f6 = sEnum; Sys.println("enum " + f6(A));
+		var f7 = sDyn; Sys.println("dynamic " + f7(1));
+		var f8 = sFive; Sys.println("five " + f8(1, 1.5, "s", true, c));
+		var f9 = sVoid; f9();
+		var f10 = sInline; Sys.println("inline " + f10(1));
+		var f11 = sOpt; Sys.println("optional " + f11(1));
+		var f12 = sDefault; Sys.println("default " + f12());
+		var f13 = sRest; try Sys.println("rest " + f13(1)) catch (e:cs.system.ArgumentException) Sys.println("rest by-name, which throws");
+		var f14 = sSix; Sys.println("six " + f14(1, 2, 3, 4, 5, 6));
+		var f15:Int->String = sGeneric; Sys.println("generic " + f15(1));
+		var f16 = sNull; Sys.println("null int " + f16(1));
+		var f17 = sFun; Sys.println("function " + f17(x -> x));
+		var f18 = sArr; Sys.println("array " + f18([1]));
+		var f19 = NG.m; Sys.println("nativegen " + f19(1));
+		var f20:Int->String = O.ov; Sys.println("overload " + f20(1));
+		var f21 = sDynamic; Sys.println("dynamic method " + f21(1));
+		var d:Dynamic = sInt; Sys.println("dynamic call, int " + d(1));
+		Sys.println("dynamic call, float " + d(2.7));
+	}
+}
+===
+[run]
+int direct
+float direct
+bool direct
+string direct
+null string by-name
+class direct
+enum direct
+dynamic direct
+five direct
+void direct
+inline direct
+optional by-name
+default by-name
+rest by-name, which throws
+six by-name
+generic by-name
+null int by-name
+function by-name
+array by-name
+nativegen by-name
+overload by-name
+dynamic method direct
+dynamic call, int direct
+dynamic call, float by-name
+--- method-value-static-init @gencs
+class Late {
+	public static var ready = init();
+	static function init() { Sys.println("Late init"); return true; }
+	public static function go(x:Int):Int return x + 1;
+}
+class P {
+	static function main() {
+		Sys.println("before read");
+		var f = Late.go;
+		Sys.println("after read");
+		Sys.println(f(1));
+	}
+}
+===
+--- method-value-mistyped-args @gencs
+class C { public function new() {} }
+class P {
+	static function inc(x:Int):Int return x + 1;
+	static function half(x:Float):Float return x / 2;
+	static function len(s:String):Int return s.length;
+	static function isC(c:C):Bool return c != null;
+	static function run(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:cs.system.Exception) Sys.println(name + ": EXC " + e.GetType().FullName + ": " + e.Message);
+	}
+	static function main() {
+		var d:Dynamic = inc;
+		run("2.7", () -> d(2.7));
+		run("3.5", () -> d(3.5));
+		run("big", () -> d(3000000000.0));
+		run("string 5", () -> d("5"));
+		run("string x", () -> d("x"));
+		run("bool", () -> d(true));
+		run("null", () -> d(null));
+		run("object", () -> d(new C()));
+		run("too many", () -> d(1, 2));
+		run("too few", () -> d());
+		var h:Dynamic = half;
+		run("float int", () -> h(3));
+		run("float string", () -> h("3"));
+		var l:Dynamic = len;
+		run("string int", () -> l(5));
+		run("string null", () -> l(null));
+		var c:Dynamic = isC;
+		run("class string", () -> c("s"));
+		run("class null", () -> c(null));
+		var f:Int->Int = inc;
+		run("typed", () -> f(2));
+		run("reflect", () -> Reflect.callMethod(null, inc, [2]));
+	}
+}
+===
+--- method-value-identity @gencs
+class P {
+	static function inc(x:Int):Int return x + 1;
+	static function show(f:Dynamic) {
+		Sys.println(Std.string(f) + " | " + Type.getClassName(Type.getClass(f)) + " | " + Type.typeof(f) + " | " + Reflect.isFunction(f));
+	}
+	static function main() {
+		show(inc);
+		var a = inc, b = inc;
+		Sys.println(a == b);
+		Sys.println(Reflect.compareMethods(a, b));
+		Sys.println(Reflect.compareMethods(a, Reflect.field(P, "inc")));
+		Sys.println(Reflect.compareMethods(Reflect.field(P, "inc"), a));
+		try haxe.Serializer.run(a) catch (e:Dynamic) Sys.println("EXC " + e);
+	}
+}
+===
+--- method-value-throws
+// A throwing method value: same exception and message, and the program's own frames in order. `boom` has a
+// loop, so the JIT does not inline it.
+class P {
+	static function boom(x:Int):Int {
+		for (i in 0...x) if (i == 2) throw "bang";
+		return x;
+	}
+	static function nat(s:String):Int {
+		var n = 0;
+		for (i in 0...2) n += s.length;
+		return n;
+	}
+	static function natDirect(x:Int):Int {
+		var s:String = null;
+		var n = 0;
+		for (i in 0...x) n += s.length;
+		return n;
+	}
+	static function call(f:Int->Int, x:Int):Int return f(x);
+	static function frames(st:haxe.CallStack):Array<String> {
+		var out = [];
+		function walk(i:haxe.CallStack.StackItem) switch i {
+			case FilePos(s, _, _, _) if (s != null): walk(s);
+			case Method(c, m) if (c == "P"): out.push(c + "." + m);
+			case _:
+		}
+		for (i in st) walk(i);
+		return out;
+	}
+	static function main() {
+		try call(boom, 5) catch (e:haxe.Exception) {
+			Sys.println(e.message);
+			Sys.println(frames(e.stack));
+		}
+		var g = nat;
+		try g(null) catch (e:cs.system.NullReferenceException) Sys.println(e.GetType().FullName + ": " + e.Message);
+		var h = natDirect;
+		try h(1) catch (e:cs.system.NullReferenceException) Sys.println(e.GetType().FullName + ": " + e.Message);
+	}
+}
+===
+[run]
+bang
+[P.boom,P.call,P.main,P.Main]
+System.NullReferenceException: Object reference not set to an instance of an object.
+System.NullReferenceException: Object reference not set to an instance of an object.
+--- method-value-pdb @dump=pdb:P_inc__Invoke + -debug
+// The invoker class is generated code: all its points are hidden.
+class P {
+	static function inc(x:Int):Int return x + 1;
+	static function main() {
+		var f = inc;
+		Sys.println(f(1));
+	}
+}
+===
+[run]
+2
+--- method-value-by-name-shapes @gencs
+// Shapes the by-name path treats in its own way, or that hold a class outside HxObject: `via` looks for its frame.
+import cs.system.IFormatProvider;
+import cs.system.TypeCode;
+class Conv implements cs.system.IConvertible {
+	public function new() {}
+	public function GetTypeCode():TypeCode return TypeCode.Object;
+	public function ToBoolean(p:IFormatProvider):Bool return false;
+	public function ToByte(p:IFormatProvider):cs.types.UInt8 return 0;
+	public function ToChar(p:IFormatProvider):cs.types.Char16 return cast 0;
+	public function ToDateTime(p:IFormatProvider):cs.system.DateTime return cs.system.DateTime.MinValue;
+	public function ToDecimal(p:IFormatProvider):cs.system.Decimal return new cs.system.Decimal(0);
+	public function ToDouble(p:IFormatProvider):Float return 0;
+	public function ToInt16(p:IFormatProvider):cs.types.Int16 return cast 0;
+	public function ToInt32(p:IFormatProvider):Int return 0;
+	public function ToInt64(p:IFormatProvider):cs.types.Int64 return 0;
+	public function ToSByte(p:IFormatProvider):cs.types.Int8 return cast 0;
+	public function ToSingle(p:IFormatProvider):Single return 0;
+	public function ToString(p:IFormatProvider):String return "conv";
+	public function ToType(t:cs.system.Type, p:IFormatProvider):Dynamic {
+		Sys.println("ToType " + t.Name);
+		return this;
+	}
+	public function ToUInt16(p:IFormatProvider):cs.types.UInt16 return cast 0;
+	public function ToUInt32(p:IFormatProvider):UInt return 0;
+	public function ToUInt64(p:IFormatProvider):cs.types.UInt64 return 0;
+}
+class SubConv extends Conv {}
+class Str {
+	public static function toString():String return "mine";
+}
+class Named {
+	public static function Named(a:Int):String return "mine";
+}
+class A {
+	public static function same(a:Int):String return P.via();
+}
+class B extends A {
+	public static function same(a:Int):String return P.via();
+}
+class G<T> {
+	public static function st(a:Int):String return P.via();
+}
+class H extends G<Int> {
+	public static function st2(a:Int):String return P.via();
+}
+@:nativeGen class N {
+	public function new() {}
+}
+class K extends N {
+	public static function m(a:Int):String return P.via();
+}
+abstract Abs(Int) from Int {
+	public static function st(a:Int):String return P.via();
+}
+function moduleLevel(a:Int):String return P.via();
+class P {
+	public static function via():String
+		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
+	static function sObj(a:cs.system.Object):String return via();
+	static function sIConv(a:cs.system.IConvertible):String return via();
+	static function sConv(a:Conv):String return via();
+	static function sExtern(a:cs.system.text.StringBuilder):String return via();
+	static function sAbstract(a:Abs):String return via();
+	static function boxedNull():Dynamic {
+		var args = new cs.NativeArray<cs.system.Type>(1);
+		args[0] = cs.Lib.getNativeType(1);
+		return cs.system.Activator.CreateInstance(cs.system.reflection.Assembly.GetExecutingAssembly().GetType("haxe.lang.Null`1").MakeGenericType(args));
+	}
+	static function run(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:cs.system.Exception) Sys.println(name + ": EXC " + e.GetType().FullName + ": " + e.Message);
+	}
+	static function main() {
+		var str = Str.toString;
+		run("toString", () -> str());
+		var named = Named.Named;
+		run("named like its class", () -> named(1));
+		var same = B.same;
+		run("hides a static", () -> same(1));
+		var inGeneric = G.st;
+		run("generic class", () -> inGeneric(1));
+		var belowGeneric = H.st2;
+		run("below a generic class", () -> belowGeneric(1));
+		var belowNative = K.m;
+		run("below a nativeGen class", () -> belowNative(1));
+		var abs = Abs.st;
+		run("abstract", () -> abs(1));
+		var mod = moduleLevel;
+		run("module level", () -> mod(1));
+		var obj:Dynamic = sObj;
+		run("object, double", () -> obj(1.5));
+		var iconv:Dynamic = sIConv;
+		run("IConvertible", () -> iconv("s"));
+		var conv:Dynamic = sConv;
+		run("IConvertible class", () -> conv(new SubConv()));
+		var ext:Dynamic = sExtern;
+		run("extern class", () -> ext(new cs.system.text.StringBuilder()));
+		var abstractArg:Dynamic = sAbstract;
+		run("abstract argument", () -> abstractArg(1));
+		// The by-name path unboxes a haxe.lang.Null<T> that a Dynamic result holds.
+		var boxed:Dynamic = boxedNull;
+		Sys.println(Std.string(boxed()));
+		var fboxed:Void->Float = cast boxedNull;
+		Sys.println(fboxed());
+	}
+}
+===
+--- method-value-direct-places @dump=P_sInt__Invoke_0
+// Method values go direct wherever the code holds them. The name a user class took gets a number.
+class P_sInt__Invoke {
+	public function new() {}
+}
+private class Priv {
+	public static function m(a:Int):String return P.via();
+}
+typedef MyInt = Int;
+class P {
+	public static function via():String
+		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
+	static function sInt(a:Int):String return via();
+	static function sTypedef(a:MyInt):String return via();
+	static var inStatic:Int->String = sInt;
+	var inInstance:Int->String = sInt;
+	static var inInit:Int->String;
+	static function __init__() {
+		inInit = sInt;
+	}
+	function new() {}
+	static function main() {
+		var priv = Priv.m;
+		Sys.println("private class " + priv(1));
+		var td = sTypedef;
+		Sys.println("typedef of Int " + td(1));
+		Sys.println("static var " + inStatic(1));
+		Sys.println("instance var " + new P().inInstance(1));
+		Sys.println("__init__ " + inInit(1));
+		var inner = () -> {
+			var f = sInt;
+			"local function " + f(1);
+		};
+		Sys.println(inner());
+		Sys.println(new P_sInt__Invoke() != null);
+	}
+}
+===
+[run]
+private class direct
+typedef of Int direct
+static var direct
+instance var direct
+__init__ direct
+local function direct
+True
+[dump]
+type public beforefieldinit P_sInt__Invoke_0 extends haxe.lang.ClosureInvoker
+  field public static P_sInt__Invoke_0 __hx_current
+  method public hidebysig specialname rtspecialname void .ctor()
+  method public virtual hidebysig bool __hx_accepts1(object, float64, object)
+  method public virtual hidebysig object __hx_call1_o(object, float64, object)
+  method public virtual hidebysig float64 __hx_call1_f(object, float64, object)
 --- function-value-shapes @gencs
 enum Opt { Some(v:Int); Two(a:String, b:Int); None; }
 class G<T> {

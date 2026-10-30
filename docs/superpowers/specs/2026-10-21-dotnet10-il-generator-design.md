@@ -1146,6 +1146,18 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   `Array.filter` on an `Array<Dynamic>` (hxc's `map` and `filter` inline on any other array, as gencs's do, with no
   closure allocated on the plain path; the class stays for the call on a forwarding array, which an ordinary
   array never reaches), and the `_Fun_N` numbering that follows. Only reflection over the assembly's types sees them.
+- hxc writes one more class than gencs per static method used as a value, a `haxe.lang.ClosureInvoker` named
+  `<Class>_<method>__Invoke`, and `haxe.lang.Closure` has more public members than gencs's: `__hx_invoker` and its own
+  `__hx_invoke<N>_o`/`_f` for up to 5 arguments, which call the method directly when the arguments already have its
+  parameters' types (`method-value-direct-shapes`). Only .NET reflection over the runtime type or the assembly's types
+  sees them: `Reflect.fields(f)` of a method value lists `__hx_invoker`, and `Type.getInstanceFields(Type.getClass(f))`,
+  which leaves out `__hx_` names, shows no change.
+- The frames of a method value that went direct hold the invoker's and `Closure`'s frames instead of the reflection
+  and runtime ones (`callField`, `__hx_invokeDynamic`, `callMethodCasting`, ...), in `haxe.CallStack`,
+  `Exception.details()` and `Exception.StackTrace` text. The exception's type and message, and the program's own Haxe
+  frames and their order, stay the same (`method-value-throws`). `haxe.CallStack.callStack()` in a method called by
+  name throws `NullReferenceException` from the method's second call on, when .NET's reflection frames have no
+  declaring type; gencs's by-name calls and hxc's do, and a call that goes direct does not.
 - A resource name with a non-ASCII character or a `\` is found by `haxe.Resource` in hxc
   (`resource-non-ascii-name`, `resource-backslash-name`). gencs escapes the name's UTF-8 bytes into the file
   name (`é` is `-x195-x169`) and turns `\` into `-x92`, where `haxe.Resource` escapes the UTF-16 code units at

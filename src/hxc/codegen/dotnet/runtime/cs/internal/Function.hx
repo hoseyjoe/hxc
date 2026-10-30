@@ -294,10 +294,97 @@ package cs.internal;
 	}
 }
 
+/**
+	hxc: a method used as a value calls it through one of these, generated for each such method
+	(MethodInvokers): `__hx_accepts<N>` says whether the arguments already have the parameters' types,
+	and `__hx_call<N>_o`/`_f` then make the call. `obj` is the Closure's.
+**/
+@:keep @:abstract @:nativeGen @:native("haxe.lang.ClosureInvoker") class ClosureInvoker {
+	public var __hx_arity:Int;
+
+	function new(arity:Int) {
+		this.__hx_arity = arity;
+	}
+
+	public function __hx_accepts5(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic, __fn_float5:Float, __fn_dyn5:Dynamic):Bool {
+		return false;
+	}
+
+	public function __hx_call5_o(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic, __fn_float5:Float, __fn_dyn5:Dynamic):Dynamic {
+		return null;
+	}
+
+	public function __hx_call5_f(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic, __fn_float5:Float, __fn_dyn5:Dynamic):Float {
+		return 0.0;
+	}
+
+	public function __hx_accepts4(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic):Bool {
+		return false;
+	}
+
+	public function __hx_call4_o(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic):Dynamic {
+		return null;
+	}
+
+	public function __hx_call4_f(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic):Float {
+		return 0.0;
+	}
+
+	public function __hx_accepts3(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic):Bool {
+		return false;
+	}
+
+	public function __hx_call3_o(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic):Dynamic {
+		return null;
+	}
+
+	public function __hx_call3_f(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic):Float {
+		return 0.0;
+	}
+
+	public function __hx_accepts2(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic):Bool {
+		return false;
+	}
+
+	public function __hx_call2_o(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic):Dynamic {
+		return null;
+	}
+
+	public function __hx_call2_f(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic):Float {
+		return 0.0;
+	}
+
+	public function __hx_accepts1(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic):Bool {
+		return false;
+	}
+
+	public function __hx_call1_o(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic):Dynamic {
+		return null;
+	}
+
+	public function __hx_call1_f(obj:Dynamic, __fn_float1:Float, __fn_dyn1:Dynamic):Float {
+		return 0.0;
+	}
+
+	public function __hx_accepts0(obj:Dynamic):Bool {
+		return false;
+	}
+
+	public function __hx_call0_o(obj:Dynamic):Dynamic {
+		return null;
+	}
+
+	public function __hx_call0_f(obj:Dynamic):Float {
+		return 0.0;
+	}
+}
+
 @:keep @:nativeGen @:native('haxe.lang.Closure') class Closure extends VarArgsBase {
 	private var obj:Dynamic;
 	private var field:String;
 	private var hash:Int;
+	// hxc: the method's typed invoker, set on a method value hxc generated one for; null otherwise.
+	public var __hx_invoker:ClosureInvoker;
 
 	public function new(obj:Dynamic, field, hash) {
 		super(-1, -1);
@@ -308,6 +395,90 @@ package cs.internal;
 
 	override public function __hx_invokeDynamic(dynArgs:cs.NativeArray<Dynamic>):Dynamic {
 		return Runtime.callField(obj, field, hash, dynArgs);
+	}
+
+	override public function __hx_invoke5_o(__fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic, __fn_float5:Float, __fn_dyn5:Dynamic):Dynamic {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 5 && inv.__hx_accepts5(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4, __fn_float5, __fn_dyn5))
+			return inv.__hx_call5_o(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4, __fn_float5, __fn_dyn5);
+		return super.__hx_invoke5_o(__fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4, __fn_float5, __fn_dyn5);
+	}
+
+	override public function __hx_invoke5_f(__fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic, __fn_float5:Float, __fn_dyn5:Dynamic):Float {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 5 && inv.__hx_accepts5(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4, __fn_float5, __fn_dyn5))
+			return inv.__hx_call5_f(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4, __fn_float5, __fn_dyn5);
+		return super.__hx_invoke5_f(__fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4, __fn_float5, __fn_dyn5);
+	}
+
+	override public function __hx_invoke4_o(__fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic):Dynamic {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 4 && inv.__hx_accepts4(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4))
+			return inv.__hx_call4_o(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4);
+		return super.__hx_invoke4_o(__fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4);
+	}
+
+	override public function __hx_invoke4_f(__fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic, __fn_float4:Float, __fn_dyn4:Dynamic):Float {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 4 && inv.__hx_accepts4(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4))
+			return inv.__hx_call4_f(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4);
+		return super.__hx_invoke4_f(__fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3, __fn_float4, __fn_dyn4);
+	}
+
+	override public function __hx_invoke3_o(__fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic):Dynamic {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 3 && inv.__hx_accepts3(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3))
+			return inv.__hx_call3_o(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3);
+		return super.__hx_invoke3_o(__fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3);
+	}
+
+	override public function __hx_invoke3_f(__fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic, __fn_float3:Float, __fn_dyn3:Dynamic):Float {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 3 && inv.__hx_accepts3(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3))
+			return inv.__hx_call3_f(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3);
+		return super.__hx_invoke3_f(__fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2, __fn_float3, __fn_dyn3);
+	}
+
+	override public function __hx_invoke2_o(__fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic):Dynamic {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 2 && inv.__hx_accepts2(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2))
+			return inv.__hx_call2_o(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2);
+		return super.__hx_invoke2_o(__fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2);
+	}
+
+	override public function __hx_invoke2_f(__fn_float1:Float, __fn_dyn1:Dynamic, __fn_float2:Float, __fn_dyn2:Dynamic):Float {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 2 && inv.__hx_accepts2(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2))
+			return inv.__hx_call2_f(obj, __fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2);
+		return super.__hx_invoke2_f(__fn_float1, __fn_dyn1, __fn_float2, __fn_dyn2);
+	}
+
+	override public function __hx_invoke1_o(__fn_float1:Float, __fn_dyn1:Dynamic):Dynamic {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 1 && inv.__hx_accepts1(obj, __fn_float1, __fn_dyn1))
+			return inv.__hx_call1_o(obj, __fn_float1, __fn_dyn1);
+		return super.__hx_invoke1_o(__fn_float1, __fn_dyn1);
+	}
+
+	override public function __hx_invoke1_f(__fn_float1:Float, __fn_dyn1:Dynamic):Float {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 1 && inv.__hx_accepts1(obj, __fn_float1, __fn_dyn1))
+			return inv.__hx_call1_f(obj, __fn_float1, __fn_dyn1);
+		return super.__hx_invoke1_f(__fn_float1, __fn_dyn1);
+	}
+
+	override public function __hx_invoke0_o():Dynamic {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 0 && inv.__hx_accepts0(obj))
+			return inv.__hx_call0_o(obj);
+		return super.__hx_invoke0_o();
+	}
+
+	override public function __hx_invoke0_f():Float {
+		var inv = __hx_invoker;
+		if (inv != null && inv.__hx_arity == 0 && inv.__hx_accepts0(obj))
+			return inv.__hx_call0_f(obj);
+		return super.__hx_invoke0_f();
 	}
 
 	public function Equals(obj:Dynamic):Bool {

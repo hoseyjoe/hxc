@@ -63,6 +63,8 @@ class DotnetCtx {
 	public final closureExprs = new ObjectMap<TClassField, TExpr>();
 	public final closureInits = new ObjectMap<TClass, TExpr>();
 	public final closureOwners = new ObjectMap<TClass, TClass>();
+	// The invoker class of each method used as a value that has one (MethodInvokers).
+	public final methodInvokers = new ObjectMap<TClassField, TClass>();
 	// What HxGeneric found for each generic class it analysed.
 	public final hxGenericClasses = new ObjectMap<TClass, Bool>();
 	// CompanionToIl's plans: each hxgeneric class's or interface's companion interface, an interface's

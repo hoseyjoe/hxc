@@ -251,6 +251,7 @@ class TexprCalls {
 				var plan = g.ownerOf.get(cf);
 				if (plan == null) throw Unsupported.bug("a closure of " + Globals.sTypePath(c.path) + "." + cf.name + " without a method (an hxc bug)");
 				pushClosure(null, staticOwner(plan), cf.name);
+				pushInvoker(cf);
 				tl.coerce(closureSig(), ret);
 			case FStatic(c, cf) | FInstance(c, _, cf) if (g.varProperties.exists(cf)):
 				// A @:property var: its getter, as gencs's C# reads the auto-property.
@@ -679,6 +680,33 @@ class TexprCalls {
 		code.opToken(IlOps.LDSTR, g.mb.userString(name), 0, 1);
 		code.ldcI4(FieldHashes.use(name));
 		code.opToken(IlOps.NEWOBJ, ctor.token, 3, 1);
+	}
+
+	// With a new haxe.lang.Closure on the stack, gives it the invoker of the method `cf`, if it has one:
+	// `closure.__hx_invoker = (Invoker.__hx_current ?? (Invoker.__hx_current = new Invoker()))`.
+	public function pushInvoker(cf:TClassField):Void {
+		var invoker = g.methodInvokers.get(cf);
+		if (invoker == null) return;
+		// An invoker class that was left out: the value goes by name.
+		var plan = g.planOf.get(invoker);
+		if (plan == null) return;
+		var ctor = null;
+		for (m in plan.methods) if (m.name == ".ctor") ctor = m;
+		if (ctor == null) throw "internal error: " + plan.hxPath + " has no constructor";
+		var current = tl.staticField(invoker, invoker.statics.get("__hx_current"));
+		var closure = runtimeClass("cs.internal.Closure");
+		var field = instanceField(closure, [], closure.fields.get("__hx_invoker"));
+		var made = code.newLabel();
+		code.op(IlOps.DUP, 1, 2);
+		code.opToken(IlOps.LDSFLD, current.token, 0, 1);
+		code.op(IlOps.DUP, 1, 2);
+		code.branch(IlOps.BRTRUE, made);
+		code.op(IlOps.POP, 1, 0);
+		code.opToken(IlOps.NEWOBJ, ctor.token, 0, 1);
+		code.op(IlOps.DUP, 1, 2);
+		code.opToken(IlOps.STSFLD, current.token, 1, 0);
+		code.mark(made);
+		code.opToken(IlOps.STFLD, field.token, 2, 0);
 	}
 
 	function closureSig():IlSigNorm return tl.sig(TInst(runtimeClass("cs.internal.Closure"), []));

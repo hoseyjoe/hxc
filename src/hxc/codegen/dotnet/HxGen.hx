@@ -84,6 +84,17 @@ class HxGen {
 		return false;
 	}
 
+	// Whether the class derives from haxe.lang.HxObject.
+	public static function derivesFromHxObject(c:TClass):Bool {
+		if (c.kind.match(KTypeParameter(_) | KAbstractImpl(_)) || TypeFunctions.hasClassFlag(c, CInterface) || TypeFunctions.hasMeta(":struct", c.meta)
+			|| !isHxGen(TClassDecl(c))) return false;
+		// The root of its superclasses has to be the class that extends HxObject (TclassToIl): a
+		// @:nativeGen or an extern root makes the base of the whole chain instead.
+		var root = c;
+		while (root.superClass != null) root = root.superClass.c;
+		return hasCtorModel(root) && !TypeFunctions.hasMeta(":struct", root.meta);
+	}
+
 	public static function ctorName(c:TClass):String {
 		return "__hx_ctor_" + c.path.pack.join("_") + "_" + c.path.name;
 	}
