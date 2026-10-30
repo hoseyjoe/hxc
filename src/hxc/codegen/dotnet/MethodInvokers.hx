@@ -41,8 +41,10 @@ class MethodInvokers {
 
 	// Whether a value of the method `cf` of `c` takes the direct path when its arguments allow it.
 	public function gets(c:TClass, cf:TClassField, isStatic:Bool):Bool {
-		if (!eligible(g, c, cf, isStatic)) return false;
-		if (isStatic) return true;
+		if (!eligible(c, cf, isStatic)) return false;
+		// By name, it may not be this method that is found: Runtime.slowCallField goes through the class's methods
+		// with the name, as declared, and takes the first that fits best.
+		if (isStatic) return !Lambda.exists(c.orderedStatics, f -> f != cf && f.name == cf.name);
 		// `__hx_invokeField` has no case for it, so by name it is not found.
 		if (TypeFunctions.hasMeta(":compilerGenerated", cf.meta)) return false;
 		// By name, it may not be this method that is found.
@@ -56,7 +58,7 @@ class MethodInvokers {
 	}
 
 	// A shape that the by-name path treats in a way of its own stays by name.
-	public static function eligible(g:DotnetCtx, c:TClass, cf:TClassField, isStatic:Bool):Bool {
+	public static function eligible(c:TClass, cf:TClassField, isStatic:Bool):Bool {
 		if (!cf.kind.match(Method(MethNormal | MethInline)) || cf.expr == null || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) return false;
 		if (TypeFunctions.hasClassFlag(c, CExtern) || !HxGen.derivesFromHxObject(c) || c.params.length > 0) return false;
 		if (cf.params.length > 0 || cf.overloads.length > 0 || TypeFunctions.hasClassFieldFlag(cf, CfOverload)) return false;

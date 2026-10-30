@@ -6509,6 +6509,7 @@ class P {
 	static function sFun(a:Int->Int):String return via();
 	static function sArr(a:Array<Int>):String return via();
 	static dynamic function sDynamic(a:Int):String return via();
+	static function sIntResult(a:Int):Int { Sys.println("int result " + via()); return a; }
 	static function main() {
 		var c = new C();
 		var f1 = sInt; Sys.println("int " + f1(1));
@@ -6535,6 +6536,7 @@ class P {
 		var f21 = sDynamic; Sys.println("dynamic method " + f21(1));
 		var d:Dynamic = sInt; Sys.println("dynamic call, int " + d(1));
 		Sys.println("dynamic call, float " + d(2.7));
+		var f22 = sIntResult; f22(1);
 	}
 }
 ===
@@ -6563,6 +6565,41 @@ overload by-name
 dynamic method direct
 dynamic call, int direct
 dynamic call, float by-name
+int result direct
+--- method-value-static-rival @gencs
+// A static whose name another static answers to through @:native: by name, the first that takes the argument is
+// found, in the order of the declarations, whichever of them the value read.
+class Y {
+	@:native("n") public static function z(x:String):String return "Y.z";
+	public static function n(x:Int):String return "Y.n";
+}
+class YRev {
+	public static function n(x:Int):String return "YRev.n";
+	@:native("n") public static function z(x:String):String return "YRev.z";
+}
+class D {
+	@:native("n") public static function z(x:Dynamic):String return "D.z";
+	public static function n(x:String):String return "D.n";
+}
+class DRev {
+	public static function n(x:String):String return "DRev.n";
+	@:native("n") public static function z(x:Dynamic):String return "DRev.z";
+}
+class P {
+	static function showInt(label:String, f:Int->String) {
+		try Sys.println(label + ": " + f(5)) catch (e:cs.system.Exception) Sys.println(label + ": " + e.GetType().FullName);
+	}
+	static function showString(label:String, f:String->String) {
+		try Sys.println(label + ": " + f("s")) catch (e:cs.system.Exception) Sys.println(label + ": " + e.GetType().FullName);
+	}
+	static function main() {
+		showInt("String rival first", Y.n);
+		showInt("String rival last", YRev.n);
+		showString("Dynamic rival first", D.n);
+		showString("Dynamic rival last", DRev.n);
+	}
+}
+===
 --- method-value-static-init @gencs
 class Late {
 	public static var ready = init();
