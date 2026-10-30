@@ -6713,6 +6713,774 @@ System.NullReferenceException: Object reference not set to an instance of an obj
 throw, StackTrace [P.call,P.main]
 native, stack [P.call,P.main]
 native, StackTrace [P.call,P.main]
+--- method-value-instance-direct
+class Base {
+	public var tag = "b";
+	public function new() {}
+	public function hello(n:Int):String return tag + n + " " + P.via();
+	public function over(n:Int):String return "base " + P.via();
+	public function callSuper():Int->String return superVia;
+	function superVia(n:Int):String return P.via();
+}
+class Sub extends Base {
+	override public function over(n:Int):String return "sub " + P.via();
+}
+class G<T> {
+	public function new() {}
+	public function g(x:Int):String return P.via();
+}
+interface I { function im(x:Int):String; }
+class Impl implements I {
+	public function new() {}
+	public function im(x:Int):String return P.via();
+}
+class P {
+	public static function via():String
+		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
+	static function main() {
+		var b = new Base();
+		var f = b.hello; Sys.println(f(1));
+		b.tag = "B"; Sys.println(f(2));
+		var bs:Base = new Sub();
+		var o = bs.over; Sys.println(o(1));
+		var s = b.callSuper(); Sys.println(s(1));
+		var g = new G<Int>().g; Sys.println("generic class " + g(1));
+		var i:I = new Impl();
+		var m = i.im; Sys.println("interface " + m(1));
+		var im = new Impl().im; Sys.println("class implementing " + im(1));
+	}
+}
+===
+[run]
+b1 direct
+B2 direct
+sub direct
+direct
+generic class by-name
+interface by-name
+class implementing direct
+--- method-value-null-receiver @gencs
+class C {
+	public var n = 1;
+	public function new() {}
+	public function m(x:Int):Int return x + n;
+}
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:Dynamic) Sys.println(name + ": EXC " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var nothing:C = null;
+		run("read", () -> { var f = nothing.m; "read ok"; });
+		run("call", () -> { var f = nothing.m; f(1); });
+		var wrong:C = cast new P();
+		run("wrong type", () -> { var f = wrong.m; f(1); });
+	}
+	function new() {}
+}
+===
+--- method-value-instance-equality @gencs
+class C {
+	public function new() {}
+	public function m(x:Int):Int return x;
+}
+class P {
+	static function main() {
+		var a = new C(), b = new C();
+		Sys.println(Reflect.compareMethods(a.m, a.m));
+		Sys.println(Reflect.compareMethods(a.m, b.m));
+		Sys.println(Reflect.compareMethods(a.m, Reflect.field(a, "m")));
+		var f = a.m, g = a.m;
+		Sys.println(f == g);
+		var d:Dynamic = a.m;
+		Sys.println(d(1));
+		Sys.println(d("2"));
+	}
+}
+===
+--- method-value-instance-throws
+// A throwing instance method value: same exception and message, and the program's own frames in order, as by name.
+// The by-name path is the `__hx_invokeField` of the receiver's class, whose case keeps the method's frame. A class
+// that overrides the method and has a method of its own has a case that goes through reflection, which throws the
+// exception again, so a native one, or any one's .NET trace, loses the method's frame; one without has no
+// `__hx_invokeField`, and the superclass's case calls the override. `__hx_invokeField` itself is the by-name path's
+// and not the program's. Each method is called once and has a loop, so the JIT does not inline it.
+class C {
+	public function new() {}
+	public function ownH(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
+	public function ownN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+	public function ownS(x:Int):String { for (i in 0...x) if (i == 2) throw "bang"; return "s"; }
+	public function ownV(x:Int):Void { for (i in 0...x) if (i == 2) throw "bang"; }
+	public function ownD(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
+	public function inhH(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
+	public function inhN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+	public function slowH(x:Int):Int return x;
+	public function slowN(x:Int):Int return x;
+	public function slowS(x:Int):String return "s";
+	public function slowV(x:Int):Void {}
+	public function slowD(x:Int):Int return x;
+	public function slowOnBaseH(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
+	public function slowOnBaseN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+	public function slowOwnH(x:Int):Int return x;
+	public function slowOwnN(x:Int):Int return x;
+	public function fastH(x:Int):Int return x;
+	public function fastN(x:Int):Int return x;
+}
+class S extends C {
+	public function own():Int return 1;
+	override public function slowH(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
+	override public function slowN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+	override public function slowS(x:Int):String { for (i in 0...x) if (i == 2) throw "bang"; return "s"; }
+	override public function slowV(x:Int):Void { for (i in 0...x) if (i == 2) throw "bang"; }
+	override public function slowD(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
+	override public function slowOnBaseH(x:Int):Int return x;
+	override public function slowOnBaseN(x:Int):Int return x;
+	override public function slowOwnH(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
+	override public function slowOwnN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+}
+class T extends C {
+	override public function fastH(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
+	override public function fastN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+}
+class P {
+	static function own(c:String, m:String):Bool
+		return ["C", "S", "T", "P"].indexOf(c) >= 0 && !StringTools.startsWith(m, "__hx_");
+	static function frames(st:haxe.CallStack):Array<String> {
+		var out = [];
+		function walk(i:haxe.CallStack.StackItem) switch i {
+			case FilePos(s, _, _, _) if (s != null): walk(s);
+			case Method(c, m) if (own(c, m)): out.push(c + "." + m);
+			case _:
+		}
+		for (i in st) walk(i);
+		return out;
+	}
+	static function netFrames(trace:String):Array<String> {
+		var out = [];
+		for (l in trace.split("\n")) {
+			var t = StringTools.trim(l);
+			if (!StringTools.startsWith(t, "at ")) continue;
+			var name = t.substr(3, t.indexOf("(") - 3);
+			var dot = name.lastIndexOf(".");
+			if (own(name.substr(0, dot), name.substr(dot + 1))) out.push(name);
+		}
+		return out;
+	}
+	static function report(label:String, e:haxe.Exception) {
+		var native:cs.system.Exception = e.native;
+		Sys.println(label + ": " + native.GetType().FullName + ": " + e.message);
+		Sys.println("  stack " + frames(e.stack));
+		Sys.println("  StackTrace " + netFrames(native.StackTrace));
+	}
+	static function call(f:Int->Int, x:Int):Int return f(x);
+	static function callS(f:Int->String, x:Int):String return f(x);
+	static function callV(f:Int->Void, x:Int):Void f(x);
+	static function callD(f:Dynamic, x:Dynamic):Dynamic return f(x);
+	static function int(label:String, f:Int->Int) try call(f, 5) catch (e:haxe.Exception) report(label, e);
+	static function string(label:String, f:Int->String) try callS(f, 5) catch (e:haxe.Exception) report(label, e);
+	static function void(label:String, f:Int->Void) try callV(f, 5) catch (e:haxe.Exception) report(label, e);
+	static function dyn(label:String, f:Dynamic) try callD(f, 5) catch (e:haxe.Exception) report(label, e);
+	static function main() {
+		var c = new C(), s = new S(), t = new T();
+		var bs:C = s, bt:C = t;
+		int("own, Haxe", c.ownH);
+		int("own, native", c.ownN);
+		string("own, String", c.ownS);
+		void("own, Void", c.ownV);
+		dyn("own, through Dynamic", c.ownD);
+		int("inherited, Haxe", s.inhH);
+		int("inherited, native", s.inhN);
+		int("override in a class with a method of its own, Haxe", bs.slowH);
+		int("override in a class with a method of its own, native", bs.slowN);
+		string("override in a class with a method of its own, String", bs.slowS);
+		void("override in a class with a method of its own, Void", bs.slowV);
+		dyn("override in a class with a method of its own, through Dynamic", bs.slowD);
+		int("the overridden method on its own class, Haxe", c.slowOnBaseH);
+		int("the overridden method on its own class, native", c.slowOnBaseN);
+		int("override read on its class, Haxe", s.slowOwnH);
+		int("override read on its class, native", s.slowOwnN);
+		int("override in a class without a method of its own, Haxe", bt.fastH);
+		int("override in a class without a method of its own, native", bt.fastN);
+	}
+}
+===
+[run]
+own, Haxe: haxe.ValueException: bang
+  stack [C.ownH,P.call,P.int,P.main,P.Main]
+  StackTrace [C.ownH,P.call,P.int]
+own, native: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [C.ownN,P.call,P.int]
+  StackTrace [C.ownN,P.call,P.int]
+own, String: haxe.ValueException: bang
+  stack [C.ownS,P.callS,P.string,P.main,P.Main]
+  StackTrace [C.ownS,P.callS,P.string]
+own, Void: haxe.ValueException: bang
+  stack [C.ownV,P.callV,P.void,P.main,P.Main]
+  StackTrace [C.ownV,P.callV,P.void]
+own, through Dynamic: haxe.ValueException: bang
+  stack [C.ownD,P.callD,P.dyn,P.main,P.Main]
+  StackTrace [C.ownD,P.callD,P.dyn]
+inherited, Haxe: haxe.ValueException: bang
+  stack [C.inhH,P.call,P.int,P.main,P.Main]
+  StackTrace [C.inhH,P.call,P.int]
+inherited, native: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [C.inhN,P.call,P.int]
+  StackTrace [C.inhN,P.call,P.int]
+override in a class with a method of its own, Haxe: haxe.ValueException: bang
+  stack [S.slowH,P.call,P.int,P.main,P.Main]
+  StackTrace [P.call,P.int]
+override in a class with a method of its own, native: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [P.call,P.int]
+  StackTrace [P.call,P.int]
+override in a class with a method of its own, String: haxe.ValueException: bang
+  stack [S.slowS,P.callS,P.string,P.main,P.Main]
+  StackTrace [P.callS,P.string]
+override in a class with a method of its own, Void: haxe.ValueException: bang
+  stack [S.slowV,P.callV,P.void,P.main,P.Main]
+  StackTrace [P.callV,P.void]
+override in a class with a method of its own, through Dynamic: haxe.ValueException: bang
+  stack [S.slowD,P.callD,P.dyn,P.main,P.Main]
+  StackTrace [P.callD,P.dyn]
+the overridden method on its own class, Haxe: haxe.ValueException: bang
+  stack [C.slowOnBaseH,P.call,P.int,P.main,P.Main]
+  StackTrace [C.slowOnBaseH,P.call,P.int]
+the overridden method on its own class, native: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [C.slowOnBaseN,P.call,P.int]
+  StackTrace [C.slowOnBaseN,P.call,P.int]
+override read on its class, Haxe: haxe.ValueException: bang
+  stack [S.slowOwnH,P.call,P.int,P.main,P.Main]
+  StackTrace [P.call,P.int]
+override read on its class, native: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [P.call,P.int]
+  StackTrace [P.call,P.int]
+override in a class without a method of its own, Haxe: haxe.ValueException: bang
+  stack [T.fastH,P.call,P.int,P.main,P.Main]
+  StackTrace [T.fastH,P.call,P.int]
+override in a class without a method of its own, native: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [T.fastN,P.call,P.int]
+  StackTrace [T.fastN,P.call,P.int]
+--- method-value-instance-mistyped-args @gencs
+// The same arguments on each by-name path of an instance method: a case of the class's `__hx_invokeField`, the same
+// on an inherited method, reflection for an override in a class with a method of its own, and an override in one
+// without. Both halves of an argument, on `_o` and on `_f`.
+enum E { A; B(x:Int); }
+class K { public function new() {} public function toString() return "K!"; }
+class KS extends K {}
+class C {
+	public function new() {}
+	public function mInt(x:Int):Int return x + 1;
+	public function mFloat(x:Float):Float return x / 2;
+	public function mBool(x:Bool):Bool return !x;
+	public function mStr(x:String):String return "s" + x;
+	public function mCls(x:K):K return x;
+	public function mEnum(x:E):E return x;
+	public function mDyn(x:Dynamic):Dynamic return x;
+	public function mVoid(x:Int):Void {}
+	public function mTwo(a:Int, b:Float):Float return a + b;
+}
+class S extends C {
+	public function own():Int return 1;
+	override public function mInt(x:Int):Int return x + 10;
+	override public function mFloat(x:Float):Float return x / 4;
+	override public function mBool(x:Bool):Bool return x;
+	override public function mStr(x:String):String return "S" + x;
+	override public function mCls(x:K):K return x;
+	override public function mEnum(x:E):E return x;
+	override public function mDyn(x:Dynamic):Dynamic return x;
+	override public function mVoid(x:Int):Void {}
+	override public function mTwo(a:Int, b:Float):Float return a - b;
+}
+class T extends C {
+	override public function mInt(x:Int):Int return x + 20;
+	override public function mStr(x:String):String return "T" + x;
+}
+class I extends C {}
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			var r:Dynamic = f();
+			Sys.println(name + ": " + (r == null ? "null" : cs.Lib.getNativeType(r).FullName + " " + Std.string(r)));
+		} catch (e:cs.system.Exception) {
+			Sys.println(name + ": EXC " + e.GetType().FullName + ": " + e.Message);
+		}
+	}
+	static function args():Array<{n:String, v:Dynamic}> {
+		var a:Array<{n:String, v:Dynamic}> = [];
+		function add(n:String, v:Dynamic) a.push({n: n, v: v});
+		add("int", 2); add("2.0", 2.0); add("2.7", 2.7); add("-2.7", -2.7); add("3.5", 3.5); add("-0.0", -0.0); add("NaN", Math.NaN);
+		add("+inf", Math.POSITIVE_INFINITY); add("-inf", Math.NEGATIVE_INFINITY);
+		add("2147483647.0", 2147483647.0); add("2147483648.0", 2147483648.0); add("-2147483648.0", -2147483648.0); add("-2147483649.0", -2147483649.0);
+		add("\"5\"", "5"); add("\"x\"", "x"); add("true", true); add("null", null); add("K", new K()); add("KS", new KS()); add("A", A); add("B", B(1));
+		add("byte", (cast 5 : cs.types.UInt8)); add("short", (cast 5 : cs.types.Int16)); add("uint", (cast 5 : UInt));
+		add("long", (cast 5 : cs.types.Int64)); add("single", (cast 1.5 : Single));
+		add("array", [1]); add("function", (x:Int) -> x);
+		return a;
+	}
+	static function check(label:String, d:Dynamic) {
+		for (a in args()) {
+			var v:Dynamic = a.v;
+			var name = label + "(" + a.n + ")";
+			run(name, () -> d(v));
+			var ofDyn:Dynamic->Float = d;
+			run(name + " _f", () -> ofDyn(v));
+			if (Std.isOfType(v, Float)) {
+				var fl:Float = v;
+				var ofFloat:Float->Dynamic = d;
+				run(name + " float half", () -> ofFloat(fl));
+				var ofFloatF:Float->Float = d;
+				run(name + " float half _f", () -> ofFloatF(fl));
+			}
+		}
+		run(label + " no arguments", () -> d());
+		run(label + " two arguments", () -> d(1, 2));
+		run(label + " six arguments", () -> d(1, 2, 3, 4, 5, 6));
+		var list:Array<Dynamic> = [1];
+		run(label + " Reflect.callMethod", () -> Reflect.callMethod(null, d, list));
+	}
+	static function methods(label:String, o:C) {
+		check(label + " mInt", o.mInt);
+		check(label + " mFloat", o.mFloat);
+		check(label + " mBool", o.mBool);
+		check(label + " mStr", o.mStr);
+		check(label + " mCls", o.mCls);
+		check(label + " mEnum", o.mEnum);
+		check(label + " mDyn", o.mDyn);
+		check(label + " mVoid", o.mVoid);
+		var two:Dynamic = o.mTwo;
+		run(label + " mTwo(1, 2.5)", () -> two(1, 2.5));
+		run(label + " mTwo(1.5, 2)", () -> two(1.5, 2));
+		run(label + " mTwo(\"1\", 2)", () -> two("1", 2));
+		run(label + " mTwo(1)", () -> two(1));
+	}
+	static function main() {
+		methods("own", new C());
+		methods("inherited", new I());
+		methods("override, own method", new S());
+		methods("override, no own method", new T());
+		var s = new S();
+		check("read on the override mInt", s.mInt);
+		check("read on the override mStr", s.mStr);
+	}
+}
+===
+--- method-value-instance-results @gencs
+// Each result type on `_o` and `_f`, on each by-name path. A Dynamic can hold a boxed haxe.lang.Null<T>: reflection
+// unboxes it and a `__hx_invokeField` case does not.
+enum E { A; }
+class K { public function new() {} public function toString() return "K!"; }
+class C {
+	public function new() {}
+	public function rInt():Int return 7;
+	public function rFloat():Float return 1.5;
+	public function rWhole():Float return 2.0;
+	public function rTrue():Bool return true;
+	public function rFalse():Bool return false;
+	public function rNumStr():String return "3.5";
+	public function rStr():String return "x";
+	public function rNullStr():String return null;
+	public function rCls():K return new K();
+	public function rNullCls():K return null;
+	public function rEnum():E return A;
+	public function rDynInt():Dynamic return 3;
+	public function rDynFloat():Dynamic return 3.5;
+	public function rDynStr():Dynamic return "4.5";
+	public function rDynNull():Dynamic return null;
+	public function rDynBoxed():Dynamic return P.boxedNull();
+	public function rVoid():Void {}
+}
+class S extends C {
+	public function own():Int return 1;
+	override public function rInt():Int return 8;
+	override public function rFloat():Float return 2.5;
+	override public function rWhole():Float return 3.0;
+	override public function rTrue():Bool return true;
+	override public function rFalse():Bool return false;
+	override public function rNumStr():String return "4.5";
+	override public function rStr():String return "y";
+	override public function rNullStr():String return null;
+	override public function rCls():K return new K();
+	override public function rNullCls():K return null;
+	override public function rEnum():E return A;
+	override public function rDynInt():Dynamic return 4;
+	override public function rDynFloat():Dynamic return 4.5;
+	override public function rDynStr():Dynamic return "5.5";
+	override public function rDynNull():Dynamic return null;
+	override public function rDynBoxed():Dynamic return P.boxedNull();
+	override public function rVoid():Void {}
+}
+class T extends C {
+	override public function rInt():Int return 9;
+	override public function rDynBoxed():Dynamic return P.boxedNull();
+}
+class P {
+	public static function boxedNull():Dynamic {
+		var args = new cs.NativeArray<cs.system.Type>(1);
+		args[0] = cs.Lib.getNativeType(1);
+		return cs.system.Activator.CreateInstance(cs.system.reflection.Assembly.GetExecutingAssembly().GetType("haxe.lang.Null`1").MakeGenericType(args));
+	}
+	static function run(name:String, f:Void->Dynamic) {
+		try {
+			var r:Dynamic = f();
+			Sys.println(name + ": " + (r == null ? "null" : cs.Lib.getNativeType(r).FullName + " " + Std.string(r)));
+		} catch (e:cs.system.Exception) {
+			Sys.println(name + ": EXC " + e.GetType().FullName + ": " + e.Message);
+		}
+	}
+	static function check(label:String, d:Dynamic) {
+		run(label + " _o", () -> d());
+		var f:Void->Float = d;
+		run(label + " _f", () -> f());
+		var i:Void->Int = d;
+		run(label + " Int", () -> i());
+		run(label + " one argument", () -> d(1));
+	}
+	static function methods(label:String, o:C) {
+		check(label + " rInt", o.rInt);
+		check(label + " rFloat", o.rFloat);
+		check(label + " rWhole", o.rWhole);
+		check(label + " rTrue", o.rTrue);
+		check(label + " rFalse", o.rFalse);
+		check(label + " rNumStr", o.rNumStr);
+		check(label + " rStr", o.rStr);
+		check(label + " rNullStr", o.rNullStr);
+		check(label + " rCls", o.rCls);
+		check(label + " rNullCls", o.rNullCls);
+		check(label + " rEnum", o.rEnum);
+		check(label + " rDynInt", o.rDynInt);
+		check(label + " rDynFloat", o.rDynFloat);
+		check(label + " rDynStr", o.rDynStr);
+		check(label + " rDynNull", o.rDynNull);
+		check(label + " rDynBoxed", o.rDynBoxed);
+		check(label + " rVoid", o.rVoid);
+	}
+	static function main() {
+		methods("own", new C());
+		methods("override, own method", new S());
+		methods("override, no own method", new T());
+		var s = new S();
+		check("read on the override rDynBoxed", s.rDynBoxed);
+		check("read on the override rInt", s.rInt);
+	}
+}
+===
+--- method-value-instance-by-name-shapes @gencs
+// Instance methods that stay by name, because a direct call would differ or the shape is not one the invoker has:
+// `via` looks for the by-name path's frame. Each method that reaches reflection is called once: from the second call
+// on, `callStack` throws there.
+class Plain {
+	public function new() {}
+	public function opt(a:Int, ?b:Int):String return P.via();
+	public function dflt(a = 1):String return P.via();
+	public function six(a:Int, b:Int, c:Int, d:Int, e:Int, f:Int):String return P.via();
+	public function generic<T>(a:T):String return P.via();
+	public function nullable(a:Null<Int>):String return P.via();
+	public function fun(a:Int->Int):String return P.via();
+	public function arr(a:Array<Int>):String return P.via();
+	@:overload public function ov(a:Int):String return P.via();
+	@:overload public function ov(a:String):String return P.via();
+	// By name these two are not found: `__hx_invokeField` has no case for them.
+	@:compilerGenerated public function gen(x:Int):String return P.via();
+	@:skipReflection public function skip(x:Int):String return P.via();
+}
+class TsBase {
+	public function new() {}
+	public function toString():String return "base " + P.via();
+}
+// By name, the `toString` of a class that overrides it and has a method of its own is the receiver's ToString.
+class TsSub extends TsBase {
+	public function own():Int return 1;
+	override public function toString():String return "sub " + P.via();
+}
+class ForGeneric {
+	public function new() {}
+	public function m(x:Int):String return "base " + P.via();
+}
+// A generic override can't be tested for: it is one class per instantiation.
+class GenericSub<T> extends ForGeneric {
+	public function own():Int return 1;
+	override public function m(x:Int):String return "generic " + P.via();
+}
+class ForOverload {
+	public function new() {}
+	public function m(x:Int):String return "base " + P.via();
+}
+// Reflection finds one overload of several by the arguments.
+class OverloadSub extends ForOverload {
+	public function own():Int return 1;
+	@:overload override public function m(x:Int):String return "overload " + P.via();
+	@:overload public function m(x:String):String return "new overload " + P.via();
+}
+abstract class Abs {
+	public function new() {}
+	public abstract function am(x:Int):String;
+}
+class AbsImpl extends Abs {
+	public function am(x:Int):String return P.via();
+}
+class InGeneric<T> {
+	public function new() {}
+	public function m(x:Int):String return P.via();
+}
+class BelowGeneric extends InGeneric<Int> {
+	public function m2(x:Int):String return P.via();
+}
+@:nativeGen class Native {
+	public function new() {}
+	public function m(x:Int):String return P.via();
+}
+class BelowNative extends Native {
+	public function m2(x:Int):String return P.via();
+}
+@:struct class Struct {
+	public var v:Int;
+	public function new(v:Int) this.v = v;
+	public function m(x:Int):String return P.via();
+}
+interface Face { function m(x:Int):String; }
+class FaceImpl implements Face {
+	public function new() {}
+	public function m(x:Int):String return P.via();
+}
+class P {
+	public static function via():String
+		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
+	static function run(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:cs.system.Exception) Sys.println(name + ": EXC " + e.GetType().FullName + ": " + e.Message);
+	}
+	static function main() {
+		var p = new Plain();
+		var f1 = p.opt; run("optional", () -> f1(1));
+		var f2 = p.dflt; run("default", () -> f2());
+		var f4 = p.six; run("six", () -> f4(1, 2, 3, 4, 5, 6));
+		var f5:Int->String = p.generic; run("generic method", () -> f5(1));
+		var f6 = p.nullable; run("null int", () -> f6(1));
+		var f7 = p.fun; run("function", () -> f7(x -> x));
+		var f8 = p.arr; run("array", () -> f8([1]));
+		var f9:Int->String = p.ov; run("overload", () -> f9(1));
+		var f10 = p.gen; run("compilerGenerated", () -> f10(1));
+		var f11 = p.skip; run("skipReflection", () -> f11(1));
+
+		var ts1:TsBase = new TsBase(), ts2:TsBase = new TsSub(), ts3 = new TsSub();
+		var g1 = ts1.toString; run("toString, on the base", () -> g1());
+		var g2 = ts2.toString; run("toString, overridden", () -> g2());
+		var g3 = ts3.toString; run("toString, read on the override", () -> g3());
+		var g4:ForGeneric = new ForGeneric(), g5:ForGeneric = new GenericSub<Int>();
+		var h1 = g4.m; run("overridden in a generic class, on the base", () -> h1(1));
+		var h2 = g5.m; run("overridden in a generic class", () -> h2(1));
+		var o1:ForOverload = new ForOverload();
+		var i1 = o1.m; run("overridden by an overload, on the base", () -> i1(1));
+
+		var ab:Abs = new AbsImpl();
+		var j1 = ab.am; run("abstract method", () -> j1(1));
+		var j2 = new InGeneric<Int>().m; run("generic class", () -> j2(1));
+		var below = new BelowGeneric();
+		var j3 = below.m; run("inherited from a generic class", () -> j3(1));
+		var j4 = below.m2; run("below a generic class", () -> j4(1));
+		var bn = new BelowNative();
+		var j5 = bn.m; run("nativeGen class", () -> j5(1));
+		var j6 = bn.m2; run("below a nativeGen class", () -> j6(1));
+		var j7 = new Struct(3).m; run("struct", () -> j7(1));
+		var face:Face = new FaceImpl();
+		var j8 = face.m; run("interface", () -> j8(1));
+	}
+}
+===
+--- method-value-instance-by-name-today
+// Two by-name calls where hxc's result differs from gencs's today (gencs prints `by-name` and `new overload by-name`).
+// Neither is for this path to change: they stay by name, and print what they print by name.
+class Plain {
+	public function new() {}
+	public function rest(...r:Int):String return P.via();
+}
+class ForOverload {
+	public function new() {}
+	public function m(x:Int):String return "base " + P.via();
+}
+class OverloadSub extends ForOverload {
+	public function own():Int return 1;
+	@:overload override public function m(x:Int):String return "overload " + P.via();
+	@:overload public function m(x:String):String return "new overload " + P.via();
+}
+class P {
+	public static function via():String
+		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
+	static function main() {
+		var f = new Plain().rest;
+		try Sys.println(f(1)) catch (e:cs.system.Exception) Sys.println(e.GetType().FullName);
+		var o:ForOverload = new OverloadSub();
+		var g = o.m;
+		Sys.println(g(1));
+	}
+}
+===
+[run]
+System.InvalidCastException
+overload by-name
+--- method-value-instance-direct-places
+// Instance method values that go direct, read in each kind of place, and overrides with and without a method of the
+// class's own.
+class C {
+	public var fromCtor:Int->String;
+	public var fromLocal:Int->String;
+	public function new() {
+		fromCtor = inCtor;
+		var read = () -> this.inLocal;
+		fromLocal = read();
+	}
+	function inCtor(x:Int):String return "constructor " + P.via();
+	function inLocal(x:Int):String return "local function " + P.via();
+	public function inherited(x:Int):String return "inherited " + P.via();
+	public inline function inl(x:Int):String return "inline " + P.via();
+	public final function fin(x:Int):String return "final " + P.via();
+	@:protected function prot(x:Int):String return "protected " + P.via();
+	public function readProt():Int->String return prot;
+	public function arg0():String return "no arguments " + P.via();
+	public function five(a:Int, b:Float, c:String, d:Bool, e:C):String return "five arguments " + P.via();
+	public function vd():Void Sys.println("Void " + P.via());
+	public function ToString():String return "ToString " + P.via();
+	public function get(x:Int):String return "base " + P.via();
+	public function fast(x:Int):String return "base " + P.via();
+	public function covariant():K return new KS();
+	public function contra(x:KS):String return "base " + P.via();
+}
+class K { public function new() {} public function toString() return "K"; }
+class KS extends K { public function new() super(); override public function toString() return "KS"; }
+class S extends C {
+	public function own():Int return 1;
+	override public function get(x:Int):String return "override, own method " + P.via();
+	override public function covariant():KS return new KS();
+	override public function contra(x:K):String return "contravariant " + P.via();
+}
+class SS extends S {}
+class SSO extends S {
+	override public function get(x:Int):String return "override of an override, no own method " + P.via();
+}
+class T extends C {
+	override public function fast(x:Int):String return "override, no own method " + P.via();
+}
+abstract class Abs {
+	public function new() {}
+	public abstract function am(x:Int):String;
+	public function concrete(x:Int):String return "abstract class " + P.via();
+}
+class AbsImpl extends Abs {
+	public function am(x:Int):String return "abstract method's implementation " + P.via();
+}
+class Ts {
+	public function new() {}
+	public function toString():String return "toString, no override " + P.via();
+}
+class TsBase {
+	public function new() {}
+	public function toString():String return "toString, base " + P.via();
+}
+class TsSub extends TsBase {
+	override public function toString():String return "toString, override, no own method " + P.via();
+}
+private class Priv {
+	public function new() {}
+	public function m(x:Int):String return "private class " + P.via();
+}
+class P {
+	public static function via():String
+		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
+	var fromInit:Int->String = new Priv().m;
+	static var inStatic:Int->String = new Priv().m;
+	function new() {}
+	function member(x:Int):String return "this " + P.via();
+	function readMember():Int->String return member;
+	static function main() {
+		var c = new C();
+		Sys.println(c.fromCtor(1));
+		Sys.println(c.fromLocal(1));
+		var f1 = new S().inherited; Sys.println(f1(1));
+		var f2 = c.inl; Sys.println(f2(1));
+		var f3 = c.fin; Sys.println(f3(1));
+		var f4 = c.readProt(); Sys.println(f4(1));
+		var f5 = c.arg0; Sys.println(f5());
+		var f6 = c.five; Sys.println(f6(1, 1.5, "s", true, c));
+		var f7 = c.vd; f7();
+		var f8 = c.ToString; Sys.println(f8());
+		var bs:C = new S(), bss:C = new SS(), bsso:C = new SSO(), bt:C = new T();
+		var g1 = c.get; Sys.println(g1(1));
+		var g2 = bs.get; Sys.println(g2(1));
+		var g3 = bss.get; Sys.println(g3(1));
+		var g4 = bsso.get; Sys.println(g4(1));
+		var s = new S();
+		var g5 = s.get; Sys.println(g5(1));
+		var g6 = c.fast; Sys.println(g6(1));
+		var g7 = bt.fast; Sys.println(g7(1));
+		var g8 = bs.covariant; Sys.println(g8());
+		var g9 = bs.contra; Sys.println(g9(new KS()));
+		var ab:Abs = new AbsImpl(), ai = new AbsImpl();
+		var h1 = ab.concrete; Sys.println(h1(1));
+		var h2 = ai.am; Sys.println(h2(1));
+		var i1 = new Ts().toString; Sys.println(i1());
+		var tb:TsBase = new TsBase(), ts:TsBase = new TsSub();
+		var i2 = tb.toString; Sys.println(i2());
+		var i3 = ts.toString; Sys.println(i3());
+		Sys.println(new P().fromInit(1));
+		Sys.println(inStatic(1));
+		var j1 = new P().readMember(); Sys.println(j1(1));
+		var d:Dynamic = new Priv().m; Sys.println("through Dynamic: " + d(1));
+		Sys.println("whole double: " + d(2.0));
+		var fl:Float->String = d; Sys.println("Float half, whole: " + fl(2.0));
+		Sys.println("Float half, not whole: " + fl(2.5));
+	}
+}
+===
+[run]
+constructor direct
+local function direct
+inherited direct
+inline direct
+final direct
+protected direct
+no arguments direct
+five arguments direct
+Void direct
+ToString direct
+base direct
+override, own method direct
+override, own method direct
+override of an override, no own method direct
+override, own method direct
+base direct
+override, no own method direct
+KS
+contravariant direct
+abstract class direct
+abstract method's implementation direct
+toString, no override direct
+toString, base direct
+toString, override, no own method direct
+private class direct
+private class direct
+this direct
+through Dynamic: private class direct
+whole double: private class direct
+Float half, whole: private class direct
+Float half, not whole: private class by-name
+--- method-value-instance-pdb @dump=pdb:C_m__Invoke + -debug
+// The invoker class is generated code: all its points are hidden, on the path through reflection too.
+class C {
+	public function new() {}
+	public function m(x:Int):Int return x + 1;
+}
+class S extends C {
+	public function own():Int return 1;
+	override public function m(x:Int):Int return x + 2;
+}
+class P {
+	static function main() {
+		var o:C = new S();
+		var f = o.m;
+		Sys.println(f(1));
+	}
+}
+===
+[run]
+3
 --- method-value-pdb @dump=pdb:P_inc__Invoke + -debug
 // The invoker class is generated code: all its points are hidden.
 class P {

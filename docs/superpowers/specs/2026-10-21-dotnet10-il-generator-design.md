@@ -1146,12 +1146,12 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   `Array.filter` on an `Array<Dynamic>` (hxc's `map` and `filter` inline on any other array, as gencs's do, with no
   closure allocated on the plain path; the class stays for the call on a forwarding array, which an ordinary
   array never reaches), and the `_Fun_N` numbering that follows. Only reflection over the assembly's types sees them.
-- hxc writes one more class than gencs per static method used as a value, a `haxe.lang.ClosureInvoker` named
+- hxc writes one more class than gencs per method of a Haxe class used as a value, a `haxe.lang.ClosureInvoker` named
   `<Class>_<method>__Invoke`, and `haxe.lang.Closure` has more members than gencs's: a protected field `__hx_invoker`,
   the public method that sets it, `__hx_setInvoker`, and its own `__hx_invoke<N>_o`/`_f` for up to 5 arguments, which
-  call the method directly when the arguments already have its parameters' types (`method-value-direct-shapes`). Only
-  .NET reflection over the runtime type or the assembly's types sees them, as `Reflect.fields(f)` and
-  `Reflect.field(f, "__hx_invoker")`, which read public fields, and `Type.getInstanceFields(Type.getClass(f))`, which
+  call the method directly when the arguments already have its parameters' types and an instance method's receiver is
+  of its class (`method-value-direct-shapes`, `method-value-instance-direct`). Only .NET reflection over the runtime
+  type or the assembly's types sees them, as `Reflect.fields(f)` and `Reflect.field(f, "__hx_invoker")`, which read public fields, and `Type.getInstanceFields(Type.getClass(f))`, which
   leaves out `__hx_` names, show no change (`method-value-identity`). `Reflect.field(f, "__hx_setInvoker")`, a name no
   program has a reason to ask for, finds the method, as `Reflect.field(f, "__hx_invoke1_o")` already does in gencs.
 - The frames of a method value that went direct hold the invoker's and `Closure`'s frames instead of the reflection
@@ -1162,8 +1162,17 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   `Exception.stack` of a native exception. The `Exception.stack` of a Haxe `throw`, taken when the exception is made,
   has it on both. The exception's type and message, and the program's own Haxe frames and their order, stay the same
   (`method-value-throws`).
-- From the second call on of a method called by name, .NET's reflection frames have no declaring type, and reading them
-  throws `NullReferenceException`: in `haxe.CallStack.callStack()` in the method, and in `e.stack` and `e.details()`
+- The by-name path of an instance method has no reflection: it is the `__hx_invokeField` of the receiver's class, whose
+  case calls the method and keeps its frame, so that method's invoker catches nothing, and the frame that goes is that
+  `__hx_invokeField`, a generated member of the program's class. The case of a class that overrides the method and has
+  a method of its own is `Runtime.slowCallField`, reflection as above, so when the receiver is of such a class the
+  invoker throws again and unboxes a `Dynamic` result, as for a static (`method-value-instance-throws`,
+  `method-value-instance-results`). A class that overrides it and has no method of its own has no `__hx_invokeField`,
+  so a superclass's case calls the override. Stay by name: a method with such an override that is a `toString` (by name
+  the receiver's `ToString`), or whose override is in a generic class, a standard-library class or an `@:overload`, and
+  a `@:compilerGenerated` method, which by name is not found (`method-value-instance-by-name-shapes`).
+- From the second call on of a method called by name through reflection, .NET's reflection frames have no declaring
+  type, and reading them throws `NullReferenceException`: in `haxe.CallStack.callStack()` in the method, and in `e.stack` and `e.details()`
   in a catch of an exception the method made with a Haxe `throw`. gencs's by-name calls and hxc's do, and a call that
   goes direct does not. A native exception's `e.stack` and `e.details()` do not, as its reset trace has no such frame.
 - A resource name with a non-ASCII character or a `\` is found by `haxe.Resource` in hxc

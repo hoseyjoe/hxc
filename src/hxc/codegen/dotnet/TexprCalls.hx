@@ -311,6 +311,7 @@ class TexprCalls {
 				// the method found by name when the closure is called.
 				g.types.checkKept(TClassDecl(c));
 				pushClosure(obj, LObject, cf.name);
+				pushInvoker(cf);
 				tl.coerce(closureSig(), ret);
 			case FInstance(c, cparams, cf) | FClosure({c: c, params: cparams}, cf):
 				// A variable, or a dynamic method (read as a value, the typer's FClosure), its field.

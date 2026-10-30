@@ -5,17 +5,22 @@ import hxc.ast.Position;
 import hxc.core.Globals;
 import hxc.core.Type;
 import hxc.core.TypeFunctions;
+import hxc.codegen.dotnet.DotnetTypes;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 
 // The typed invokers of methods used as values, which hxc adds to hxcs's by-name haxe.lang.Closure. Each
-// such method that `eligible` lets through gets one class extending haxe.lang.ClosureInvoker, named
+// such method that `gets` lets through gets one class extending haxe.lang.ClosureInvoker, named
 // `<Class>_<method>__Invoke` in its class's package and module, with one shared instance in its
-// `__hx_current`. Its `__hx_accepts<N>` holds only for arguments that already have the parameters' types,
-// where the by-name path (Runtime.callMethodCasting) converts nothing, so that its `__hx_call<N>_o`/`_f`
-// behaves as that path does, and throws what the method throws again as that path does; every other call goes
-// by name. No Haxe line wrote this code: under -debug its statements are hidden points.
+// `__hx_current`. Its `__hx_accepts<N>` holds only for a receiver of the class and arguments that already have
+// the parameters' types, which the by-name path passes on as they are, so that its `__hx_call<N>_o`/`_f` behaves
+// as that path does; every other call goes by name. That path is one of two. A static goes through reflection
+// (Runtime.callMethodCasting), which unboxes the result and throws what the method throws again. An instance
+// method goes through the `__hx_invokeField` of the receiver's class, whose case calls it and does neither, unless
+// that class overrides it: then the case is Runtime.slowCallField, reflection again (`slowCallers`). No Haxe line
+// wrote this code: under -debug its statements are hidden points.
 
 @:access(hxc.codegen.dotnet.ClosuresToClass)
+@:access(hxc.codegen.dotnet.ReflectionMembers)
 class MethodInvokers {
 	// ClosureInvoker's entry points: from six arguments on a call goes to __hx_invokeDynamic, by name.
 	static inline final maxArgs = 5;
@@ -23,6 +28,8 @@ class MethodInvokers {
 	final g:DotnetCtx;
 	final pass:ClosuresToClass;
 	final base:TClass;
+	// The classes that send a method to Runtime.slowCallField, by its name; made when first needed.
+	var slowCallersByName:Null<Map<String, Array<TClass>>> = null;
 
 	public function new(g:DotnetCtx, pass:ClosuresToClass, base:TClass) {
 		this.g = g;
@@ -30,8 +37,21 @@ class MethodInvokers {
 		this.base = base;
 	}
 
-	// Whether a value of the method `cf` of `c` takes the direct path when its arguments allow it. A shape
-	// that the by-name path treats in a way of its own stays by name.
+	// Whether a value of the method `cf` of `c` takes the direct path when its arguments allow it.
+	public function gets(c:TClass, cf:TClassField, isStatic:Bool):Bool {
+		if (!eligible(g, c, cf, isStatic)) return false;
+		if (isStatic) return true;
+		// `__hx_invokeField` has no case for it, so by name it is not found.
+		if (TypeFunctions.hasMeta(":compilerGenerated", cf.meta)) return false;
+		var slow = slowCallers(c, cf);
+		// Runtime.slowCallField answers a `toString` with the receiver's ToString.
+		if (slow.length > 0 && cf.name == "toString") return false;
+		// `__is__` tests one instantiation of a generic class; one overload of several is found by the arguments;
+		// and a class of the standard library may be left out, and then cannot be tested.
+		return !Lambda.exists(slow, k -> k.params.length > 0 || TypeFunctions.hasClassFieldFlag(k.fields.get(cf.name), CfOverload) || g.isStd(k.pos));
+	}
+
+	// A shape that the by-name path treats in a way of its own stays by name.
 	public static function eligible(g:DotnetCtx, c:TClass, cf:TClassField, isStatic:Bool):Bool {
 		if (TypeFunctions.hasClassFlag(c, CExtern) || !HxGen.derivesFromHxObject(c) || c.params.length > 0) return false;
 		if (!cf.kind.match(Method(MethNormal | MethInline)) || cf.expr == null || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) return false;
@@ -76,10 +96,39 @@ class MethodInvokers {
 		return Lambda.exists(c.interfaces, i -> isConvertible(i.c));
 	}
 
+	// The classes in `c`'s line that send the instance method `cf` to Runtime.slowCallField: those that override it
+	// and have a method of their own. One without has no `__hx_invokeField`, so a superclass's case calls the method.
+	function slowCallers(c:TClass, cf:TClassField):Array<TClass> {
+		if (slowCallersByName == null) {
+			slowCallersByName = new Map();
+			for (mt in g.ctx.types) switch (mt) {
+				case TClassDecl(k) if (HxGen.derivesFromHxObject(k)):
+					// A class that cannot be planned is left out, and then is no receiver.
+					var cases = try ReflectionMembers.invokeCases(g, k) catch (_:Unsupported) null;
+					if (cases != null && cases.own.length > 0) for (e in cases.old) if (e.owner == k) {
+						var l = slowCallersByName.get(e.cf.name);
+						if (l == null) slowCallersByName.set(e.cf.name, l = []);
+						l.push(k);
+					}
+				case _:
+			}
+		}
+		var l = slowCallersByName.get(cf.name);
+		return l == null ? [] : l.filter(k -> isSameOrBelow(k, c) || isSameOrBelow(c, k));
+	}
+
+	static function isSameOrBelow(c:TClass, parent:TClass):Bool {
+		var s = c;
+		while (s != null) {
+			if (s == parent) return true;
+			s = s.superClass == null ? null : s.superClass.c;
+		}
+		return false;
+	}
+
 	// Makes the invoker class of the method `cf` of `c`, unless it has one.
 	public function note(c:TClass, cf:TClassField, isStatic:Bool):Void {
 		if (g.methodInvokers.exists(cf)) return;
-		if (!isStatic) throw "internal error: an invoker of the instance method " + cf.name;
 		var sig = switch (TypeFunctions.follow(cf.type)) {
 			case TFun(s): s;
 			case _: throw "internal error: the method " + cf.name + " has no function type";
@@ -96,9 +145,9 @@ class MethodInvokers {
 
 		var arity = sig.args.length;
 		for (f in [
-			entry("__hx_accepts" + arity, at, args -> [ret(accepts(sig, args, at), at)]),
-			entry("__hx_call" + arity + "_o", at, args -> callO(c, cf, sig, args, at)),
-			entry("__hx_call" + arity + "_f", at, args -> callF(c, cf, sig, args, at))
+			entry("__hx_accepts" + arity, at, args -> [ret(accepts(isStatic ? null : c, sig, args, at), at)]),
+			entry("__hx_call" + arity + "_o", at, args -> callO(c, cf, isStatic, sig, args, at)),
+			entry("__hx_call" + arity + "_f", at, args -> callF(c, cf, isStatic, sig, args, at))
 		]) {
 			invoker.fields.set(f.name, f);
 			invoker.orderedFields.push(f);
@@ -154,11 +203,18 @@ class MethodInvokers {
 		return TypeFunctions.mk(TBinop(OpEq, d, undef), g.ctx.basic.tbool, at);
 	}
 
-	// Whether the arguments have the parameters' types, each one as the by-name path would pass it on as
-	// it is, or for a whole double in an Int's range, as the same Int. A null goes by name.
-	function accepts(sig:TSignature, args:Array<TVar>, at:Position):TExpr {
+	// `__is__(d, mt)`, which a null fails.
+	function isOf(d:TExpr, mt:ModuleType, at:Position):TExpr {
+		var callee = TypeFunctions.mk(TIdent("__is__"), TypeFunctions.tDynamic, at);
+		return TypeFunctions.mk(TCall(callee, [d, TypeFunctions.mk(TTypeExpr(mt), TypeFunctions.tDynamic, at)]), g.ctx.basic.tbool, at);
+	}
+
+	// Whether an instance method's receiver is of its class `receiver`, and the arguments have the parameters'
+	// types, each one as the by-name path would pass it on as it is, or for a whole double in an Int's range, as
+	// the same Int. A null goes by name.
+	function accepts(receiver:Null<TClass>, sig:TSignature, args:Array<TVar>, at:Position):TExpr {
 		var basic = g.ctx.basic;
-		var all:Null<TExpr> = null;
+		var all:Null<TExpr> = receiver == null ? null : isOf(ClosuresToClass.local(args[0], at), TClassDecl(receiver), at);
 		for (i in 0...sig.args.length) {
 			var test = accept(sig.args[i].t, floatOf(args, i, at), dynamicOf(args, i, at), at);
 			if (test == null) continue;
@@ -170,10 +226,7 @@ class MethodInvokers {
 	// The test of one argument, null when any value passes.
 	function accept(t:T, f:TExpr, d:TExpr, at:Position):Null<TExpr> {
 		var basic = g.ctx.basic;
-		function is(mt:ModuleType):TExpr {
-			var callee = TypeFunctions.mk(TIdent("__is__"), TypeFunctions.tDynamic, at);
-			return TypeFunctions.mk(TCall(callee, [d, TypeFunctions.mk(TTypeExpr(mt), TypeFunctions.tDynamic, at)]), basic.tbool, at);
-		}
+		function is(mt:ModuleType):TExpr return isOf(d, mt, at);
 		return switch (TypeFunctions.followWithoutNull(t)) {
 			case TDynamic(_):
 				null;
@@ -195,7 +248,7 @@ class MethodInvokers {
 
 	// The call with its arguments unpacked, as a closure class's invoke method unpacks them, after the
 	// statements that go in `unpack`.
-	function call(c:TClass, cf:TClassField, sig:TSignature, args:Array<TVar>, unpack:Array<TExpr>, at:Position):TExpr {
+	function call(c:TClass, cf:TClassField, isStatic:Bool, sig:TSignature, args:Array<TVar>, unpack:Array<TExpr>, at:Position):TExpr {
 		var basic = g.ctx.basic;
 		var locals = [];
 		for (i in 0...sig.args.length) {
@@ -209,8 +262,12 @@ class MethodInvokers {
 			unpack.push(TypeFunctions.mk(TVarExpr(v, value), basic.tvoid, at));
 			locals.push(ClosuresToClass.local(v, at));
 		}
-		var cls = TypeFunctions.mk(TTypeExpr(TClassDecl(c)), TypeFunctions.tDynamic, at);
-		return TypeFunctions.mk(TCall(TypeFunctions.mk(TField(cls, FStatic(c, cf)), cf.type, at), locals), sig.ret, at);
+		var callee = if (isStatic) {
+			TField(TypeFunctions.mk(TTypeExpr(TClassDecl(c)), TypeFunctions.tDynamic, at), FStatic(c, cf));
+		} else {
+			TField(TypeFunctions.mkCast(ClosuresToClass.local(args[0], at), TInst(c, []), at), FInstance(c, [], cf));
+		}
+		return TypeFunctions.mk(TCall(TypeFunctions.mk(callee, cf.type, at), locals), sig.ret, at);
 	}
 
 	// A call of Runtime's static method `name`.
@@ -222,11 +279,26 @@ class MethodInvokers {
 		return TypeFunctions.mk(TCall(TypeFunctions.mk(TField(rt, FStatic(runtime, cf)), cf.type, at), [arg]), t, at);
 	}
 
-	// The result as an object, as the by-name path gets it from MethodBase.Invoke and Runtime.unbox: a Dynamic
-	// can hold a boxed haxe.lang.Null<T>.
-	function boxed(call:TExpr, sig:TSignature, at:Position):TExpr {
+	// The result as an object, as the by-name path gets it: through reflection, from MethodBase.Invoke and
+	// Runtime.unbox, as a Dynamic can hold a boxed haxe.lang.Null<T>; from a `__hx_invokeField` case, as it is.
+	function boxed(call:TExpr, sig:TSignature, reflected:Bool, at:Position):TExpr {
 		var value = TypeFunctions.mkCast(call, TypeFunctions.tDynamic, at);
-		return TypeFunctions.followWithoutNull(sig.ret).match(TDynamic(_)) ? runtimeCall("unbox", value, TypeFunctions.tDynamic, at) : value;
+		return reflected && TypeFunctions.followWithoutNull(sig.ret).match(TDynamic(_)) ? runtimeCall("unbox", value, TypeFunctions.tDynamic, at) : value;
+	}
+
+	// What follows the unpacking: `body`'s statements, for a call the by-name path makes through reflection or
+	// not. The first kind go in `throwingAgain`: a static's always, an instance method's when the receiver is of a
+	// class that sends it to Runtime.slowCallField.
+	function byPath(c:TClass, cf:TClassField, isStatic:Bool, args:Array<TVar>, body:Bool->Array<TExpr>, at:Position):Array<TExpr> {
+		if (isStatic) return [throwingAgain(body(true), at)];
+		var basic = g.ctx.basic;
+		var test:Null<TExpr> = null;
+		for (k in slowCallers(c, cf)) {
+			var is = isOf(ClosuresToClass.local(args[0], at), TClassDecl(k), at);
+			test = test == null ? is : TypeFunctions.mk(TBinop(OpBoolOr, test, is), basic.tbool, at);
+		}
+		if (test == null) return body(false);
+		return [TypeFunctions.mk(TIf(test, throwingAgain(body(true), at)), basic.tvoid, at)].concat(body(false));
 	}
 
 	// `body` in a try that throws what it catches again, as Runtime.callMethodCasting throws an InnerException:
@@ -246,25 +318,26 @@ class MethodInvokers {
 		return TypeFunctions.mk(TTry(tried, [{v: caught, expr: TypeFunctions.mk(TBlock(again), basic.tvoid, at)}]), basic.tvoid, at);
 	}
 
-	function callO(c:TClass, cf:TClassField, sig:TSignature, args:Array<TVar>, at:Position):Array<TExpr> {
+	function callO(c:TClass, cf:TClassField, isStatic:Bool, sig:TSignature, args:Array<TVar>, at:Position):Array<TExpr> {
 		var el = [];
-		var e = call(c, cf, sig, args, el, at);
-		el.push(throwingAgain(ClosuresToClass.isVoid(sig.ret) ? [e, ret(TypeFunctions.nullExpr(TypeFunctions.tDynamic, at), at)] : [ret(boxed(e, sig, at), at)], at));
-		return el;
+		var e = call(c, cf, isStatic, sig, args, el, at);
+		return el.concat(byPath(c, cf, isStatic, args, reflected -> {
+			ClosuresToClass.isVoid(sig.ret) ? [e, ret(TypeFunctions.nullExpr(TypeFunctions.tDynamic, at), at)] : [ret(boxed(e, sig, reflected, at), at)];
+		}, at));
 	}
 
-	function callF(c:TClass, cf:TClassField, sig:TSignature, args:Array<TVar>, at:Position):Array<TExpr> {
+	function callF(c:TClass, cf:TClassField, isStatic:Bool, sig:TSignature, args:Array<TVar>, at:Position):Array<TExpr> {
 		var basic = g.ctx.basic;
 		var el = [];
-		var e = call(c, cf, sig, args, el, at);
-		var body = if (ClosuresToClass.isVoid(sig.ret)) {
-			[e, ret(TypeFunctions.mk(TConst(TFloat("0.0")), basic.tfloat, at), at)];
-		} else if (TypeFunctions.followWithoutNull(sig.ret).match(TAbstract({path: {name: "Int" | "Float"}}, _))) {
-			[ret(TypeFunctions.mkCast(e, basic.tfloat, at), at)];
-		} else {
-			[ret(runtimeCall("toDouble", boxed(e, sig, at), basic.tfloat, at), at)];
-		}
-		el.push(throwingAgain(body, at));
-		return el;
+		var e = call(c, cf, isStatic, sig, args, el, at);
+		return el.concat(byPath(c, cf, isStatic, args, reflected -> {
+			if (ClosuresToClass.isVoid(sig.ret)) {
+				[e, ret(TypeFunctions.mk(TConst(TFloat("0.0")), basic.tfloat, at), at)];
+			} else if (TypeFunctions.followWithoutNull(sig.ret).match(TAbstract({path: {name: "Int" | "Float"}}, _))) {
+				[ret(TypeFunctions.mkCast(e, basic.tfloat, at), at)];
+			} else {
+				[ret(runtimeCall("toDouble", boxed(e, sig, reflected, at), basic.tfloat, at), at)];
+			}
+		}, at));
 	}
 }

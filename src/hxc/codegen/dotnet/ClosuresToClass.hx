@@ -185,13 +185,21 @@ class ClosuresToClass {
 	function needsMapping(e:TExpr):Bool {
 		return switch (e.expr) {
 			case TCall({expr: TField(obj, _)}, args): needsMapping(obj) || Lambda.exists(args, needsMapping);
-			case TField(_, FStatic(c, cf)) if (getsInvoker(c, cf)): true;
+			case TField(_, fa) if (invokerOf(fa) != null): true;
 			case _: e.expr.match(TFunction(_)) || delegateCall(e) != null || TexprTools.checkExpr(needsMapping, e);
 		}
 	}
 
-	function getsInvoker(c:TClass, cf:TClassField):Bool {
-		return invokers != null && MethodInvokers.eligible(g, c, cf, true);
+	// The method that reading `fa` makes a value, if it gets an invoker.
+	function invokerOf(fa:TFieldAccess):Null<{c:TClass, cf:TClassField, isStatic:Bool}> {
+		if (invokers == null) return null;
+		var m = switch (fa) {
+			case FStatic(c, cf): {c: c, cf: cf, isStatic: true};
+			case FInstance(c, _, cf): {c: c, cf: cf, isStatic: false};
+			case FClosure(o, cf) if (o != null): {c: o.c, cf: cf, isStatic: false};
+			case _: return null;
+		}
+		return invokers.gets(m.c, m.cf, m.isStatic) ? m : null;
 	}
 
 	// The `__delegate__(f)` call of a conversion to a .NET delegate, `cast __delegate__(f)` as the delegate
@@ -301,8 +309,9 @@ class ClosuresToClass {
 				// A call of a method does not make it a value.
 				var target = map(obj);
 				TypeFunctions.mk(TCall(TypeFunctions.mk(TField(target, fa), callee.type, callee.pos), [for (a in args) map(a)]), e.type, e.pos);
-			case TField(_, FStatic(c, cf)) if (getsInvoker(c, cf)):
-				invokers.note(c, cf, true);
+			case TField(_, fa) if (invokerOf(fa) != null):
+				var m = invokerOf(fa);
+				invokers.note(m.c, m.cf, m.isStatic);
 				e;
 			case _:
 				TexprTools.mapExpr(map, e);
