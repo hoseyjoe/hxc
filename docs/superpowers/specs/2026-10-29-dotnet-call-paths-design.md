@@ -45,7 +45,8 @@ Facts the survey established, which the design relies on:
   same holds for a `map` whose result is `Array<Dynamic>`, as the inlined `ret` would be the companion. Haxe
   does not bind a monomorph to `Dynamic` on unify, so a callback that returns `Dynamic` (or `null`) leaves
   the result's type argument an unbound monomorph at the call, which defaults to `Dynamic` only later: that
-  counts as `Dynamic` too.
+  counts as `Dynamic` too. A type parameter, `T` or `Null<T>`, counts too: the lambda's boundary converts a
+  Dynamic value to the `T` by `Runtime.genericCast`, and an inlined body in hxc would not.
 - The second row is the largest cost in the program, and gencs has it too: `new Closure(typeof(P),
   "inc", hash)`, then `VarArgsBase.__hx_invoke1_f` → `__hx_invokeDynamic` → `Runtime.callField` →
   `Type.InvokeMember`. A method of a Haxe *instance* as a value takes `__hx_invokeField`'s string-hash
@@ -84,7 +85,7 @@ Calls made by the writer of this document (check these):
 ## Goals
 
 1. `a.map(f)` and `a.filter(f)` on hxc's runtime `Array<T>` are `inline`, as in Haxe 4.3.7's
-   `std/cs/_std/Array.hx`, except on a receiver or a result whose type argument is `Dynamic` or still unbound at the call, which
+   `std/cs/_std/Array.hx`, except on a receiver or a result whose type argument is `Dynamic`, a type parameter or still unbound at the call, which
    keeps today's call. With a function literal, the call becomes a loop with no closure allocated on the plain path and no
    boxing per element.
 2. A method of a Haxe class used as a value (static, or an instance's) is still a `haxe.lang.Closure`,
@@ -155,6 +156,21 @@ These differ from today's output, and were accepted after the whole-branch revie
   `map` (ruling R21): `var i:Int = (x : Dynamic)` of 1.5 was 1 and is 2, as in gencs. The same rule takes an
   Int through Dynamic to an `Int64` from a value to gencs's InvalidCastException.
 
+Known differences from gencs or from today that stay (rulings R24 onward):
+
+- `var r:Array<Bool> = [1,2].map(y -> untyped y)` stays a compile error where today and gencs throw
+  InvalidCastException: `untyped y` has no cast for the rule above to see.
+- An all-null array through an inlined body cast to Dynamic (`[nullString].filter(y -> (y : Dynamic))`,
+  `[nullString].map((y:Dynamic) -> y)` to `Array<Int>`) throws NullReferenceException where today and gencs give a
+  value.
+- Bool, .NET enum and Single through Dynamic to `Null<Int64>`, and Bool and .NET enum to `Null<Single>`, go from a
+  compile error to a value where gencs throws.
+- A Float stored through Dynamic into `NativeArray<Null<Int>>` goes from 1 to 2 where gencs keeps 1.5; Bool, .NET enum
+  and Single rows go from a compile error to a value where gencs keeps the original.
+- `map` and `filter` on an array of a type parameter (`Array<T>`, `Array<Null<T>>`), as receiver or result, keep the
+  closure call: no gain there, and today's output, including where gencs's inlined loop differs, such as a
+  reassignment of the receiver by the callback.
+
 ## Constraints
 
 - The test suite: `tests/dotnet/run.sh --compiler bin/cpp/windows/x64/release/bin/hxc.exe --std
@@ -185,9 +201,10 @@ In `src/hxc/codegen/dotnet/runtime/Array.hx` (`map` at about line 632, `filter` 
   as ILVerify checks. Haxe-private members of `Array` that today are IL-private would fail; the builder
   checks how hxc writes them and picks members accordingly.
 
-A receiver or result whose type argument is `Dynamic`, or still an unbound monomorph at the call, is not
-inlined: `Inline.tryInline` returns null for a method with `@:inlineUnlessDynamic` when either's type
-argument follows to `TDynamic` or an unbound `TMono`, and the call stays what it is today.
+A receiver or result whose type argument is `Dynamic`, a type parameter, or still an unbound monomorph at the
+call, is not inlined: `Inline.tryInline` returns null for a method with `@:inlineUnlessDynamic` when either's
+type argument follows to `TDynamic`, a type parameter's `TInst` (`follow` looks through `Null<T>`) or an
+unbound `TMono`, and the call stays what it is today.
 
 `iterator()`, `keyValueIterator()`, `__unsafe_get` and `__unsafe_set` are also `inline` in Haxe's std
 and not in hxc's. They are left alone: hxc already wins every array benchmark that uses them.

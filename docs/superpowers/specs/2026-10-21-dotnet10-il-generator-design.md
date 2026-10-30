@@ -1143,8 +1143,9 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   a value that is no `Exception`, so `WrapNonExceptionThrows` changes nothing.
 - hxc writes more closure classes than gencs (3,759 against 2,251 in the server app). Every name gencs writes is
   there; the others are local functions that gencs does not have a class for, such as a predicate passed to
-  `Array.filter` on an `Array<Dynamic>` (hxc's `map` and `filter` inline on any other array, as gencs's do, with no
-  closure allocated on the plain path; the class stays for the call on a forwarding array, which an ordinary
+  `Array.filter` on an `Array<Dynamic>` or on an array of a type parameter, `Array<T>` or `Array<Null<T>>` (hxc's
+  `map` and `filter` inline on any other array, as gencs's do, with no closure allocated on the plain path; the class
+  stays for the call on a forwarding array, which an ordinary
   array never reaches), and the `_Fun_N` numbering that follows. Only reflection over the assembly's types sees them.
 - hxc writes one more class than gencs per method of a Haxe class used as a value, a `haxe.lang.ClosureInvoker` named
   `<Class>_<method>__Invoke`, and `haxe.lang.Closure` has more members than gencs's: a protected field `__hx_invoker`,
