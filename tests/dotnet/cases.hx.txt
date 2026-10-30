@@ -14001,6 +14001,97 @@ class P {
 	}
 }
 ===
+--- array-map-reassigned-while-running @gencs
+// The inlined loop reads a local receiver and a local callback each time round, as gencs's does, and so sees a
+// reassignment by the callback: an accepted change from the call, which read them once (the design's anti-goals).
+class P {
+	static function main() {
+		var a = [1, 2, 3];
+		Sys.println(a.map(x -> { a = [7, 8, 9, 10]; x; }));
+		var b = [1, 2, 3];
+		Sys.println(b.filter(x -> { b = [7, 8, 9, 10]; x > 1; }));
+		var f:Int->Int = null;
+		f = x -> { f = y -> y * 100; x + 1; };
+		Sys.println([1, 2, 3].map(f));
+	}
+}
+===
+--- array-map-dynamic-body @gencs
+// A callback's body cast to Dynamic, whose S comes from the expected type: in the inlined loop it goes on converting
+// as a Dynamic, to the value Runtime gives (a Float rounds) or to the exception it throws.
+class P {
+	static function returned():Array<Int> return [1.5, 2.5].map(y -> (y : Dynamic));
+	static function fl():Float return 1.5;
+	static function show(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:cs.system.Exception) Sys.println(name + ": " + e.GetType().FullName);
+	}
+	static function main() {
+		show("Float to Int", () -> { var r:Array<Int> = [1.5, 2.5].map(y -> (y : Dynamic)); r; });
+		show("by the return type", () -> returned());
+		show("block body", () -> { var r:Array<Int> = [1.5, 2.5].map(y -> { var z = y; (z : Dynamic); }); r; });
+		show("Dynamic parameter", () -> { var r:Array<Int> = [1.5].map((y:Dynamic) -> y); r; });
+		show("Null<Float>", () -> { var r:Array<Int> = [1.5].map(y -> ((y : Null<Float>) : Dynamic)); r; });
+		show("if branch", () -> { var r:Array<Int> = [1.5].map(y -> if (y > 1) (y : Dynamic) else 0); r; });
+		show("out of map", () -> { var x = fl(); var i:Int = (x : Dynamic); i; });
+		show("Int to Int", () -> { var r:Array<Int> = [1, 2].map(y -> (y : Dynamic)); r; });
+		show("Int to Float", () -> { var r:Array<Float> = [1, 2].map(y -> (y : Dynamic)); r; });
+		show("Int to Single", () -> { var r:Array<Single> = [1].map(y -> (y : Dynamic)); r; });
+		show("Bool to Int", () -> { var r:Array<Int> = [true].map(y -> (y : Dynamic)); r; });
+		show("Bool to Float", () -> { var r:Array<Float> = [true].map(y -> (y : Dynamic)); r; });
+		show("Int to Bool", () -> { var r:Array<Bool> = [1, 2].map(y -> (y : Dynamic)); r; });
+		show("Float to Bool", () -> { var r:Array<Bool> = [1.5].map(y -> (y : Dynamic)); r; });
+		show("Dynamic parameter to Bool", () -> { var r:Array<Bool> = [1].map((y:Dynamic) -> y); r; });
+		show("Int to DateTime", () -> { var r:Array<cs.system.DateTime> = [1].map(y -> (y : Dynamic)); r.length; });
+		show("Int to Int64", () -> { var r:Array<haxe.Int64> = [1].map(y -> (y : Dynamic)); r.length; });
+		show("filter on Int", () -> [1, 2].filter(y -> (y : Dynamic)));
+		show("filter on Float", () -> [1.5].filter(y -> (y : Dynamic)));
+		// No conversion through a Dynamic: these keep what gencs's loop does, where today's call differed.
+		show("Int to String", () -> { var r:Array<String> = [1, 2].map(y -> (y : Dynamic)); r; });
+		show("Float to String", () -> { var r:Array<String> = [1.5].map(y -> (y : Dynamic)); r; });
+		show("Int to UInt", () -> { var r:Array<UInt> = [1].map(y -> (y : Dynamic)); r; });
+		show("untyped Float to Int", () -> { var r:Array<Int> = [1.5, 2.5].map(y -> untyped y); r; });
+		show("callback value", () -> { var f = (y:Float) -> (y : Dynamic); var r:Array<Int> = [1.5, 2.5].map(f); r; });
+	}
+}
+===
+--- cast-to-dynamic-into-value-type @gencs
+// A value type cast to Dynamic that goes on to another value type converts as a Dynamic does, not as the two types
+// convert: an accepted change from today, where a Float went to an Int by truncating (the design's anti-goals). Going
+// on to the same type, the cast is nothing.
+class P {
+	static function fl():Float return 1.5;
+	static function nf():Null<Float> return 1.5;
+	static function no():Null<Float> return null;
+	static function int():Int return 3;
+	static function setI(x:Int):Int return x;
+	static function returned():Int return (fl() : Dynamic);
+	static function called(f:Void->Float):Int return (f() : Dynamic);
+	static function show(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:cs.system.Exception) Sys.println(name + ": " + e.GetType().FullName);
+	}
+	static function main() {
+		var x = fl();
+		show("var", () -> { var i:Int = (x : Dynamic); i; });
+		show("argument", () -> setI((x : Dynamic)));
+		show("return", () -> returned());
+		show("array element", () -> { var a = [0]; a[0] = (x : Dynamic); a; });
+		show("function value's call", () -> called(fl));
+		show("Null<Float>", () -> { var i:Int = (nf() : Dynamic); i; });
+		show("Null<Float> without a value", () -> { var i:Int = (no() : Dynamic); i; });
+		show("to Null<Int>", () -> { var n:Null<Int> = (x : Dynamic); n; });
+		show("to UInt", () -> { var u:UInt = (x : Dynamic); u; });
+		show("to Single", () -> { var s:Single = (x : Dynamic); s; });
+		show("to Int64", () -> { var l:haxe.Int64 = (x : Dynamic); l; });
+		show("to Bool", () -> { var b:Bool = (x : Dynamic); b; });
+		show("condition", () -> if ((int() : Dynamic)) "yes" else "no");
+		show("Int to Float", () -> { var f:Float = (int() : Dynamic); f; });
+		show("Int to Int", () -> { var i:Int = (int() : Dynamic); i; });
+		show("Float to Float", () -> { var f:Float = (x : Dynamic); f; });
+		show("Null<Float> to Float", () -> { var f:Float = (no() : Dynamic); f; });
+		show("Float to Null<Float>", () -> { var n:Null<Float> = (x : Dynamic); n; });
+	}
+}
+===
 # `super` in a subclass of Base<Dynamic> is the class, not the companion: its calls stay direct.
 --- dynamic-argument-subclass-super
 class Base<T> {

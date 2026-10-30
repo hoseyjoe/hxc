@@ -948,6 +948,15 @@ class TexprToIl {
 		// An unsafe cast to Dynamic of a function value's call boxes its `_f` result as it comes
 		// (TexprCalls.invokeFunction).
 		if (!checked && to != null && to.match(LObject) && strip(e1).expr.match(TCall(_, _))) calls.rawCall = strip(e1);
+		// A value type cast to Dynamic that goes on to another value type: gencs writes no cast into Dynamic, and
+		// then converts what is now a Dynamic, `Runtime.toInt((object)x)`. To the same type there is nothing to do.
+		if (from != null && to != null && want != null && to.match(LObject) && DotnetTypes.isValueType(from) && DotnetTypes.isValueType(want)
+			&& !IlPaths.sigEq(under(from), under(want))) {
+			texpr(RValue(LObject), e1);
+			calls.rawCall = null;
+			coerce(LObject, ret);
+			return;
+		}
 		texpr(switch (ret) {
 			case RValue(null): RValue(sig(e.type));
 			case r: r;
