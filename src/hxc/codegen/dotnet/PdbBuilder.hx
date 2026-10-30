@@ -9,7 +9,8 @@ import hxc.codegen.dotnet.MetaTables;
 // The Portable PDB of one assembly (https://github.com/dotnet/runtime/blob/main/docs/design/specs/PortablePdb-Metadata.md):
 // the debug tables, with their own heaps, and the #Pdb stream that names the DLL's tables they point
 // into. MethodDebugInformation row n is MethodDef row n's. A Document row per source file, in the order
-// methods first use them. A LocalScope row per block with a named local, inside its method's root scope.
+// methods first use them; a runtime file's, which exists only inside hxc.exe, embeds its text. A
+// LocalScope row per block with a named local, inside its method's root scope.
 
 class PdbBuilder {
 	// The Sorted mask's high half: LocalScope, StateMachineMethod and CustomDebugInformation.
@@ -19,6 +20,8 @@ class PdbBuilder {
 	// C# syntax.
 	static final sha256 = guid("8829d00f-11b8-4213-878b-770e8597ac16");
 	static final csharp = guid("3f5162f8-07c6-11d3-9053-00c04fa302a1");
+	// The CustomDebugInformation kind that holds a Document's text.
+	static final embeddedSource = guid("0e8a571b-6926-466e-b4ad-8ab04611f5fe");
 
 	final heaps = new MetaHeaps();
 	final paths:PdbPaths;
@@ -27,6 +30,8 @@ class PdbBuilder {
 	// that cannot be read, whose points are hidden.
 	final fileRows = new Map<String, Int>();
 	final nameRows = new Map<String, Int>();
+	// The CustomDebugInformation rows, one per runtime Document, in Document order (their parents' order).
+	final customDebugInformation:Array<Row> = [];
 	// The MethodDebugInformation rows of the methods with sequence points, by MethodDef row.
 	final methodRows = new Map<Int, Row>();
 	// The scopes written for each method with named locals, by MethodDef row, in LocalScope order.
@@ -142,11 +147,20 @@ class PdbBuilder {
 				}
 				documents.push([documentName(name), hashAlgorithm, heaps.blobs.add(haxe.crypto.Sha256.make(bytes)), language]);
 				row = documents.length;
+				if (content != null) embed(row, bytes);
 			}
 			nameRows.set(name, row);
 		}
 		fileRows.set(file, row);
 		return row;
+	}
+
+	// The EmbeddedSource of Document `row`: the format 0, for the text as it is, then the text.
+	function embed(row:Int, text:Bytes):Void {
+		var b = new IlBytes();
+		b.u32(0);
+		b.bytes(text);
+		customDebugInformation.push([CodedIndex.encode(T.IHasCustomDebugInformation, T.IDocument, row), heaps.guids.add(embeddedSource), heaps.blobs.add(b.getBytes())]);
 	}
 
 	// A Document's name blob: the separator, then each part's UTF-8 as a blob.
@@ -199,7 +213,7 @@ class PdbBuilder {
 			{table: T.ILocalConstant, rows: [], schema: [MetaTables.STR, MetaTables.BLOB]},
 			{table: T.IImportScope, rows: importScope, schema: [T.IImportScope, MetaTables.BLOB]},
 			{table: T.IStateMachineMethod, rows: [], schema: [T.IMethod, T.IMethod]},
-			{table: T.ICustomDebugInformation, rows: [], schema: [T.IHasCustomDebugInformation, MetaTables.GUID, MetaTables.BLOB]},
+			{table: T.ICustomDebugInformation, rows: customDebugInformation, schema: [T.IHasCustomDebugInformation, MetaTables.GUID, MetaTables.BLOB]},
 		];
 		var rowCounts = typeSystemRows.copy();
 		for (w in written) rowCounts[w.table] = w.rows.length;

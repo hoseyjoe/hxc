@@ -711,6 +711,29 @@ method P_main_4__Fun::Delegate
 method P_main_4__Fun::Delegate
   scope
     local t
+# hxc's runtime source exists only inside hxc.exe, so a runtime Document embeds its text (EmbeddedSource,
+# with the Document's hash over the same bytes) and its points carry real lines, not an unresolved 1.
+--- pdb-runtime-source @dump=doc:hxc-runtime/cs/internal/Runtime.hx + -debug
+class P {
+	static function main() {
+		var d:Dynamic = null;
+		try {
+			trace(d.foo);
+		} catch (e:Dynamic) {
+			var found = false;
+			for (item in haxe.CallStack.exceptionStack(true)) switch (item) {
+				case FilePos(_, file, line, _) if (file != null && StringTools.startsWith(file, "hxc-runtime/")): if (line > 1) found = true;
+				case _:
+			}
+			Sys.println("runtime frame " + found);
+		}
+	}
+}
+===
+[run]
+runtime frame true
+[dump]
+document hxc-runtime/cs/internal/Runtime.hx sha256 csharp embedded ok
 --- runtimeconfig-defaults-to-net10 @runtimeconfig
 class P {
 	static function main() {}
