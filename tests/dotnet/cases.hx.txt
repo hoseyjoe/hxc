@@ -6803,8 +6803,9 @@ class P {
 // The by-name path is the `__hx_invokeField` of the receiver's class, whose case keeps the method's frame. A class
 // that overrides the method and has a method of its own has a case that goes through reflection, which throws the
 // exception again, so a native one, or any one's .NET trace, loses the method's frame; one without has no
-// `__hx_invokeField`, and the superclass's case calls the override. `__hx_invokeField` itself is the by-name path's
-// and not the program's. Each method is called once and has a loop, so the JIT does not inline it.
+// `__hx_invokeField`, and the superclass's case calls the override. Which of the two it is depends on the class of the
+// receiver, at any depth below the method. `__hx_invokeField` itself is the by-name path's and not the program's. Each
+// method is called once and has a loop, so the JIT does not inline it.
 class C {
 	public function new() {}
 	public function ownH(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
@@ -6825,6 +6826,13 @@ class C {
 	public function slowOwnN(x:Int):Int return x;
 	public function fastH(x:Int):Int return x;
 	public function fastN(x:Int):Int return x;
+	public function k1N(x:Int):Int return x;
+	public function k2N(x:Int):Int return x;
+	public function k3N(x:Int):Int return x;
+	public function uN(x:Int):Int return x;
+	public function vN(x:Int):Int return x;
+	public function wN(x:Int):Int return x;
+	public function oN(x:Int):Int return x;
 }
 class S extends C {
 	public function own():Int return 1;
@@ -6837,14 +6845,43 @@ class S extends C {
 	override public function slowOnBaseN(x:Int):Int return x;
 	override public function slowOwnH(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
 	override public function slowOwnN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+	override public function k1N(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+	override public function k2N(x:Int):Int return x;
+	override public function k3N(x:Int):Int return x;
 }
 class T extends C {
 	override public function fastH(x:Int):Int { for (i in 0...x) if (i == 2) throw "bang"; return x; }
 	override public function fastN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+	override public function uN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+	override public function vN(x:Int):Int return x;
+	override public function wN(x:Int):Int return x;
+	override public function oN(x:Int):Int return x;
+}
+class K1 extends S {
+	public function ownK1():Int return 1;
+}
+class K2 extends S {
+	override public function k2N(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+}
+class K3 extends S {
+	public function ownK3():Int return 1;
+	override public function k3N(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+}
+class U extends T {
+	public function ownU():Int return 1;
+}
+class V extends T {
+	public function ownOfV():Int return 1;
+	override public function vN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+	override public function wN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
+}
+class W extends V {}
+class O extends U {
+	override public function oN(x:Int):Int { var s:String = null; var n = 0; for (i in 0...x) n += s.length; return n; }
 }
 class P {
 	static function own(c:String, m:String):Bool
-		return ["C", "S", "T", "P"].indexOf(c) >= 0 && !StringTools.startsWith(m, "__hx_");
+		return ["C", "S", "T", "K1", "K2", "K3", "U", "V", "W", "O", "P"].indexOf(c) >= 0 && !StringTools.startsWith(m, "__hx_");
 	static function frames(st:haxe.CallStack):Array<String> {
 		var out = [];
 		function walk(i:haxe.CallStack.StackItem) switch i {
@@ -6901,6 +6938,14 @@ class P {
 		int("override read on its class, native", s.slowOwnN);
 		int("override in a class without a method of its own, Haxe", bt.fastH);
 		int("override in a class without a method of its own, native", bt.fastN);
+		var k1:C = new K1(), k2:C = new K2(), k3:C = new K3(), u:C = new U(), v:C = new V(), w:C = new W(), o:C = new O();
+		int("inherited from a slow case, by a class with a method of its own", k1.k1N);
+		int("override below a slow case, without a method of its own", k2.k2N);
+		int("override below a slow case, with a method of its own", k3.k3N);
+		int("inherited from a kept case, by a class with a method of its own", u.uN);
+		int("override below a kept case, with a method of its own", v.vN);
+		int("inherited from that override, by a class without a method of its own", w.wN);
+		int("override without a method of its own, below a kept case and a class with one", o.oN);
 	}
 }
 ===
@@ -6959,6 +7004,27 @@ override in a class without a method of its own, Haxe: haxe.ValueException: bang
 override in a class without a method of its own, native: System.NullReferenceException: Object reference not set to an instance of an object.
   stack [T.fastN,P.call,P.int]
   StackTrace [T.fastN,P.call,P.int]
+inherited from a slow case, by a class with a method of its own: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [P.call,P.int]
+  StackTrace [P.call,P.int]
+override below a slow case, without a method of its own: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [P.call,P.int]
+  StackTrace [P.call,P.int]
+override below a slow case, with a method of its own: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [P.call,P.int]
+  StackTrace [P.call,P.int]
+inherited from a kept case, by a class with a method of its own: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [T.uN,P.call,P.int]
+  StackTrace [T.uN,P.call,P.int]
+override below a kept case, with a method of its own: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [P.call,P.int]
+  StackTrace [P.call,P.int]
+inherited from that override, by a class without a method of its own: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [P.call,P.int]
+  StackTrace [P.call,P.int]
+override without a method of its own, below a kept case and a class with one: System.NullReferenceException: Object reference not set to an instance of an object.
+  stack [O.oN,P.call,P.int]
+  StackTrace [O.oN,P.call,P.int]
 --- method-value-instance-mistyped-args @gencs
 // The same arguments on each by-name path of an instance method: a case of the class's `__hx_invokeField`, the same
 // on an inherited method, reflection for an override in a class with a method of its own, and an override in one
@@ -7286,8 +7352,9 @@ class P {
 }
 ===
 --- method-value-instance-by-name-today
-// Two by-name calls where hxc's result differs from gencs's today (gencs prints `by-name` and `new overload by-name`).
-// Neither is for this path to change: they stay by name, and print what they print by name.
+// Three by-name calls where hxc's result differs from gencs's today (gencs prints `by-name`, `new overload by-name` and
+// `Y.n`). None is for this path to change: they stay by name, and print what they print by name. In the last, two
+// members of a class have one name, and `__hx_invokeField`'s case calls the first in source order.
 class Plain {
 	public function new() {}
 	public function rest(...r:Int):String return P.via();
@@ -7301,6 +7368,11 @@ class OverloadSub extends ForOverload {
 	@:overload override public function m(x:Int):String return "overload " + P.via();
 	@:overload public function m(x:String):String return "new overload " + P.via();
 }
+class Y {
+	public function new() {}
+	@:native("n") public function z(x:String):String return "Y.z";
+	public function n(x:Int):String return "Y.n";
+}
 class P {
 	public static function via():String
 		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
@@ -7310,12 +7382,147 @@ class P {
 		var o:ForOverload = new OverloadSub();
 		var g = o.m;
 		Sys.println(g(1));
+		var y = new Y();
+		var h = y.n;
+		Sys.println(h(5));
 	}
 }
 ===
 [run]
 System.InvalidCastException
 overload by-name
+Y.z
+--- method-value-instance-by-name-rivals @gencs
+// A method whose name another member of its class's line also answers to, by name: a new @:overload in a subclass, one
+// that a class below the subclass inherits, one beside an override, and a member whose @:native is the name, also where
+// `__hx_invokeField` has no case for it and only Runtime.slowCallField's search of the members finds it.
+class B {
+	public function new() {}
+	public function ov(x:Int):String return "B.ov";
+	public function rev(x:Int):String return "B.rev";
+	public function dy(x:Int):String return "B.dy";
+	public function nat(x:Int):String return "B.nat";
+	public function slowNat(x:Int):String return "B.slowNat";
+	public function skipOv(x:Int):String return "B.skipOv";
+	public function over(x:Int):String return "B.over";
+	public function skipNat(x:Int):String return "B.skipNat";
+}
+class OV extends B {
+	@:overload public function ov(x:String):String return "OV.ov(String)";
+}
+class Below extends OV {
+	public function ownBelow():Int return 1;
+}
+class Rev extends B {
+	@:overload public function rev(x:String):String return "Rev.rev(String)";
+	@:overload override public function rev(x:Int):String return "Rev.rev(Int)";
+}
+class OD extends B {
+	@:overload public function dy(x:Dynamic):String return "OD.dy(Dynamic)";
+}
+class NA extends B {
+	@:native("nat") public function z(x:Dynamic):String return "NA.z";
+}
+class SL extends B {
+	public function ownSL():Int return 1;
+	override public function slowNat(x:Int):String return "SL.slowNat";
+	override public function skipOv(x:Int):String return "SL.skipOv";
+	override public function over(x:Int):String return "SL.over";
+	override public function skipNat(x:Int):String return "SL.skipNat";
+}
+class NS extends SL {
+	@:native("slowNat") public function z(x:Dynamic):String return "NS.z";
+}
+class K1 extends SL {
+	@:skipReflection @:overload public function skipOv(x:Dynamic):String return "K1.skipOv(Dynamic)";
+}
+class K2 extends SL {
+	@:overload override public function over(x:Int):String return "K2.over(Int)";
+	@:overload public function over(x:Dynamic):String return "K2.over(Dynamic)";
+}
+class K3 extends SL {
+	@:skipReflection @:native("skipNat") public function z(x:Dynamic):String return "K3.z";
+}
+class P {
+	static function show(label:String, f:Int->String) {
+		try Sys.println(label + ": " + f(5)) catch (e:cs.system.Exception) Sys.println(label + ": " + e.GetType().FullName);
+	}
+	static function main() {
+		var ov:B = new OV(); show("new overload", ov.ov);
+		var be:B = new Below(); show("below a new overload", be.ov);
+		var rev:B = new Rev(); show("new overload before an override", rev.rev);
+		var od:B = new OD(); show("new overload of Dynamic", od.dy);
+		var na:B = new NA(); show("native name", na.nat);
+		var ns:B = new NS(); show("native name below a slow case", ns.slowNat);
+		var k1:B = new K1(); show("skipReflection overload below a slow case", k1.skipOv);
+		var k2:B = new K2(); show("override and overload below a slow case", k2.over);
+		var k3:B = new K3(); show("skipReflection native name below a slow case", k3.skipNat);
+	}
+}
+===
+--- method-value-instance-receiver
+// The receiver of a method value is an expression like any other: a local function in it becomes a class, and a method
+// value in it gets its own invoker.
+class C {
+	public function new() {}
+	public function m(x:Int):String return P.via();
+	public var kept:Int->String;
+	public function apply(f:Int->Int):C { Sys.println("apply " + f(1)); return this; }
+	public function keep(g:Int->String):C { kept = g; return this; }
+}
+class D {
+	public function new() {}
+	public function n(x:Int):String return P.via();
+}
+class P {
+	public static function via():String
+		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
+	static function make(f:Void->C):C return f();
+	static function main() {
+		var n = 10;
+		var f = new C().apply(x -> x + n).m;
+		Sys.println(f(1));
+		var g = make(() -> new C()).m;
+		Sys.println(g(2));
+		function generic<T>(x:T):C return new C();
+		var h = generic(1).m;
+		Sys.println(h(3));
+		var c = new C();
+		var i = c.keep(new D().n).m;
+		Sys.println("outer " + i(4));
+		Sys.println("inner " + c.kept(5));
+	}
+}
+===
+[run]
+apply 11
+direct
+direct
+direct
+outer direct
+inner direct
+--- method-value-instance-std-override
+// A method that a standard-library class overrides, beside a method of its own, which keeps that class. The class may
+// be left out of a program, so `__is__` could not test for it, and the value stays by name. Called once: from the
+// second by-name call that goes through reflection, callStack() throws.
+class My extends haxe.io.BytesOutput {
+	override public function writeByte(x:Int):Void Sys.println(P.via());
+}
+class P {
+	public static function via():String
+		return Std.string(haxe.CallStack.callStack()).indexOf("__hx_invokeDynamic") < 0 ? "direct" : "by-name";
+	static function main() {
+		var m = new My();
+		Sys.println(m.getBytes().length);
+		var o:haxe.io.Output = m;
+		var f = o.writeByte;
+		f(1);
+	}
+}
+===
+[run]
+0
+by-name
 --- method-value-instance-direct-places
 // Instance method values that go direct, read in each kind of place, and overrides with and without a method of the
 // class's own.

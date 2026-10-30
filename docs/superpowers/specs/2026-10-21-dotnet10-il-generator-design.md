@@ -1169,8 +1169,10 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   invoker throws again and unboxes a `Dynamic` result, as for a static (`method-value-instance-throws`,
   `method-value-instance-results`). A class that overrides it and has no method of its own has no `__hx_invokeField`,
   so a superclass's case calls the override. Stay by name: a method with such an override that is a `toString` (by name
-  the receiver's `ToString`), or whose override is in a generic class, a standard-library class or an `@:overload`, and
-  a `@:compilerGenerated` method, which by name is not found (`method-value-instance-by-name-shapes`).
+  the receiver's `ToString`), or whose override is in a generic class or a standard-library class
+  (`method-value-instance-std-override`); a method whose name a member of a class in its line also has, an `@:overload`
+  or a member with that `@:native` name, as by name that member may be found (`method-value-instance-by-name-rivals`);
+  and a `@:compilerGenerated` method, which by name is not found (`method-value-instance-by-name-shapes`).
 - From the second call on of a method called by name through reflection, .NET's reflection frames have no declaring
   type, and reading them throws `NullReferenceException`: in `haxe.CallStack.callStack()` in the method, and in `e.stack` and `e.details()`
   in a catch of an exception the method made with a Haxe `throw`. gencs's by-name calls and hxc's do, and a call that

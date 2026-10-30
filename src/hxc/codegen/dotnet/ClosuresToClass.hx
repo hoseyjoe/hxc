@@ -309,10 +309,11 @@ class ClosuresToClass {
 				// A call of a method does not make it a value.
 				var target = map(obj);
 				TypeFunctions.mk(TCall(TypeFunctions.mk(TField(target, fa), callee.type, callee.pos), [for (a in args) map(a)]), e.type, e.pos);
-			case TField(_, fa) if (invokerOf(fa) != null):
+			case TField(obj, fa):
+				var target = map(obj);
 				var m = invokerOf(fa);
-				invokers.note(m.c, m.cf, m.isStatic);
-				e;
+				if (m != null) invokers.note(m.c, m.cf, m.isStatic);
+				TypeFunctions.mk(TField(target, fa), e.type, e.pos);
 			case _:
 				TexprTools.mapExpr(map, e);
 		}

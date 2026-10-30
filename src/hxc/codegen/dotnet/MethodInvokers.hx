@@ -28,8 +28,10 @@ class MethodInvokers {
 	final g:DotnetCtx;
 	final pass:ClosuresToClass;
 	final base:TClass;
-	// The classes that send a method to Runtime.slowCallField, by its name; made when first needed.
+	// The classes that send a method to Runtime.slowCallField, and those with a member that by name may be found
+	// instead of a method, by its name; made when first needed.
 	var slowCallersByName:Null<Map<String, Array<TClass>>> = null;
+	var rivalsByName:Null<Map<String, Array<TClass>>> = null;
 
 	public function new(g:DotnetCtx, pass:ClosuresToClass, base:TClass) {
 		this.g = g;
@@ -43,18 +45,20 @@ class MethodInvokers {
 		if (isStatic) return true;
 		// `__hx_invokeField` has no case for it, so by name it is not found.
 		if (TypeFunctions.hasMeta(":compilerGenerated", cf.meta)) return false;
+		// By name, it may not be this method that is found.
+		if (rivals(c, cf).length > 0) return false;
 		var slow = slowCallers(c, cf);
 		// Runtime.slowCallField answers a `toString` with the receiver's ToString.
 		if (slow.length > 0 && cf.name == "toString") return false;
-		// `__is__` tests one instantiation of a generic class; one overload of several is found by the arguments;
-		// and a class of the standard library may be left out, and then cannot be tested.
-		return !Lambda.exists(slow, k -> k.params.length > 0 || TypeFunctions.hasClassFieldFlag(k.fields.get(cf.name), CfOverload) || g.isStd(k.pos));
+		// `__is__` tests one instantiation of a generic class, and a class of the standard library may be left out,
+		// and then cannot be tested.
+		return !Lambda.exists(slow, k -> k.params.length > 0 || g.isStd(k.pos));
 	}
 
 	// A shape that the by-name path treats in a way of its own stays by name.
 	public static function eligible(g:DotnetCtx, c:TClass, cf:TClassField, isStatic:Bool):Bool {
-		if (TypeFunctions.hasClassFlag(c, CExtern) || !HxGen.derivesFromHxObject(c) || c.params.length > 0) return false;
 		if (!cf.kind.match(Method(MethNormal | MethInline)) || cf.expr == null || TypeFunctions.hasClassFieldFlag(cf, CfExtern)) return false;
+		if (TypeFunctions.hasClassFlag(c, CExtern) || !HxGen.derivesFromHxObject(c) || c.params.length > 0) return false;
 		if (cf.params.length > 0 || cf.overloads.length > 0 || TypeFunctions.hasClassFieldFlag(cf, CfOverload)) return false;
 		if (TypeFunctions.hasMeta(":skipReflection", cf.meta) || TypeFunctions.hasMeta(":native", cf.meta)) return false;
 		// The by-name path looks for the Haxe name, and a member named like its class has another one.
@@ -99,21 +103,52 @@ class MethodInvokers {
 	// The classes in `c`'s line that send the instance method `cf` to Runtime.slowCallField: those that override it
 	// and have a method of their own. One without has no `__hx_invokeField`, so a superclass's case calls the method.
 	function slowCallers(c:TClass, cf:TClassField):Array<TClass> {
-		if (slowCallersByName == null) {
-			slowCallersByName = new Map();
-			for (mt in g.ctx.types) switch (mt) {
-				case TClassDecl(k) if (HxGen.derivesFromHxObject(k)):
-					// A class that cannot be planned is left out, and then is no receiver.
-					var cases = try ReflectionMembers.invokeCases(g, k) catch (_:Unsupported) null;
-					if (cases != null && cases.own.length > 0) for (e in cases.old) if (e.owner == k) {
-						var l = slowCallersByName.get(e.cf.name);
-						if (l == null) slowCallersByName.set(e.cf.name, l = []);
-						l.push(k);
-					}
-				case _:
-			}
+		index();
+		return inLine(slowCallersByName, c, cf);
+	}
+
+	// The classes in `c`'s line with a member that by name may be found instead of the method `cf`, whose case or
+	// Runtime.slowCallField's search of the members goes by the name alone.
+	function rivals(c:TClass, cf:TClassField):Array<TClass> {
+		index();
+		return inLine(rivalsByName, c, cf);
+	}
+
+	function index():Void {
+		if (slowCallersByName != null) return;
+		slowCallersByName = new Map();
+		rivalsByName = new Map();
+		function add(to:Map<String, Array<TClass>>, name:String, k:TClass) {
+			var l = to.get(name);
+			if (l == null) to.set(name, l = []);
+			l.push(k);
 		}
-		var l = slowCallersByName.get(cf.name);
+		for (mt in g.ctx.types) switch (mt) {
+			case TClassDecl(k) if (HxGen.derivesFromHxObject(k)):
+				// A class that cannot be planned is left out, and then is no receiver.
+				var cases = try ReflectionMembers.invokeCases(g, k) catch (_:Unsupported) null;
+				if (cases != null && cases.own.length > 0) for (e in cases.old) if (e.owner == k) add(slowCallersByName, e.cf.name, k);
+				for (f in k.orderedFields) if (isRival(k, f)) add(rivalsByName, f.name, k);
+			case _:
+		}
+	}
+
+	// A member named as another of its class, or as one of a superclass and not its plain override: the typer lets only
+	// an @:overload or a @:native name do that. One that `__hx_invokeField` has no case for counts too, as
+	// Runtime.slowCallField searches the members.
+	static function isRival(k:TClass, f:TClassField):Bool {
+		if (k.fields.get(f.name) != f) return true;
+		if (TypeFunctions.hasClassFieldFlag(f, CfOverride) && !TypeFunctions.hasClassFieldFlag(f, CfOverload)) return false;
+		var s = k.superClass;
+		while (s != null) {
+			if (s.c.fields.exists(f.name)) return true;
+			s = s.c.superClass;
+		}
+		return false;
+	}
+
+	static function inLine(byName:Map<String, Array<TClass>>, c:TClass, cf:TClassField):Array<TClass> {
+		var l = byName.get(cf.name);
 		return l == null ? [] : l.filter(k -> isSameOrBelow(k, c) || isSameOrBelow(c, k));
 	}
 
