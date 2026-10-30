@@ -18,4 +18,9 @@ class Shapes {
 			throw "side too large: " + side;
 		return side;
 	}
+
+	public function grow(side:Int):Int {
+		var grown = side + scale;
+		return grown;
+	}
 }

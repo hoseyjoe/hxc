@@ -25,5 +25,18 @@ class Main {
 		trace("field " + Reflect.field({answer: 42}, "answer"));
 		var mapped = [1, 2].map(x -> x + 1);
 		trace("mapped " + mapped);
+		var viaStatic = apply(bump, 1);
+		trace("static value " + viaStatic);
+		var viaInstance = apply(shapes.grow, 3);
+		trace("instance value " + viaInstance);
+	}
+
+	static function apply(f:Int->Int, x:Int):Int {
+		return f(x);
+	}
+
+	static function bump(x:Int):Int {
+		var y = x + 1;
+		return y;
 	}
 }

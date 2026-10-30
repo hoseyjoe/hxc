@@ -8,8 +8,9 @@ wrong, with the exact text of any message).
 
 1. Build the sample: in `tests/dotnet/debugger` (relative to the repo root), run `hxc build.hxml` (with
    `HAXE_STD_PATH=C:/HaxeToolkit/haxe/std` set). `out/out.dll` and `out/out.pdb` appear.
-2. `dotnet out/out.dll` prints six lines, each naming `src/sample/Main.hx` and a line number:
-   `total 28`, `inner 56`, `closure 15`, `caught side too large: 3`, `field 42`, `mapped [2,3]`.
+2. `dotnet out/out.dll` prints eight lines, each naming `src/sample/Main.hx` and a line number:
+   `total 28`, `inner 56`, `closure 15`, `caught side too large: 3`, `field 42`, `mapped [2,3]`,
+   `static value 2`, `instance value 5`.
 3. The PDB names files by short paths (`src/sample/Main.hx`, `src/sample/Shapes.hx`, `haxe-std/...`,
    `hxc-runtime/...`), so each debugger has to be told where those folders are (below).
 
@@ -29,9 +30,14 @@ The lines used below (1-based):
 | `src/sample/Main.hx` | 25 | `trace("field " + Reflect.field(...));` |
 | `src/sample/Main.hx` | 26 | `var mapped = [1, 2].map(x -> x + 1);` |
 | `src/sample/Main.hx` | 27 | `trace("mapped " + mapped);` |
+| `src/sample/Main.hx` | 28 | `var viaStatic = apply(bump, 1);` |
+| `src/sample/Main.hx` | 30 | `var viaInstance = apply(shapes.grow, 3);` |
+| `src/sample/Main.hx` | 35 | `return f(x);` (in `apply`) |
+| `src/sample/Main.hx` | 39 | `var y = x + 1;` (in `bump`) |
 | `src/sample/Shapes.hx` | 11 | `var squared = side * side;` |
 | `src/sample/Shapes.hx` | 12 | `var result = squared * scale;` |
 | `src/sample/Shapes.hx` | 18 | `throw "side too large: " + side;` |
+| `src/sample/Shapes.hx` | 23 | `var grown = side + scale;` (in `grow`) |
 
 ## VS Code
 
@@ -95,6 +101,17 @@ same way; the sample uses no library.)
     `Array.hx` opens. Restart, stop on line 26 again and press F11 a few times: stepping stays in
     `src/sample/Main.hx` (the lambda body `x + 1` is on that line), and the Call Stack shows
     `sample.Main.main`, not an `Array` frame.
+    Result:
+12. **Stepping through a method used as a value.** Remove other breakpoints, set one on
+    `src/sample/Main.hx` line 39 (the static method `bump`) and one on `src/sample/Shapes.hx` line 23 (the
+    instance method `grow`), and restart. `main` passes each to `apply` as a value (lines 28 and 30), and
+    `apply` calls it as `f(x)` on line 35. Both breakpoints are expected to hit: first line 39, then
+    line 23. At each stop the Call Stack lists the method (`sample.Main.bump`, then `sample.Shapes.grow`) above `sample.Main.apply` at `src/sample/Main.hx:35`
+    and `sample.Main.main`, all at `.hx` lines, with no frame named `*__Invoke` and none in `Function.hx`
+    (if a generated invoker's frame shows, write down its name). Press Shift+F11 at each stop: execution
+    lands back in `sample.Main.apply`, at line 35 or the line after it, and does not stop in a `*__Invoke`
+    method or in `Function.hx`. Then restart with only a breakpoint on `src/sample/Main.hx` line 35, and press F11 there:
+    stepping goes into `bump` (the first time `apply` runs), at line 39, with no stop in generated code on the way.
     Result:
 
 ## Visual Studio 2022 or later
@@ -173,4 +190,15 @@ Write in item 1's Result how you started the program, and which of these setting
     hxc's runtime `Array.hx` opens. Restart, stop on line 26 again and press F11 a few times: stepping stays
     in `src/sample/Main.hx` (the lambda body `x + 1` is on that line), and the Call Stack shows
     `sample.Main.main`, not an `Array` frame.
+    Result:
+12. **Stepping through a method used as a value.** Remove other breakpoints, set one on
+    `src/sample/Main.hx` line 39 (the static method `bump`) and one on `src/sample/Shapes.hx` line 23 (the
+    instance method `grow`), and restart. `main` passes each to `apply` as a value (lines 28 and 30), and
+    `apply` calls it as `f(x)` on line 35. Both breakpoints are expected to hit: first line 39, then
+    line 23. At each stop the Call Stack lists the method (`sample.Main.bump`, then `sample.Shapes.grow`) above `sample.Main.apply` at `src/sample/Main.hx:35`
+    and `sample.Main.main`, all at `.hx` lines, with no frame named `*__Invoke` and none in `Function.hx`
+    (if a generated invoker's frame shows, write down its name). Press Shift+F11 at each stop: execution
+    lands back in `sample.Main.apply`, at line 35 or the line after it, and does not stop in a `*__Invoke`
+    method or in `Function.hx`. Then restart with only a breakpoint on `src/sample/Main.hx` line 35, and press F11 there:
+    the yellow arrow goes into `bump` (the first time `apply` runs), at line 39, with no stop in generated code on the way.
     Result:
