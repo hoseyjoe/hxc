@@ -6628,6 +6628,8 @@ class P {
 		Sys.println(Reflect.compareMethods(a, b));
 		Sys.println(Reflect.compareMethods(a, Reflect.field(P, "inc")));
 		Sys.println(Reflect.compareMethods(Reflect.field(P, "inc"), a));
+		Sys.println(Reflect.fields(inc));
+		Sys.println(Reflect.field(inc, "__hx_invoker"));
 		try haxe.Serializer.run(a) catch (e:Dynamic) Sys.println("EXC " + e);
 	}
 }

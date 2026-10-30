@@ -433,10 +433,12 @@ class TclassToIl {
 							continue;
 					}
 					var pseudo = AttributesToIl.pseudo(g, cf.meta, AttrTarget.TField, cf.pos, site(cf.name));
+					// hxcs's Closure has no invoker: Haxe's reflection, which reads public fields, must not see it.
+					var isInvoker = cf.name == "__hx_invoker" && c == g.runtimeClass("cs.internal.Closure");
 					fields.push({
 						cf: cf,
 						name: DotnetNames.fieldName(c, cf.name),
-						flags: FieldAttrs.PUBLIC | (isStatic ? FieldAttrs.STATIC : 0) | pseudo.fieldFlags
+						flags: (isInvoker ? FieldAttrs.FAMILY : FieldAttrs.PUBLIC) | (isStatic ? FieldAttrs.STATIC : 0) | pseudo.fieldFlags
 							| (isStruct && c == g.runtimeClass("cs.internal._Null.Nullable") ? FieldAttrs.INIT_ONLY : 0),
 						sig: g.types.toSig(cf.type),
 						offset: pseudo.offset

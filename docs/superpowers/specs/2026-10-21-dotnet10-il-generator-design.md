@@ -1147,11 +1147,13 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   closure allocated on the plain path; the class stays for the call on a forwarding array, which an ordinary
   array never reaches), and the `_Fun_N` numbering that follows. Only reflection over the assembly's types sees them.
 - hxc writes one more class than gencs per static method used as a value, a `haxe.lang.ClosureInvoker` named
-  `<Class>_<method>__Invoke`, and `haxe.lang.Closure` has more public members than gencs's: `__hx_invoker` and its own
-  `__hx_invoke<N>_o`/`_f` for up to 5 arguments, which call the method directly when the arguments already have its
-  parameters' types (`method-value-direct-shapes`). Only .NET reflection over the runtime type or the assembly's types
-  sees them: `Reflect.fields(f)` of a method value lists `__hx_invoker`, and `Type.getInstanceFields(Type.getClass(f))`,
-  which leaves out `__hx_` names, shows no change.
+  `<Class>_<method>__Invoke`, and `haxe.lang.Closure` has more members than gencs's: a protected field `__hx_invoker`,
+  the public method that sets it, `__hx_setInvoker`, and its own `__hx_invoke<N>_o`/`_f` for up to 5 arguments, which
+  call the method directly when the arguments already have its parameters' types (`method-value-direct-shapes`). Only
+  .NET reflection over the runtime type or the assembly's types sees them, as `Reflect.fields(f)` and
+  `Reflect.field(f, "__hx_invoker")`, which read public fields, and `Type.getInstanceFields(Type.getClass(f))`, which
+  leaves out `__hx_` names, show no change (`method-value-identity`). `Reflect.field(f, "__hx_setInvoker")`, a name no
+  program has a reason to ask for, finds the method, as `Reflect.field(f, "__hx_invoke1_o")` already does in gencs.
 - The frames of a method value that went direct hold the invoker's and `Closure`'s frames instead of the reflection
   and runtime ones (`callField`, `__hx_invokeDynamic`, `callMethodCasting`, ...), in `haxe.CallStack`,
   `Exception.details()` and `Exception.StackTrace` text. The exception's type and message, and the program's own Haxe

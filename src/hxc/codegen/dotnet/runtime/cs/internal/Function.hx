@@ -383,14 +383,19 @@ package cs.internal;
 	private var obj:Dynamic;
 	private var field:String;
 	private var hash:Int;
-	// hxc: the method's typed invoker, set on a method value hxc generated one for; null otherwise.
-	public var __hx_invoker:ClosureInvoker;
+	// hxc: the method's typed invoker, set on a method value hxc generated one for; null otherwise. Protected
+	// in IL (TclassToIl), so that reflection on a Closure sees the fields hxcs's has.
+	private var __hx_invoker:ClosureInvoker;
 
 	public function new(obj:Dynamic, field, hash) {
 		super(-1, -1);
 		this.obj = obj;
 		this.field = field;
 		this.hash = hash;
+	}
+
+	public final function __hx_setInvoker(invoker:ClosureInvoker):Void {
+		this.__hx_invoker = invoker;
 	}
 
 	override public function __hx_invokeDynamic(dynArgs:cs.NativeArray<Dynamic>):Dynamic {

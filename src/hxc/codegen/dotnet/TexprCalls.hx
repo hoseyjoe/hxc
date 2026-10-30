@@ -683,7 +683,7 @@ class TexprCalls {
 	}
 
 	// With a new haxe.lang.Closure on the stack, gives it the invoker of the method `cf`, if it has one:
-	// `closure.__hx_invoker = (Invoker.__hx_current ?? (Invoker.__hx_current = new Invoker()))`.
+	// `closure.__hx_setInvoker(Invoker.__hx_current ?? (Invoker.__hx_current = new Invoker()))`.
 	public function pushInvoker(cf:TClassField):Void {
 		var invoker = g.methodInvokers.get(cf);
 		if (invoker == null) return;
@@ -695,7 +695,7 @@ class TexprCalls {
 		if (ctor == null) throw "internal error: " + plan.hxPath + " has no constructor";
 		var current = tl.staticField(invoker, invoker.statics.get("__hx_current"));
 		var closure = runtimeClass("cs.internal.Closure");
-		var field = instanceField(closure, [], closure.fields.get("__hx_invoker"));
+		var set = functionMethod(closure, "__hx_setInvoker");
 		var made = code.newLabel();
 		code.op(IlOps.DUP, 1, 2);
 		code.opToken(IlOps.LDSFLD, current.token, 0, 1);
@@ -706,7 +706,7 @@ class TexprCalls {
 		code.op(IlOps.DUP, 1, 2);
 		code.opToken(IlOps.STSFLD, current.token, 1, 0);
 		code.mark(made);
-		code.opToken(IlOps.STFLD, field.token, 2, 0);
+		code.opToken(IlOps.CALLVIRT, set, 2, 0);
 	}
 
 	function closureSig():IlSigNorm return tl.sig(TInst(runtimeClass("cs.internal.Closure"), []));
