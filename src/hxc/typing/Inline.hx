@@ -51,10 +51,16 @@ class Inline {
 		return TypeFunctions.hasClassFieldFlag(cf, CfExtern) || TypeFunctions.hasMeta(":extern", cf.meta);
 	}
 
-	// An Array<X> whose X is Dynamic or an unbound monomorph (which defaults to Dynamic later on).
+	// An Array<X> whose X, or Null<X>, is Dynamic, an unbound monomorph (which defaults to Dynamic later on) or a type
+	// parameter.
 	static function typeArgUnknown(t:T):Bool {
 		return switch (TypeFunctions.follow(t)) {
-			case TInst(_, [p]): TypeFunctions.follow(p).match(TDynamic(_) | TMono(_));
+			case TInst(_, [p]):
+				switch (TypeFunctions.follow(p)) {
+					case TDynamic(_) | TMono(_): true;
+					case TInst(c, _): c.kind.match(KTypeParameter(_));
+					case _: false;
+				}
 			case _: false;
 		}
 	}
@@ -83,7 +89,8 @@ class Inline {
 		}
 		// hxc's runtime Array marks map and filter with this: an Array<Dynamic> as receiver or result, or one
 		// not yet known to be typed, is the non-generic companion, which reaches every member by name, so the
-		// call stays.
+		// call stays. So it does for an array of a type parameter: the lambda's boundary converts its Dynamic
+		// values as gencs's Runtime.genericCast does, and a body in the loop would go to the T as it is.
 		if (ethis != null && TypeFunctions.hasMeta(":inlineUnlessDynamic", cf.meta)
 			&& (typeArgUnknown(ethis.type) || typeArgUnknown(tret)))
 			return null;

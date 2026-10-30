@@ -30,8 +30,8 @@ import haxe.iterators.ArrayKeyValueIterator;
 // storage does so through the typed array (`__hx_resolve()`), so a write through either reference shows
 // through the other, converting as Runtime.genericCast does. The typed array keeps `__hx_from`, and
 // writes the forwarder's `length` wherever it writes its own, so `length` stays a field that callers,
-// ArrayIterator, reflection and C# read directly. map and filter are inline, as in hxcs, except on an
-// Array<Dynamic> (`@:inlineUnlessDynamic`, typing/Inline.hx); iterator, keyValueIterator, __unsafe_get
+// ArrayIterator, reflection and C# read directly. map and filter are inline, as in hxcs, except on an Array<Dynamic>
+// or an array of a type parameter (`@:inlineUnlessDynamic`, typing/Inline.hx); iterator, keyValueIterator, __unsafe_get
 // and __unsafe_set are not inline, as gencs emits them as methods too, so no caller reads `__a`
 // itself. The members this adds never show in reflection: the vars and the bodies of the Equals
 // and GetHashCode overrides skip it, and the helpers are extern inline, so no method exists for them;

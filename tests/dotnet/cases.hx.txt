@@ -14054,6 +14054,82 @@ class P {
 	}
 }
 ===
+--- array-map-type-param @gencs
+// An array of a type parameter, as receiver or result, keeps the call: the lambda's boundary converts a Dynamic value
+// to the T, or the T to the type wanted, as gencs's Runtime.genericCast and Runtime.toInt do. A concrete array in the
+// same class still inlines.
+class G<T> {
+	public function new() {}
+	public function mapped(x:Float):T { var a:Array<T> = [x].map(y -> (y : Dynamic)); return a[0]; }
+	public function mappedInt(x:Int):T { var a:Array<T> = [x].map(y -> (y : Dynamic)); return a[0]; }
+	public function mappedCast(x:Float):T { var a:Array<T> = [x].map(y -> cast y); return a[0]; }
+	public function mappedCastInt(x:Int):T { var a:Array<T> = [x].map(y -> cast y); return a[0]; }
+	public function mappedUntyped(x:Float):T { var a:Array<T> = [x].map(y -> untyped y); return a[0]; }
+	public function fromString(s:String):T { var a:Array<T> = [s].map(y -> (y : Dynamic)); return a[0]; }
+	public function toInt(t:T):Int { var a:Array<Int> = [t].map(y -> (y : Dynamic)); return a[0]; }
+	public function toIntCast(t:T):Int { var a:Array<Int> = [t].map(y -> cast y); return a[0]; }
+	public function toIntUntyped(t:T):Int { var a:Array<Int> = [t].map(y -> untyped y); return a[0]; }
+	public function toIntParam(t:T):Int { var a:Array<Int> = [t].map((y:Dynamic) -> y); return a[0]; }
+	public function concrete():Array<Bool> return [1].map(x -> P.viaClosure());
+	public function concreteFilter():Int return [1, 2].filter(x -> P.viaClosure()).length;
+}
+class P {
+	public static function viaClosure():Bool return Std.string(haxe.CallStack.callStack()).indexOf("__Fun") >= 0;
+	static function mm<T>(x:Float):Array<T> return [x].map(y -> (y : Dynamic));
+	static function tuMap<T, U>(t:T):Array<U> return [t].map(y -> (y : Dynamic));
+	static function show(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:cs.system.Exception) Sys.println(name + ": " + e.GetType().FullName);
+	}
+	static function main() {
+		var gi = new G<Int>(), gf = new G<Float>();
+		show("G<Int> Dynamic of a Float", () -> gi.mapped(1.5));
+		show("G<Float> Dynamic of an Int", () -> gf.mappedInt(3));
+		show("G<Int> cast of a Float", () -> gi.mappedCast(1.5));
+		show("G<Float> cast of an Int", () -> gf.mappedCastInt(3));
+		show("G<Int> untyped Float", () -> gi.mappedUntyped(1.5));
+		show("G<Int> Dynamic of a String", () -> gi.fromString("3"));
+		show("G<Float> to Int by Dynamic", () -> gf.toInt(1.5));
+		show("G<Float> to Int by cast", () -> gf.toIntCast(1.5));
+		show("G<Float> to Int by untyped", () -> gf.toIntUntyped(1.5));
+		show("G<Float> to Int by a Dynamic parameter", () -> gf.toIntParam(1.5));
+		show("generic method, Float to Int", () -> { var r:Array<Int> = mm(1.5); r; });
+		show("two type parameters, Float to Int", () -> { var r:Array<Int> = tuMap(1.5); r; });
+		show("two type parameters, Int to Float", () -> { var r:Array<Float> = tuMap(3); r; });
+		show("concrete map in a generic class", () -> gi.concrete());
+		show("concrete filter in a generic class", () -> gi.concreteFilter());
+	}
+}
+===
+--- array-map-type-param-keeps-call
+// gencs's loop is inline here too, so this has no gencs output to match: the lambda keeps its class on an array of a
+// type parameter, or of a Null of one, as receiver or result.
+class G<T> {
+	public function new() {}
+	public function receiver(x:T):Array<Bool> return [x].map(y -> P.viaClosure());
+	public function receiverFilter(x:T):Int return [x].filter(y -> P.viaClosure()).length;
+	public function nullReceiver(x:Null<T>):Array<Bool> return [x].map(y -> P.viaClosure());
+	public function result(x:Int):Array<T> return [x].map(y -> { Sys.println("result " + P.viaClosure()); cast y; });
+}
+class P {
+	public static function viaClosure():Bool return Std.string(haxe.CallStack.callStack()).indexOf("__Fun") >= 0;
+	static function method<T>(x:T):Array<Bool> return [x].map(y -> viaClosure());
+	static function main() {
+		var g = new G<Int>();
+		Sys.println(g.receiver(1));
+		Sys.println(g.receiverFilter(1));
+		Sys.println(g.nullReceiver(1));
+		Sys.println(g.result(1));
+		Sys.println(method(1));
+	}
+}
+===
+[run]
+[true]
+1
+[true]
+result true
+[1]
+[true]
 --- cast-to-dynamic-into-value-type @gencs
 // A value type cast to Dynamic that goes on to another value type converts as a Dynamic does, not as the two types
 // convert: an accepted change from today, where a Float went to an Int by truncating (the design's anti-goals). Going
