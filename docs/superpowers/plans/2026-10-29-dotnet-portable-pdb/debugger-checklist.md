@@ -96,22 +96,32 @@ same way; the sample uses no library.)
     instead stops first on first-chance exceptions inside the runtime, because `justMyCode` is false;
     press Continue past those, and write down what they were.)
     Result:
-11. **Stepping over an inlined `map`.** Remove other breakpoints, set one on `src/sample/Main.hx` line 26
-    and restart. When it stops there, press F10. Execution moves to line 27, and no tab for hxc's runtime
-    `Array.hx` opens. Restart, stop on line 26 again and press F11 a few times: stepping stays in
-    `src/sample/Main.hx` (the lambda body `x + 1` is on that line), and the Call Stack shows
-    `sample.Main.main`, not an `Array` frame.
+11. **Stepping over an inlined `map`.** (What this item expects is a prediction read from the PDB under
+    `justMyCode: false`; it has not been run in a debugger, so write down what happens.) Remove other
+    breakpoints, set one on `src/sample/Main.hx` line 26 and restart. When it stops there, press F10.
+    Execution moves to line 27, and no tab for hxc's runtime `Array.hx` opens. Restart, stop on line 26 again
+    and press F11 a few times. F11 may stop in `hxc-runtime/Array.hx` (`Array.__unsafe_get`, lines 740-742,
+    and the other real calls the loop makes), with an `Array` frame above `sample.Main.main` in the Call
+    Stack. Shift+F11 goes back to `src/sample/Main.hx`, line 26, which the loop and the lambda body `x + 1`
+    are all on. Write down where each F11 stopped.
     Result:
-12. **Stepping through a method used as a value.** Remove other breakpoints, set one on
-    `src/sample/Main.hx` line 39 (the static method `bump`) and one on `src/sample/Shapes.hx` line 23 (the
-    instance method `grow`), and restart. `main` passes each to `apply` as a value (lines 28 and 30), and
-    `apply` calls it as `f(x)` on line 35. Both breakpoints are expected to hit: first line 39, then
-    line 23. At each stop the Call Stack lists the method (`sample.Main.bump`, then `sample.Shapes.grow`) above `sample.Main.apply` at `src/sample/Main.hx:35`
-    and `sample.Main.main`, all at `.hx` lines, with no frame named `*__Invoke` and none in `Function.hx`
-    (if a generated invoker's frame shows, write down its name). Press Shift+F11 at each stop: execution
-    lands back in `sample.Main.apply`, at line 35 or the line after it, and does not stop in a `*__Invoke`
-    method or in `Function.hx`. Then restart with only a breakpoint on `src/sample/Main.hx` line 35, and press F11 there:
-    stepping goes into `bump` (the first time `apply` runs), at line 39, with no stop in generated code on the way.
+12. **Stepping through a method used as a value.** (What this item expects is a prediction read from the
+    PDB under `justMyCode: false`; it has not been run in a debugger, so write down what happens.) Remove
+    other breakpoints, set one on `src/sample/Main.hx` line 39 (the static method `bump`) and one on
+    `src/sample/Shapes.hx` line 23 (the instance method `grow`), and restart. `main` passes each to `apply`
+    as a value (lines 28 and 30), and `apply` calls it as `f(x)` on line 35. Both breakpoints are expected to
+    hit: first line 39, then line 23. At each stop the Call Stack lists the method (`sample.Main.bump`, then
+    `sample.Shapes.grow`), `sample.Main.apply` at `src/sample/Main.hx:35` and `sample.Main.main` at `.hx`
+    lines. Between the method and `apply` it may show `haxe.lang.Closure.__hx_invoke1_f` in
+    `hxc-runtime/cs/internal/Function.hx` and a frame named `*__Invoke` (`sample.Main_bump__Invoke.__hx_call1_f`).
+    **The check:** a `*__Invoke` frame has no source line, and is not shown as the program's own code. Write
+    down the frames as listed. Press Shift+F11 at each stop: execution may stop in `Function.hx` on the way
+    back to `sample.Main.apply`; it does not open a source line for a `*__Invoke` method. Then restart with
+    only a breakpoint on `src/sample/Main.hx` line 28 and press F10: execution moves to line 29, with no stop
+    in another file. Restart with only a breakpoint on line 35 and press F10: stepping stays in
+    `src/sample/Main.hx`. Restart again, stop on line 35 and press F11 until execution is in `bump`, at line
+    39 (the first time `apply` runs): F11 may stop in `Function.hx` on the way, and does not stop at a source
+    line of a `*__Invoke` method. Write down each stop.
     Result:
 
 ## Visual Studio 2022 or later
@@ -185,20 +195,30 @@ Write in item 1's Result how you started the program, and which of these setting
     Code off, an exception setting may stop first inside the runtime; the breakpoint on line 18 avoids
     that. Write down what the stops were.)
     Result:
-11. **Stepping over an inlined `map`.** Remove other breakpoints, set one on `src/sample/Main.hx` line 26
-    and restart. When it stops there, press F10. The yellow arrow moves to line 27, and no document for
-    hxc's runtime `Array.hx` opens. Restart, stop on line 26 again and press F11 a few times: stepping stays
-    in `src/sample/Main.hx` (the lambda body `x + 1` is on that line), and the Call Stack shows
-    `sample.Main.main`, not an `Array` frame.
+11. **Stepping over an inlined `map`.** (What this item expects is a prediction read from the PDB with Just
+    My Code off; it has not been run in a debugger, so write down what happens.) Remove other breakpoints,
+    set one on `src/sample/Main.hx` line 26 and restart. When it stops there, press F10. The yellow arrow
+    moves to line 27, and no document for hxc's runtime `Array.hx` opens. Restart, stop on line 26 again and
+    press F11 a few times. F11 may stop in `hxc-runtime/Array.hx` (`Array.__unsafe_get`, lines 740-742, and
+    the other real calls the loop makes), with an `Array` frame above `sample.Main.main` in the Call Stack.
+    Shift+F11 goes back to `src/sample/Main.hx`, line 26, which the loop and the lambda body `x + 1` are all
+    on. Write down where each F11 stopped.
     Result:
-12. **Stepping through a method used as a value.** Remove other breakpoints, set one on
-    `src/sample/Main.hx` line 39 (the static method `bump`) and one on `src/sample/Shapes.hx` line 23 (the
-    instance method `grow`), and restart. `main` passes each to `apply` as a value (lines 28 and 30), and
-    `apply` calls it as `f(x)` on line 35. Both breakpoints are expected to hit: first line 39, then
-    line 23. At each stop the Call Stack lists the method (`sample.Main.bump`, then `sample.Shapes.grow`) above `sample.Main.apply` at `src/sample/Main.hx:35`
-    and `sample.Main.main`, all at `.hx` lines, with no frame named `*__Invoke` and none in `Function.hx`
-    (if a generated invoker's frame shows, write down its name). Press Shift+F11 at each stop: execution
-    lands back in `sample.Main.apply`, at line 35 or the line after it, and does not stop in a `*__Invoke`
-    method or in `Function.hx`. Then restart with only a breakpoint on `src/sample/Main.hx` line 35, and press F11 there:
-    the yellow arrow goes into `bump` (the first time `apply` runs), at line 39, with no stop in generated code on the way.
+12. **Stepping through a method used as a value.** (What this item expects is a prediction read from the
+    PDB with Just My Code off; it has not been run in a debugger, so write down what happens.) Remove other
+    breakpoints, set one on `src/sample/Main.hx` line 39 (the static method `bump`) and one on
+    `src/sample/Shapes.hx` line 23 (the instance method `grow`), and restart. `main` passes each to `apply`
+    as a value (lines 28 and 30), and `apply` calls it as `f(x)` on line 35. Both breakpoints are expected to
+    hit: first line 39, then line 23. At each stop the Call Stack lists the method (`sample.Main.bump`, then
+    `sample.Shapes.grow`), `sample.Main.apply` at `src/sample/Main.hx:35` and `sample.Main.main` at `.hx`
+    lines. Between the method and `apply` it may show `haxe.lang.Closure.__hx_invoke1_f` in
+    `hxc-runtime/cs/internal/Function.hx` and a frame named `*__Invoke` (`sample.Main_bump__Invoke.__hx_call1_f`).
+    **The check:** a `*__Invoke` frame has no source line, and is not shown as the program's own code. Write
+    down the frames as listed. Press Shift+F11 at each stop: the yellow arrow may stop in `Function.hx` on the
+    way back to `sample.Main.apply`; it does not open a source line for a `*__Invoke` method. Then restart
+    with only a breakpoint on `src/sample/Main.hx` line 28 and press F10: the yellow arrow moves to line 29,
+    with no stop in another file. Restart with only a breakpoint on line 35 and press F10: stepping stays in
+    `src/sample/Main.hx`. Restart again, stop on line 35 and press F11 until the yellow arrow is in `bump`, at
+    line 39 (the first time `apply` runs): F11 may stop in `Function.hx` on the way, and does not stop at a
+    source line of a `*__Invoke` method. Write down each stop.
     Result:
