@@ -65,7 +65,7 @@ same way; the sample uses no library.)
 6. **Locals in the inner block.** Set a breakpoint on `src/sample/Main.hx` line 15 and continue (F5) to it.
    The Variables pane, under Locals, lists at least `inner` (56), `shapes`, `total` and `count` by their Haxe
    names; `offset` and `add` (declared later in the method, not yet assigned) are listed too, and `i` and
-   `side` are not. Step (F10) until line 19, which is after the block (lines 16 to 18 stop on the way):
+   `side` are not. Step (F10) until line 19, which is after the block (lines 17 and 18 stop on the way):
    `inner` is no longer listed.
    Result:
 7. **A Watch of a local in C# syntax.** While stopped on line 15, add `total + 1` to the Watch pane. It
@@ -139,7 +139,7 @@ Write in item 1's Result how you started the program, and which of these setting
 6. **Locals in the inner block.** Break on `src/sample/Main.hx` line 15; open Debug > Windows > Locals.
    At least `inner` (56), `shapes`, `total` and `count` are listed by their Haxe names; `offset` and `add`
    (declared later in the method, not yet assigned) are listed too, and `i` and `side` are not. Step (F10)
-   until line 19 (lines 16 to 18 stop on the way): `inner` is gone.
+   until line 19 (lines 17 and 18 stop on the way): `inner` is gone.
    Result:
 7. **A Watch of a local in C# syntax.** In Debug > Windows > Watch > Watch 1 add `total + 1`. It shows 29,
    with no error.

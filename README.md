@@ -325,7 +325,8 @@ optimizations, and the lines it reports are the JIT's usual approximation for an
 
 For a debugger, also pass `-D dotnet-debug-jit`. It adds a `DebuggableAttribute` that turns the JIT's
 optimizations off, which a debugger needs to stop on every line and show every local. A local has its Haxe
-name in the PDB; a variable that a closure captured lives in the closure's object and is not named.
+name in the PDB. Inside a closure's body, a variable it captured is a field of the closure's object, not a
+named local; the function that declared it still names its own copy.
 `-D dotnet-debug-jit` needs `-debug`, and is a compile error without it.
 
 Today the PDB names each source file by a short path, so it does not hold the build machine's folders. The
