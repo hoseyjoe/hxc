@@ -265,18 +265,24 @@ class ModuleBuilder {
 		return coded(T.ITypeDefOrRef, r);
 	}
 
-	// A TypeRef of a top-level type in the assembly `scope`, whatever externScope says defines it: the
+	// A TypeRef of a type in the assembly `scope`, whatever externScope says defines it: the
 	// attributes the backend writes on its own are System.Runtime's (AttributesToIl.runtimeAttr). The TypeRef
 	// typeToken made already is reused when it has that scope.
 	public function typeTokenIn(path:IlPath, scope:AssemblyIdentity):Int {
 		var key = IlPaths.key(path);
-		var resolution = CodedIndex.resolutionScope(T.IAssemblyRef, assemblyRef(scope));
+		// A nested type's TypeRef is scoped by its enclosing type's, which is in `scope` too.
+		var resolution = if (path.nested.length > 0) {
+			var outer:IlPath = {ns: path.ns, nested: path.nested.slice(0, path.nested.length - 1), name: path.nested[path.nested.length - 1]};
+			CodedIndex.resolutionScope(T.ITypeRef, row(typeDefOrRefToken(typeTokenIn(outer, scope))));
+		} else {
+			CodedIndex.resolutionScope(T.IAssemblyRef, assemblyRef(scope));
+		}
 		var r = typeRefs.get(key);
 		if (r != null && tables.typeRef[row(r) - 1][0] == resolution) return coded(T.ITypeDefOrRef, r);
 		var pinned = scope.name + "\n" + key;
 		r = typeRefs.get(pinned);
 		if (r == null) {
-			tables.typeRef.push([resolution, heaps.strings.add(path.name), heaps.strings.add(path.ns.join("."))]);
+			tables.typeRef.push([resolution, heaps.strings.add(path.name), heaps.strings.add(path.nested.length > 0 ? "" : path.ns.join("."))]);
 			r = (T.ITypeRef << 24) | tables.typeRef.length;
 			typeRefs.set(pinned, r);
 			if (!typeRefs.exists(key)) typeRefs.set(key, r);

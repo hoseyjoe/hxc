@@ -734,6 +734,35 @@ class P {
 runtime frame true
 [dump]
 document hxc-runtime/cs/internal/Runtime.hx sha256 csharp embedded ok
+# -D dotnet-debug-jit writes DebuggableAttribute(DisableOptimizations | EnableEditAndContinue | Default |
+# IgnoreSymbolStoreSequencePoints = 0x103) on the assembly, so the JIT keeps what .hx stepping needs.
+--- pdb-debug-jit + -debug -D dotnet-debug-jit
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(cs.system.diagnostics.DebuggableAttribute);
+		var a:cs.system.diagnostics.DebuggableAttribute = cast cs.system.Attribute.GetCustomAttribute(cs.Lib.toNativeType(P).Assembly, t);
+		Sys.println(a == null ? "none" : a.IsJITOptimizerDisabled + " " + a.IsJITTrackingEnabled + " " + (cast a.DebuggingFlags : Int));
+	}
+}
+===
+[run]
+true true 259
+--- pdb-no-debug-jit + -debug
+class P {
+	static function main() {
+		var t = cs.Lib.toNativeType(cs.system.diagnostics.DebuggableAttribute);
+		var a:cs.system.diagnostics.DebuggableAttribute = cast cs.system.Attribute.GetCustomAttribute(cs.Lib.toNativeType(P).Assembly, t);
+		Sys.println(a == null ? "none" : a.IsJITOptimizerDisabled + " " + a.IsJITTrackingEnabled + " " + (cast a.DebuggingFlags : Int));
+	}
+}
+===
+[run]
+none
+--- pdb-debug-jit-needs-debug @lib + -D dotnet-debug-jit
+class P {}
+===
+[compile]
+dotnet: -D dotnet-debug-jit needs -debug: without the PDB there are no .hx lines to step through
 --- runtimeconfig-defaults-to-net10 @runtimeconfig
 class P {
 	static function main() {}

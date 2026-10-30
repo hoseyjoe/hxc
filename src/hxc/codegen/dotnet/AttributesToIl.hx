@@ -134,6 +134,7 @@ class AttributesToIl {
 	static final typePath:IlPath = {ns: ["System"], nested: [], name: "Type"};
 	static final editorBrowsablePath:IlPath = {ns: ["System", "ComponentModel"], nested: [], name: "EditorBrowsableAttribute"};
 	static final editorBrowsableStatePath:IlPath = {ns: ["System", "ComponentModel"], nested: [], name: "EditorBrowsableState"};
+	static final debuggingModesPath:IlPath = {ns: ["System", "Diagnostics"], nested: ["DebuggableAttribute"], name: "DebuggingModes"};
 	static final pseudoNames = [
 		"System.Runtime.InteropServices.StructLayoutAttribute", "System.Runtime.InteropServices.FieldOffsetAttribute",
 		"System.SerializableAttribute", "System.NonSerializedAttribute"
@@ -320,6 +321,12 @@ class AttributesToIl {
 		write(g, owner, ctor, [AString(".NETCoreApp,Version=v" + v)], [
 			{isProperty: true, name: "FrameworkDisplayName", type: ATString, value: AString(".NET " + v)}
 		]);
+		// -D dotnet-debug-jit: DebuggableAttribute(Default | IgnoreSymbolStoreSequencePoints | DisableOptimizations,
+		// 0x103), so the JIT keeps the locals and statement boundaries .hx stepping needs (as a Debug build of C# does).
+		if (g.ctx.defines.rawDefined("dotnet_debug_jit")) {
+			var debuggable = runtimeAttr(g, "System.Diagnostics", "DebuggableAttribute", [ATEnum(debuggingModesPath, ATI4)]);
+			write(g, owner, debuggable, [AEnum(dottedName(debuggingModesPath), ATI4, Int64.ofInt(0x103))], []);
+		}
 	}
 
 	// The first type of `c`'s module that gencs writes: a class that is not extern, or an enum, that the
