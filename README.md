@@ -309,33 +309,41 @@ Each run of a test program stops after 120 seconds (`HXC_RUN_TIMEOUT` changes th
 ### Debugging .NET output
 
 `-debug` with `-D dotnet` also writes `<name>.pdb`, a Portable PDB, beside the DLL, and the DLL's debug
-directory names it. Exception stack traces (`Exception.ToString()`, `haxe.CallStack`,
-`haxe.Exception.details()`) then name the `.hx` file and line of each Haxe frame, and Visual Studio and
-VS Code's C# debugger (`coreclr`) step through `.hx` files. Without `-debug` there is no PDB, and the
-DLL is the same as before.
+directory names it. The PDB holds a sequence point per Haxe statement, with the `.hx` file and line, the
+Haxe names of the locals, and the text of hxc's own runtime files, so exception stack traces
+(`Exception.ToString()`, `haxe.CallStack`, `haxe.Exception.details()`) name the `.hx` file and line of
+each Haxe frame. Without `-debug` there is no PDB, and the DLL is the same as before.
+
+How Visual Studio and VS Code's C# debugger (`coreclr`) use the PDB (binding breakpoints, stepping, the
+Locals and Watch windows, finding the source files) is still being checked by hand, with
+`docs/superpowers/plans/2026-10-29-dotnet-portable-pdb/debugger-checklist.md`; the setup below is what
+that checklist tries.
 
 A released build can ship its `.pdb` beside its `.dll`, so that the exception stack traces in its logs
 carry `.hx` lines. That build needs only `-debug`, and no `-D dotnet-debug-jit`: it keeps the JIT's
 optimizations, and the lines it reports are the JIT's usual approximation for an optimized method.
 
-To step through the code in a debugger, also pass `-D dotnet-debug-jit`. It adds a `DebuggableAttribute`
-that turns the JIT's optimizations off, so that breakpoints, stepping and the Locals window follow the Haxe
-code. A local is shown by its Haxe name; a variable that a closure captured lives in the closure's object
-and is not named. `-D dotnet-debug-jit` needs `-debug`, and is a compile error without it.
+For a debugger, also pass `-D dotnet-debug-jit`. It adds a `DebuggableAttribute` that turns the JIT's
+optimizations off, which a debugger needs to stop on every line and show every local. A local has its Haxe
+name in the PDB; a variable that a closure captured lives in the closure's object and is not named.
+`-D dotnet-debug-jit` needs `-debug`, and is a compile error without it.
 
-The PDB names each source file by a short path, so it does not hold the build machine's folders. The
-first of these rules that fits gives the name, written with forward slashes:
+Today the PDB names each source file by a short path, so it does not hold the build machine's folders. The
+first of these rules that fits gives the name, written with forward slashes (a later change may make
+`-D dotnet-debug-jit` builds use full paths by default, if a debugger turns out not to bind breakpoints
+to the short ones):
 
 1. `-D dotnet-pathmap=<from>=<to>[,<from>=<to>...]`: a file whose full path starts with `<from>` gets
    `<to>` in its place. The longest `<from>` wins, and a relative `<from>` is resolved against the
-   current folder.
+   current folder. A value that is not `<from>=<to>` pairs is a compile error: `-D dotnet-pathmap must be
+   <from>=<to> pairs separated by commas, like C:/work/=src/ (not <the value>)`.
 2. A file under the current folder (where hxc runs, or `--cwd`): its path relative to that folder, such
    as `src/db/Foo.hx`.
 3. A file under the Haxe std: `haxe-std/` plus the path under it, such as `haxe-std/haxe/Exception.hx`
    (the overlays under `cs/_std/` keep that folder).
 4. A file of a haxelib library: `haxelib/<library>/` plus the path under the library's class path.
 5. hxc's own runtime files: `hxc-runtime/` plus the path. Those files exist only inside the hxc binary,
-   so their text is embedded in the PDB, and the debugger shows it with no folder setting.
+   so their text is embedded in the PDB, and there is no folder to map for them.
 6. Anything else: its full path, with a warning that names `-D dotnet-pathmap`.
 
 The debugger has to be told where those folders are. In VS Code, add a `sourceFileMap` to the `coreclr`
@@ -355,10 +363,11 @@ launch configuration, and let `symbolOptions` find the `.pdb`:
 }
 ```
 
-`haxelib/<library>/` can be mapped the same way, to the library's class path. In Visual Studio, add the
-folder that holds `src/` (and the folder that holds the Haxe `std/`) under the solution's Properties >
-Common Properties > Debug Source Files, or point Visual Studio at a file with "Find source" in the Call
-Stack window. `tests/dotnet/debugger` holds a small program with a ready `launch.json` to try this on, and
+`haxelib/<library>/` can be mapped the same way, to the library's class path. In Visual Studio, the
+folders go under the solution's Properties > Common Properties > Debug Source Files: the folder that
+`src/...` is relative to, and the Haxe `std/` folder itself (a `haxe-std/haxe/Exception.hx` document is
+expected to be found as `haxe/Exception.hx` under it), or a file can be pointed at with "Find source" in
+the Call Stack window. `tests/dotnet/debugger` holds a small program with a ready `launch.json` to try this on, and
 `build.hxml` there builds it.
 
 ## Building from source
