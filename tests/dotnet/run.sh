@@ -14,10 +14,11 @@
 # A case with `-debug` among its extra args also writes a .pdb, and its second compile is made in
 # another folder: every source file the case wrote is copied to <case>/m/ (same relative paths) and
 # hxc runs there with --cwd <case>/m, writing m/b/P, so the .dll and .pdb must be the same wherever the
-# sources are. That .pdb must also hold neither the case directory's path (as `grep -a -i -F` finds it,
-# written with / or \, as an MSYS or a Windows path) nor the user's profile folder, or the case fails with
-# `the PDB holds a machine path: <path>`. A
-# @stress-fieldlookup case's .dll must also pass HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup
+# sources are. That .pdb must also hold neither the case directory's path nor the user's profile folder
+# (written with / or \, as an MSYS or a Windows path, in any case), as `grep -a -i -F` finds it in the
+# file or in the Document names HxcCheck's docs prints (a name is stored part by part, so the file alone
+# never shows it whole), or the case fails with `the PDB holds a machine path: <path>`.
+# A @stress-fieldlookup case's .dll must also pass HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup
 # called from many threads at once), and a @stress-arrayforward case's HxcCheck's stress-arrayforward
 # (its P.toInts making the first cast of one array from many threads at once). A @runtimeconfig case
 # is not run; its <name>.runtimeconfig.json is the result instead, so a case can build for a .NET
