@@ -473,6 +473,7 @@ class GenerateDotnet {
 		// haxe.Resource.content lists them; before planning, so the class gets its static constructor.
 		ResourcesToIl.fillContent(ctx);
 		ResourcesToIl.embed(g);
+		if (ctx.defines.rawDefined("dotnet_trim_root")) ResourcesToIl.embedTrimRoot(g, name);
 		var identities = new Map<String, ModuleBuilder.AssemblyIdentity>();
 		// The identity of the file that defines the type, a reference-only one too.
 		mb.externScope = function(path:IlPath) {

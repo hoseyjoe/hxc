@@ -95,4 +95,13 @@ class ResourcesToIl {
 			g.mb.manifestResource(manifest, ctx.resources.get(name));
 		}
 	}
+
+	// -D dotnet-trim-root: the descriptor ILLink reads from the assembly it is embedded in, by this exact name, and
+	// strips from its output. It keeps every member, as the runtime's reflection reaches them by name. Opt-in, as
+	// GetManifestResourceNames lists it in an untrimmed run, where gencs's assembly has only src.Resources.* names.
+	public static function embedTrimRoot(g:DotnetCtx, assemblyName:String):Void {
+		var name = StringTools.htmlEscape(assemblyName, true);
+		var xml = '<linker>\n\t<assembly fullname="' + name + '" preserve="all" />\n</linker>\n';
+		g.mb.manifestResource("ILLink.Descriptors.xml", haxe.io.Bytes.ofString(xml));
+	}
 }

@@ -427,6 +427,13 @@ and `List` copy, and two threads casting one array at once.
   The runtimeconfig asks for `net10.0` unless `-D dotnet-version=<N>` names another .NET: a whole
   number, 10 or more, so `11` writes `net11.0` / `11.0.0`; anything else is a compile error. Only the
   runtimeconfig changes; the assembly's references come from `--net-std`/`--net-lib` as before.
+- **Trimming**: `-D dotnet-trim-root` embeds the manifest resource `ILLink.Descriptors.xml`, which keeps
+  every member of the assembly under `PublishTrimmed`, because the runtime's reflection reaches Haxe
+  members by name. ILLink strips the resource from its output. Opt-in, because an untrimmed run's
+  `GetManifestResourceNames` lists it where gencs's assembly has only `src.Resources.*` names. It does not
+  keep .NET library members that only dynamic access reaches. Measured on 2026-10-29: fully trimming the
+  server app's DLL as well would save at most 1.7 MB of a 141 MB self-contained publish, and removes code
+  reached by name, so resolving the runtime's dynamic access for the trimmer was not taken up.
 - **Command line**: `--cs <dir>` together with `-D dotnet` selects this generator, the same way
   `--java <dir> -D jvm` selects the JVM backend. The platform stays `cs`, so `#if cs`, the `cs.*`
   std package and every existing `cs.system.*` / `cs.NativeArray` / `@:nativeGen` use in the server app keep

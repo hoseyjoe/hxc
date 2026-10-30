@@ -25536,3 +25536,66 @@ class P {
 	}
 }
 ===
+# -D dotnet-trim-root embeds ILLink.Descriptors.xml, which keeps the whole assembly when the program goes through the IL
+# trimmer: what reflection, Type and the Unserializer reach by name stays, so the trimmed build prints the same. Without
+# the define, the trimmer removes `twice` here and Reflect.callMethod throws.
+--- trim-root-keeps-members-reached-by-name @gencs @trimmed + -D dotnet-trim-root
+enum Color { Red; Rgb(r:Int, g:Int, b:Int); }
+class Pt {
+	public static var count = 0;
+	public var x:Int;
+	public var y:Int;
+	public function new(x:Int, y:Int) { this.x = x; this.y = y; count++; }
+	public function sum():Int return x + y;
+	public static function twice(v:Int):Int return v * 2;
+}
+class Sub extends Pt {
+	public function new() super(1, 2);
+	override public function sum():Int return 100;
+}
+class P {
+	static function main() {
+		var p = new Pt(3, 4);
+		var d:Dynamic = p;
+		trace(Reflect.field(p, "x"), d.y, d.sum(), Reflect.callMethod(p, Reflect.field(p, "sum"), []));
+		var s:Dynamic = new Sub();
+		trace(s.sum());
+		Reflect.setField(p, "x", 10);
+		trace(Reflect.field(Pt, "count"), Reflect.callMethod(Pt, Reflect.field(Pt, "twice"), [21]));
+		var f = Pt.twice;
+		trace(f(5));
+		var c = Type.resolveClass("Pt");
+		trace(Type.getClassName(c), Type.getInstanceFields(c), Type.getClassFields(c));
+		var q:Pt = Type.createInstance(c, [5, 6]);
+		var e:Pt = Type.createEmptyInstance(Pt);
+		trace(q.sum(), e.x);
+		var en = Type.resolveEnum("Color");
+		trace(Type.createEnum(en, "Rgb", [1, 2, 3]), Type.getEnumConstructs(en), Type.createEnumIndex(Color, 0));
+		var ser = haxe.Serializer.run({p: p, c: Rgb(4, 5, 6), l: [1, 2], m: ["k" => 1]});
+		trace(ser);
+		var back:Dynamic = haxe.Unserializer.run(ser);
+		trace(back.p.x, back.c, back.m.get("k"));
+	}
+}
+===
+# The descriptor is one manifest resource, naming the assembly by -D dll-name with XML's escapes. Without the define the
+# assembly has no such resource (resource-csharp-reads-manifest lists them all and compares with gencs).
+--- trim-root-descriptor-names-the-assembly + -D dotnet-trim-root -D dll-name=a&b
+class P {
+	static function main() {
+		var asm = cs.Lib.toNativeType(P).Assembly;
+		var mn = asm.GetManifestResourceNames();
+		for (i in 0...mn.Length) Sys.println(mn[i]);
+		var xml = new cs.io.NativeInput(asm.GetManifestResourceStream("ILLink.Descriptors.xml")).readAll().toString();
+		Sys.print(xml);
+		// The comparison below ignores \r, and the bytes must not depend on the checkout's line endings.
+		Sys.println("carriage returns: " + (xml.split("\r").length - 1));
+	}
+}
+===
+[run]
+ILLink.Descriptors.xml
+<linker>
+	<assembly fullname="a&amp;b" preserve="all" />
+</linker>
+carriage returns: 0
