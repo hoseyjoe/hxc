@@ -118,15 +118,42 @@ Measured with the interleaved timer on the benchmark (rebuilt with the new hxc):
 ## Anti-goals (a failure even if it gets faster)
 
 - Any change in a program's output, including exception messages, which exception type a caller catches,
-  `Std.string`, `Type.getClass` and `Type.typeof` of a function, and serialized data. The one accepted
-  change: frames that are not the program's own Haxe frames may leave `haxe.CallStack` /
-  `Exception.details()` / `Exception.StackTrace` text when a method value throws.
+  `Std.string`, `Type.getClass` and `Type.typeof` of a function, and serialized data, apart from the
+  changes listed under "Accepted changes" below.
 - Non-deterministic output: the DLL and PDB stay byte-identical across two compiles and across folders
   (tests/dotnet/run.sh checks both).
 - New ILVerify findings, or code that only verifies because the JIT is lenient (for example, a call from
   inlined code in a user class to a member that IL access rules hide from it).
 - The debugger stepping into hxc's runtime `Array.hx` when stepping over a `map` line (without
   `-D keep-inline-positions`), or showing the generated invoker classes' frames as user code.
+
+### Accepted changes
+
+These differ from today's output, and were accepted after the whole-branch review. Inlining `map` and
+`filter` moves these shapes to what gencs prints:
+
+| shape | today | now and gencs |
+|---|---|---|
+| `a.map(x -> { a = [7,8,9,10]; x; })` (`filter` likewise) | `[1,2,3]` | `[1,8,9]` |
+| a local `f` reassigned by the callback while `map` runs | `[2,3,4]` | `[2,200,300]` |
+| `var r:Array<String> = [1,2].map(y -> (y:Dynamic))` | throws | `[1,2]` |
+| `[1.5].map(y -> (y:Dynamic))` to `Array<String>` | throws | `[1.5]` |
+| `[1].map(y -> (y:Dynamic))` to `Array<UInt>` | throws | `[1]` |
+| `[1.5, 2.5].map(y -> untyped y)` to `Array<Int>` | `[2,2]` | `[1,2]` |
+| a non-literal `f` returning Dynamic, to `Array<Int>` | `[2,2]` | `[1,2]` |
+
+- Under full DCE, a by-name `d.map` no longer finds the method, as in gencs (case `array-map-dce-full`).
+- A method value's generated frames: frames that are not the program's own Haxe frames may leave
+  `haxe.CallStack` / `Exception.details()` / `Exception.StackTrace` text when a method value throws, and new
+  ones arrive, with or without an exception. A program reading its own stack in a static method used as a
+  value sees `P.st P_st__Invoke.__hx_call1_f haxe.lang.Closure.__hx_invoke1_f P.call`, one of them under a
+  class name that looks like the program's.
+- A crash that now runs: a method value of a plain override of a `@:compilerGenerated` method, in a class with
+  no method of its own, dies with a stack overflow by name (today and gencs) and direct calls the override. A
+  read on a `@:skipReflection` base stays by name, and still overflows.
+- A value type cast to Dynamic that goes on to another value type converts as a Dynamic does, also outside
+  `map` (ruling R21): `var i:Int = (x : Dynamic)` of 1.5 was 1 and is 2, as in gencs. The same rule takes an
+  Int through Dynamic to an `Int64` from a value to gencs's InvalidCastException.
 
 ## Constraints
 
@@ -151,8 +178,9 @@ In `src/hxc/codegen/dotnet/runtime/Array.hx` (`map` at about line 632, `filter` 
   `filter`'s). That branch must call a **non-inline** method (an inline method calling itself is an
   inlining loop). How it is split is the builder's call; Haxe's inliner needs a shape without an early
   `return` in a non-final position (an `if … else` expression works).
-- `f` is evaluated once, before the loop, as Haxe's std version does. A function literal is substituted
-  by the front end, as checked above.
+- `f` goes through Haxe's inliner, as in Haxe's std version. A function literal is substituted by the front
+  end, as checked above. A local `f` (and a local receiver) is read each time round the loop, so the loop sees
+  a reassignment by the callback while it runs; an `f` that is a call is evaluated once, before the loop.
 - The inlined body runs in the caller's class. Every member it touches must be accessible there in IL,
   as ILVerify checks. Haxe-private members of `Array` that today are IL-private would fail; the builder
   checks how hxc writes them and picks members accordingly.
