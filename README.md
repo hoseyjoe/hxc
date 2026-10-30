@@ -114,6 +114,12 @@ writes the nullable metadata Roslyn writes for gencs's C# under `#nullable enabl
 modules of exactly those packages (not their sub-packages), so `NullabilityInfoContext` reads their
 reference types as not null.
 
+`-D dotnet-trim-root` embeds an `ILLink.Descriptors.xml` that keeps every member of the assembly when a
+project publishes it with `PublishTrimmed`: the runtime's reflection reaches Haxe members by name, which
+the trimmer can't see, so without it a fully trimmed program can lose them and fail at run time. It does
+not keep members of .NET libraries that only dynamic access reaches (a `Dynamic` holding a `System.Uri`,
+say). It is opt-in because `GetManifestResourceNames` lists the resource in an untrimmed run.
+
 The assembly's references resolve against hxcs's `netlib` directory for `-D net-ver` (default 20), or
 the directories given with `--net-std`. By default that means a reference to `mscorlib` 2.0.0.0,
 which .NET 10 and later forward to their own libraries.

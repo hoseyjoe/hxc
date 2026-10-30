@@ -3,7 +3,7 @@
 #   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>] [-j <jobs>]
 #                       [--no-gencs-cache]
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
-# [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds] [@optimized]
+# [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds] [@optimized] [@trimmed]
 # [+ extra hxc args]`, its source, `===`,
 # and the expected result. The source goes in the module's file; a source line `//// <path>` starts
 # another file, at <path> relative to the case directory (not in a @gencs case, whose source gencs gets
@@ -24,7 +24,10 @@
 # is not run; its <name>.runtimeconfig.json is the result instead, so a case can build for a .NET
 # version this machine does not have. An @optimized case's program (hxc's build) runs with
 # DOTNET_TieredCompilation=0: the fully optimized JIT from the first call, as a stack trace from a
-# long-running program sees it.
+# long-running program sees it. A @trimmed case's program also goes through the IL trimmer (trimmed.csproj.in:
+# a self-contained `dotnet publish` in full mode, with a small host that calls its Main); what that build
+# prints must be what the program printed, or the result gets a [trimmed] section. The first @trimmed run on a
+# machine restores the runtime pack and ILLink from NuGet.
 # ILVerify's report fails a case, unless the expectation has a [verify] section holding exactly that report.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
@@ -599,11 +602,39 @@ gencs_prepare() {
 	[ -n "$gencs_cache" ] && find "$gencs_cache" -mindepth 1 -maxdepth 1 -mtime +30 -exec rm -rf {} + 2> /dev/null
 }
 
+# Publishes the DLL $3 (native path) through the IL trimmer in directory $1 and runs it for at most $2 seconds,
+# setting $ran as run_program does. A publish that fails sets $trim_problem instead.
+run_trimmed() {
+	local dir="$1" lim="$2" dll="$3" code=0 rid line name log
+	name="${dll##*/}"
+	name="${name%.dll}"
+	while IFS= read -r line; do
+		line="${line%$'\r'}"
+		case "$line" in *RID:*) rid="${line##* }"; break ;; esac
+	done < <(exec dotnet --info)
+	mkdir "$dir"
+	read_exact "$here/trimmed.csproj.in"
+	text="${text//@NAME@/"$name"}"
+	text="${text//@DLL@/"$dll"}"
+	printf '%s' "${text//@RID@/"$rid"}" > "$dir/Host.csproj"
+	printf 'static class Program { static void Main() { global::%s.Main(); } }\n' "$module" > "$dir/Program.cs"
+	if ! log="$(cd "$dir" && MSBUILDDISABLENODEREUSE=1 exec dotnet publish -c Release -nologo -v q -o pub 2>&1)"; then
+		trim_problem="the trimmed publish failed:"$'\n'"$log"$'\n'
+		return
+	fi
+	ran="$(cd "$dir/pub" && exec timeout -k 10 "$lim" ./Host 2>&1)" || code=$?
+	case $code in
+		0) ;;
+		124 | 137) ran="${ran}"$'\n'"[timeout after ${lim}s]" ;;
+		*) ran="${ran}"$'\n'"[exit $code]" ;;
+	esac
+}
+
 # Runs case $1 (tags $2, extra args $3, source $4, expected result $5) in directory $6, which must
 # not exist yet, and prints its report.
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 limit t n netargs=()
+	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 trimmed=0 limit t n netargs=()
 	for t in $tags; do
 		case "$t" in
 			@lib) lib=1 ;;
@@ -615,6 +646,7 @@ run_case() {
 			@stress-fieldlookup | @stress-arrayforward) stress="$stress ${t#@}" ;;
 			@runtimeconfig) config=1 ;;
 			@optimized) optimized=1 ;;
+			@trimmed) trimmed=1 ;;
 			@netlib | @netlib=?*) ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
 		esac
@@ -630,6 +662,12 @@ run_case() {
 	if [ $gencs = 1 ] && [ $config = 1 ]; then
 		echo "FAIL $name"
 		echo "@gencs compares the runs of hxc's and gencs's output, and a @runtimeconfig case does not run"
+		failed=$((failed + 1))
+		return
+	fi
+	if [ $trimmed = 1 ] && { [ $lib = 1 ] || [ $config = 1 ]; }; then
+		echo "FAIL $name"
+		echo "@trimmed compares the program's run with its trimmed build's, and a @lib or @runtimeconfig case does not run"
 		failed=$((failed + 1))
 		return
 	fi
@@ -743,6 +781,17 @@ run_case() {
 			fi
 			rout="$ran"
 			[ -n "$rout" ] && result="${result:+$result$'\n'}[run]"$'\n'"$rout"
+			if [ $trimmed = 1 ]; then
+				local trim_problem="" tout
+				run_trimmed "$casedir/t" "$limit" "$dll_m"
+				problem="${problem}${trim_problem}"
+				if [ -z "$trim_problem" ]; then
+					normalize "$ran"
+					tout="$norm"
+					normalize "$rout"
+					[ "$tout" != "$norm" ] && result="${result:+$result$'\n'}[trimmed]"$'\n'"$tout"
+				fi
+			fi
 			if [ $gencs = 1 ] && [ -f "$gencsroot/$name/out" ]; then
 				local gdir="$gencsroot/$name" gout
 				slurp "$gdir/out"
