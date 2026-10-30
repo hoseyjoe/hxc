@@ -33,8 +33,16 @@ Facts the survey established, which the design relies on:
 - gencs's 3 ms comes from Haxe inlining `map`/`filter` *and the lambda passed to them* into a plain loop.
   **hxc's front end already does the same substitution** for an inline function with a function-literal
   argument (checked: `inline function app(f:Int->Int, x) return f(x)` called as `app(x -> x * 2, k)`
-  compiles to a `mul`, with no closure class). So making the two methods inline is enough; no
-  front-end change.
+  compiles to a `mul`, with no closure class; with `f` also passed to a method on another branch, the loop
+  still substitutes it and the closure is made only on that branch).
+- **`Array<Dynamic>` must not inline** (found while planning). Its static type is the non-generic
+  companion, so an inlined body would reach `length`, `__hx_fwd` and `__unsafe_get` by name for every
+  element, far slower than today's one by-name `map` call. The main spec also records `map`/`filter` on a
+  typed array held as `Array<Dynamic>` as working where gencs's inlined loops throw
+  `InvalidCastException` (case `companion-array-map-filter`), which stays. A run-time test cannot separate
+  it from `Array<Point>` (both are ``Array`1<object>``), so the typer decides: one small rule in
+  `typing/Inline.hx`, keyed on a metadata only hxc's runtime `Array` uses, so no other target changes. The
+  same holds for a `map` whose result is `Array<Dynamic>`, as the inlined `ret` would be the companion.
 - The second row is the largest cost in the program, and gencs has it too: `new Closure(typeof(P),
   "inc", hash)`, then `VarArgsBase.__hx_invoke1_f` → `__hx_invokeDynamic` → `Runtime.callField` →
   `Type.InvokeMember`. A method of a Haxe *instance* as a value takes `__hx_invokeField`'s string-hash
@@ -73,8 +81,8 @@ Calls made by the writer of this document (check these):
 ## Goals
 
 1. `a.map(f)` and `a.filter(f)` on hxc's runtime `Array<T>` are `inline`, as in Haxe 4.3.7's
-   `std/cs/_std/Array.hx`. With a function literal, the call becomes a loop with no closure and no
-   boxing per element.
+   `std/cs/_std/Array.hx`, except on a receiver or a result typed `Array<Dynamic>`, which keep today's
+   call. With a function literal, the call becomes a loop with no closure and no boxing per element.
 2. A method of a Haxe class used as a value (static, or an instance's) is still a `haxe.lang.Closure`,
    now carrying a generated typed invoker that calls the method directly. It behaves exactly as today's
    `Closure` does, apart from speed and the stack-trace frames named above.
@@ -145,6 +153,11 @@ In `src/hxc/codegen/dotnet/runtime/Array.hx` (`map` at about line 632, `filter` 
   as ILVerify checks. Haxe-private members of `Array` that today are IL-private would fail; the builder
   checks how hxc writes them and picks members accordingly.
 
+A receiver or result whose static type is `Array<Dynamic>` is not inlined: `Inline.tryInline` returns null
+for a method with `@:inlineUnlessDynamic` when either's type argument follows to `Dynamic`, and the call
+stays what it is today. A type argument still unbound at the call inlines; if it later becomes `Dynamic`
+the code is correct, only slower.
+
 `iterator()`, `keyValueIterator()`, `__unsafe_get` and `__unsafe_set` are also `inline` in Haxe's std
 and not in hxc's. They are left alone: hxc already wins every array benchmark that uses them.
 
@@ -157,10 +170,11 @@ evaluated at that point.
 New, in two parts:
 
 - **Runtime.** `haxe.lang.Closure` (`runtime/cs/internal/Function.hx`, about line 297) gets an optional
-  field holding a typed invoker (a `haxe.lang.Function`, or a narrower base type of the builder's
-  choosing). `Closure` overrides the typed entry points `__hx_invoke0_o`/`_f` … `__hx_invoke6_o`/`_f`
-  (today inherited from `VarArgsBase`, which goes by name): when the invoker is set, they call the
-  invoker's same entry point; when it is null, they do exactly what `VarArgsBase` does today. Closures
+  field holding a typed invoker (a new `haxe.lang.ClosureInvoker`, see the plan). `Closure` overrides the
+  typed entry points `__hx_invoke0_o`/`_f` … `__hx_invoke5_o`/`_f` (today inherited from `VarArgsBase`,
+  which goes by name; a call with six or more arguments already goes to `__hx_invokeDynamic`): when the
+  invoker is set and accepts the arguments, they call it directly; otherwise they do exactly what
+  `VarArgsBase` does today. Closures
   made at run time (`Reflect.field(obj, "f")`, `Runtime.closure`) leave it null and are unchanged.
   `Closure` stays the exact class of every method value.
 - **Generated invokers.** For each such method that the program uses as a value, hxc generates one
@@ -178,9 +192,9 @@ arguments by reflection (`callMethodCasting`, `IConvertible.ToType`): through a 
 calling parameters for method …". The lambda conversions (`ClosuresToClass.fromFloat`/`fromDynamic`)
 truncate and cast instead. So the invoker takes the direct call only when every argument already has its
 parameter's type: on the `_f` path, an `Int` parameter's double is integral and in range (and the object
-slot is `Runtime.undefined`); on the `_o` path, the object is of the parameter's type (`isinst`, or null
-for a nullable parameter). Otherwise it goes by name, exactly as today. Statically typed Haxe calls always
-pass this test. Results are converted back as `VarArgsBase` does today.
+slot is `Runtime.undefined`); on the `_o` path, the object is of the parameter's type (`isinst`; a null
+goes by name). Otherwise it goes by name, exactly as today. Statically typed Haxe calls pass this test
+except for a null argument. Results are converted back as `VarArgsBase` does today.
 
 Because the value is still a `Closure` with today's fields, these stay as they are without extra work:
 
@@ -196,7 +210,7 @@ Because the value is still a `Closure` with today's fields, these stay as they a
 Which methods get an invoker and which stay on today's path is the builder's call, under one rule: **a
 shape goes direct only if every observable behaviour is the same** (apart from the frames named in
 "What the person driving this decided"). Shapes to decide on explicitly, each
-covered by a case either way: optional and rest arguments, more than 6 arguments, generic methods
+covered by a case either way: optional and rest arguments, six or more arguments, generic methods
 (`function f<T>`), methods of generic classes, `@:overload` methods, `dynamic` methods (already a field,
 not a `Closure`), methods whose class is `@:nativeGen`.
 
