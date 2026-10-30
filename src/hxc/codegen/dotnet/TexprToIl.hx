@@ -260,6 +260,16 @@ class TexprToIl {
 		code.point(v.pos, true);
 	}
 
+	// Under -debug, the name of the local that holds `v`, for a debugger: the user's variables, inlined
+	// ones and an abstract's `this`; the typer's and hxc's temporaries stay unnamed.
+	function nameLocal(v:TVar, index:Int):Void {
+		switch (v.kind) {
+			case VUser(_) | VInlined: code.nameLocal(index, v.name);
+			case VAbstractThis: code.nameLocal(index, "this");
+			case VGenerated | VInlinedConstructorVariable | VExtractorVariable:
+		}
+	}
+
 	// Before a part of the current statement that may record points of its own (a value block's
 	// statements, a value `try`'s catches): what resumePoint needs, or -1 without points.
 	function pointMark():Int {
@@ -723,6 +733,7 @@ class TexprToIl {
 					store(local);
 				}
 				slots.set(v.id, local);
+				nameLocal(v, local.index);
 				coerce(LVoid, ret);
 			case TBlock(el):
 				block(ret, el);
@@ -974,6 +985,10 @@ class TexprToIl {
 		// A value block's statements have points of their own, inside the statement around the block, which
 		// takes its value's.
 		var outer = statementPos, mark = needVal(ret) ? pointMark() : -1;
+		// A block's own scope, unless its one statement is a block (TclassToIl.statement's wrapper around a
+		// body), which declares nothing in it.
+		var scoped = el.length > 1 || !el[0].expr.match(TBlock(_));
+		if (scoped) code.openScope();
 		for (i in 0...el.length) {
 			var s = el[i];
 			var r = i == el.length - 1 ? ret : RVoid;
@@ -997,6 +1012,7 @@ class TexprToIl {
 				if (!usesPoisoned) onError(u);
 			}
 		}
+		if (scoped) code.closeScope();
 	}
 
 	function usesPoisonedVar(e:TExpr):Bool {

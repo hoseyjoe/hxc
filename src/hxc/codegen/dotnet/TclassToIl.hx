@@ -2434,14 +2434,21 @@ class TclassToIl {
 		lower.cls = plan.c;
 		if (m.hasThis) lower.thisSig = plan.thisSig;
 		// Under -debug, the methods that lower the user's expressions or field initializers have sequence
-		// points; the others, which hxc writes itself, have none. A closure class's constructor is hxc's too.
+		// points and local scopes; the others, which hxc writes itself, have none. In a closure class only the
+		// method with the function's body has them: the invoke method, or the Delegate method that the invoke
+		// method of a function converted to a .NET delegate calls.
 		if (g.pdb != null) {
 			code.points = [];
 			lower.points = switch (m.kind) {
-				case MField(cf): !g.closureOwners.exists(plan.c) || cf != plan.c.constructor;
+				case MField(cf) if (g.closureOwners.exists(plan.c)):
+					var delegate = plan.c.fields.get("Delegate");
+					if (delegate != null && !delegate.kind.match(Method(_))) delegate = null;
+					cf != plan.c.constructor && (delegate == null || cf == delegate);
+				case MField(_): true;
 				case MImplicitCtor | MClonedCtor(_) | MStaticCtor(_) | MCctor: !g.closureOwners.exists(plan.c);
 				case _: false;
 			}
+			if (lower.points) code.scopes = [];
 		}
 		try {
 			g.types.inParams(plan.classParams, [], () -> switch (m.kind) {

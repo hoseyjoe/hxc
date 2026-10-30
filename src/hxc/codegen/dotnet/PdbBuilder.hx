@@ -3,12 +3,13 @@ package hxc.codegen.dotnet;
 import haxe.io.Bytes;
 import hxc.ast.Position;
 import hxc.codegen.dotnet.IlMeta.TableIdx as T;
+import hxc.codegen.dotnet.IlCode.LocalScope;
 import hxc.codegen.dotnet.MetaTables;
 
 // The Portable PDB of one assembly (https://github.com/dotnet/runtime/blob/main/docs/design/specs/PortablePdb-Metadata.md):
 // the debug tables, with their own heaps, and the #Pdb stream that names the DLL's tables they point
 // into. MethodDebugInformation row n is MethodDef row n's. A Document row per source file, in the order
-// methods first use them.
+// methods first use them. A LocalScope row per block with a named local, inside its method's root scope.
 
 class PdbBuilder {
 	// The Sorted mask's high half: LocalScope, StateMachineMethod and CustomDebugInformation.
@@ -28,6 +29,8 @@ class PdbBuilder {
 	final nameRows = new Map<String, Int>();
 	// The MethodDebugInformation rows of the methods with sequence points, by MethodDef row.
 	final methodRows = new Map<Int, Row>();
+	// The scopes written for each method with named locals, by MethodDef row, in LocalScope order.
+	final scopeRows = new Map<Int, Array<LocalScope>>();
 	var hashAlgorithm = 0;
 	var language = 0;
 
@@ -38,6 +41,7 @@ class PdbBuilder {
 	// The debug information of the method whose MethodDef token is `token`, with `localsSig` its
 	// StandAloneSig token (0 for none) and `code` its body.
 	public function method(token:Int, localsSig:Int, code:IlCode):Void {
+		scopes(token & 0xFFFFFF, code);
 		if (code.points == null || code.points.length == 0) return;
 		var points = [for (p in code.points) {offset: p.offset, at: resolve(p.pos)}];
 		var first = 0, many = false;
@@ -79,6 +83,26 @@ class PdbBuilder {
 			column = at.column;
 		}
 		methodRows.set(token & 0xFFFFFF, [many ? 0 : first, heaps.blobs.add(b.getBytes())]);
+	}
+
+	// The scopes of the method at MethodDef `row`: the root, then each block with a named local, by start
+	// offset. The function body's block is the root, widened to the whole IL, as a method's first scope
+	// must be; with several outermost blocks (a constructor's initializers and its body), a root without
+	// names holds them. An empty block (dead code) is left out, and so is a block without names, its own
+	// blocks taking its place.
+	function scopes(row:Int, code:IlCode):Void {
+		var top = code.scopes;
+		if (top == null || top.length == 0) return;
+		var root:LocalScope = top.length == 1 ? {start: 0, end: code.length, vars: top[0].vars, children: top[0].children}
+			: {start: 0, end: code.length, vars: [], children: top};
+		var rows = [root];
+		function add(s:LocalScope) {
+			if (s.end <= s.start) return;
+			if (s.vars.length > 0) rows.push(s);
+			for (c in s.children) add(c);
+		}
+		for (c in root.children) add(c);
+		if (rows.length > 1 || root.vars.length > 0) scopeRows.set(row, rows);
 	}
 
 	// A point's Document row and span, with 1-based columns and the end column exclusive; null for a
@@ -153,15 +177,25 @@ class PdbBuilder {
 		var methodDebugInformation:Array<Row> = [for (i in 0...methodCount) methodRows.exists(i + 1) ? methodRows.get(i + 1) : [0, 0]];
 		// The root scope, with no imports, which every LocalScope row names.
 		var importScope:Array<Row> = [[0, 0]];
+		// By method, then as `scopes` ordered them; a scope's locals follow those of the scopes before it.
+		var localScope:Array<Row> = [], localVariable:Array<Row> = [];
+		for (i in 0...methodCount) {
+			var rows = scopeRows.get(i + 1);
+			if (rows == null) continue;
+			for (s in rows) {
+				localScope.push([i + 1, 1, localVariable.length + 1, 1, s.start, s.end - s.start]);
+				for (v in s.vars) localVariable.push([0, v.index, heaps.strings.add(v.name)]);
+			}
+		}
 		var written:Array<{table:Int, rows:Array<Row>, schema:Array<Int>}> = [
 			{table: T.IDocument, rows: documents, schema: [MetaTables.BLOB, MetaTables.GUID, MetaTables.BLOB, MetaTables.GUID]},
 			{table: T.IMethodDebugInformation, rows: methodDebugInformation, schema: [T.IDocument, MetaTables.BLOB]},
 			{
 				table: T.ILocalScope,
-				rows: [],
+				rows: localScope,
 				schema: [T.IMethod, T.IImportScope, T.ILocalVariable, T.ILocalConstant, MetaTables.U32, MetaTables.U32]
 			},
-			{table: T.ILocalVariable, rows: [], schema: [MetaTables.U16, MetaTables.U16, MetaTables.STR]},
+			{table: T.ILocalVariable, rows: localVariable, schema: [MetaTables.U16, MetaTables.U16, MetaTables.STR]},
 			{table: T.ILocalConstant, rows: [], schema: [MetaTables.STR, MetaTables.BLOB]},
 			{table: T.IImportScope, rows: importScope, schema: [T.IImportScope, MetaTables.BLOB]},
 			{table: T.IStateMachineMethod, rows: [], schema: [T.IMethod, T.IMethod]},

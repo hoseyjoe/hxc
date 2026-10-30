@@ -110,6 +110,9 @@ typedef Label = Int;
 // Where a statement's IL starts, and its position in the source (null: a hidden point).
 typedef SeqPoint = {offset:Int, pos:Null<hxc.ast.Position>};
 
+// A block's IL range, its end exclusive, the named locals declared in it, in order, and the blocks in it.
+typedef LocalScope = {start:Int, end:Int, vars:Array<{index:Int, name:String}>, children:Array<LocalScope>};
+
 // An open protected region: where the block and the current handler start, the handler's kind (0 a
 // catch clause, 2 a finally) and caught class, and the clauses of the handlers already ended.
 private typedef TryBlock = {start:Int, end:Int, handler:Int, flags:Int, classToken:Int, clauses:Array<Array<Int>>};
@@ -141,6 +144,16 @@ class IlCode {
 	// How many times `points` has changed, so a caller can tell whether lowering a part recorded any.
 	public var pointEdits(default, null):Int = 0;
 
+	// The outermost local scopes, when the PDB wants them (-debug); null otherwise.
+	public var scopes:Null<Array<LocalScope>> = null;
+	// The scopes open, innermost last, and whether each was opened by nameLocal rather than a block.
+	final openScopes:Array<{scope:LocalScope, implicit:Bool}> = [];
+
+	// The IL's size so far.
+	public var length(get, never):Int;
+
+	inline function get_length():Int return code.length;
+
 	// `what` names the method in internal errors.
 	public function new(what:String) {
 		this.what = what;
@@ -168,6 +181,41 @@ class IlCode {
 		if (last >= 0 && samePos(points[last].pos, pos)) return;
 		points.push({offset: code.length, pos: pos});
 		pointEdits++;
+	}
+
+	// A block's scope starts at the current offset.
+	public function openScope():Void {
+		if (scopes == null) return;
+		pushScope(false);
+	}
+
+	function pushScope(implicit:Bool):Void {
+		var s:LocalScope = {start: code.length, end: -1, vars: [], children: []};
+		(openScopes.length == 0 ? scopes : openScopes[openScopes.length - 1].scope.children).push(s);
+		openScopes.push({scope: s, implicit: implicit});
+	}
+
+	// The innermost block's scope ends at the current offset, with the scopes nameLocal opened in it. After
+	// a statement failed to lower, the scopes it opened stay open, and the method is not written.
+	public function closeScope():Void {
+		if (scopes == null) return;
+		while (openScopes.length > 0) {
+			var o = openScopes.pop();
+			o.scope.end = code.length;
+			if (!o.implicit) break;
+		}
+	}
+
+	// Local `index` holds the variable `name` from here to the end of the innermost block. A name the
+	// block has named already (two inlined functions' variables) starts a scope of its own, to the block's
+	// end, as the PDB names a variable once per scope.
+	public function nameLocal(index:Int, name:String):Void {
+		if (scopes == null || openScopes.length == 0) return;
+		for (v in openScopes[openScopes.length - 1].scope.vars) if (v.name == name) {
+			pushScope(true);
+			break;
+		}
+		openScopes[openScopes.length - 1].scope.vars.push({index: index, name: name});
 	}
 
 	static function samePos(a:Null<hxc.ast.Position>, b:Null<hxc.ast.Position>):Bool {

@@ -617,7 +617,8 @@ class ClosuresToClass {
 
 		var unpack:Array<TExpr> = [];
 		// No Haxe line wrote the unpacking: under -debug its statements are hidden points.
-		function declare(a:TFuncArg, value:TExpr) unpack.push(TypeFunctions.mk(TVarExpr(a.v, value), basic.tvoid, Position.nullPos));
+		var unpackPos = g.pdb != null ? Position.nullPos : pos;
+		function declare(a:TFuncArg, value:TExpr) unpack.push(TypeFunctions.mk(TVarExpr(a.v, value), basic.tvoid, unpackPos));
 		// The Dynamic half of an argument, or its default value where it is null.
 		function fromDynamic(a:TFuncArg, d:TExpr):TExpr {
 			var t = a.v.type;

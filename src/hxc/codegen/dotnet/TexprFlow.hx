@@ -296,16 +296,19 @@ class TexprFlow {
 			tl.texpr(inner, body);
 			leave();
 			for (i in 0...catches.length) {
-				// The handler starts with the exception on the stack.
+				// The handler starts with the exception on the stack; it is its variable's scope.
 				code.beginCatch(g.typeTokenOf(classes[i]));
+				code.openScope();
 				tl.catchPoint(catches[i].v);
 				var local = {arg: false, index: code.addLocal(classes[i]), sig: classes[i]};
 				tl.store(local);
 				tl.slots.set(catches[i].v.id, local);
+				tl.nameLocal(catches[i].v, local.index);
 				tl.handlers.push({isCatch: true, v: catches[i].v, body: catches[i].expr});
 				tl.texpr(inner, catches[i].expr);
 				tl.handlers.pop();
 				leave();
+				code.closeScope();
 			}
 			code.endTry();
 		} catch (x:Dynamic) {

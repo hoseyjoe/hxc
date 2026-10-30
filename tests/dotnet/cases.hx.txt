@@ -574,6 +574,143 @@ class P {}
 ===
 [compile]
 dotnet: -D dotnet-pathmap must be <from>=<to> pairs separated by commas, like C:/work/=src/ (not foo)
+# A LocalScope row per block that declares a named variable, nested as the blocks are; the body's block is
+# the method's root. A block without one (the for loop's own) is left out, its blocks moved up.
+--- pdb-locals @dump=scopes:P + -debug
+class P {
+	static function main() {
+		var a = f();
+		if (a > 0) {
+			var b = a + 1;
+			trace(b);
+			trace(b);
+		}
+		for (i in 0...a) trace(i * i);
+	}
+	static function f() return 1;
+}
+===
+[run]
+P.hx:6: 2
+P.hx:7: 2
+P.hx:9: 0
+[dump]
+method P::main
+  scope
+    local a
+    scope
+      local b
+    scope
+      local i
+# Only the user's variables have names: not the switch's, the pattern's or the comprehension's temporaries.
+# A captured variable is a field of the closure's class, whose invoke method names only its argument.
+--- pdb-locals-hidden @dump=scopes:P,scopes:P_main_12__Fun + -debug
+import haxe.ds.Option;
+class P {
+	static function main() {
+		var o = f();
+		switch (o) {
+			case Some(v): trace(v);
+			case None: trace("none");
+		}
+		var squares = [for (x in 0...count()) x * x];
+		trace(squares);
+		var c = 1;
+		var g = (k:Int) -> c + k;
+		trace(g(2));
+	}
+	static function f():Option<Int> return Some(2);
+	static function count() return 3;
+}
+===
+[run]
+P.hx:6: 2
+P.hx:10: [0,1,4]
+P.hx:13: 3
+[dump]
+method P::main
+  scope
+    local o
+    local squares
+    local c
+    local g
+    scope
+      local v
+    scope
+      local x
+method P_main_12__Fun::__hx_invoke1_f
+  scope
+    local k
+# A name a block declares again (a variable, an inlined function's variable) starts a scope of its own, to
+# the block's end, as the PDB names a variable once per scope. A catch's variable has the handler as its
+# scope.
+--- pdb-locals-shadow-catch @dump=scopes:P + -debug
+class P {
+	static function main() {
+		var a = twice(f());
+		var a = twice(a);
+		trace(a);
+		try {
+			throw new cs.system.Exception("x");
+		} catch (e:cs.system.Exception) {
+			trace(e.Message);
+			trace(e.Message);
+		}
+	}
+	static inline function twice(n:Int) {
+		var t = n * 2;
+		trace(t);
+		return t;
+	}
+	static function f() return 1;
+}
+===
+[run]
+P.hx:15: 2
+P.hx:15: 4
+P.hx:5: 4
+P.hx:9: x
+P.hx:10: x
+[dump]
+method P::main
+  scope
+    local t
+    local a
+    scope
+      local t
+      local a
+      scope
+        local e
+method P::twice
+  scope
+    local t
+# A function converted to a .NET delegate: its body is the Delegate method's, with its points and names;
+# the invoke method that calls it is hxc's, with none.
+--- pdb-delegate @dump=pdb:P_main_4__Fun,scopes:P_main_4__Fun + -debug
+import cs.system.Action_1;
+class P {
+	static function main() {
+		var d:Action_1<String> = (s) -> {
+			var t = s + "!";
+			Sys.println(t);
+			Sys.println(t);
+		};
+		d.Invoke("a");
+	}
+}
+===
+[run]
+a!
+a!
+[dump]
+method P_main_4__Fun::Delegate
+  P.hx 5:4-5:20
+  P.hx 6:4-6:18
+  P.hx 7:4-7:18
+  hidden
+method P_main_4__Fun::Delegate
+  scope
+    local t
 --- runtimeconfig-defaults-to-net10 @runtimeconfig
 class P {
 	static function main() {}

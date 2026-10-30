@@ -3,7 +3,7 @@
 //   dump <dll> <items>    prints the metadata named by a comma-separated item list (a type name,
 //                         attrs:<type> for its attribute rows, debugdir for the debug directory and
 //                         the PDB it names, docs or doc:<name> for the PDB's documents, pdb:<type> for
-//                         the sequence points of a type's methods)
+//                         the sequence points of a type's methods, scopes:<type> for their local scopes)
 //   stress-fieldlookup <dll>  calls the assembly's haxe.lang.FieldLookup from many threads at once
 //   stress-arrayforward <dll> makes the first cast of one unserialized array from many threads at once
 using System;
@@ -393,6 +393,11 @@ static class Program {
 					if (p != null && !DumpSequencePoints(md, p, a.Substring(4))) Console.WriteLine("missing " + a);
 					break;
 				}
+				case var a when a.StartsWith("scopes:"): {
+					var p = Pdb();
+					if (p != null && !DumpScopes(md, p, a.Substring(7))) Console.WriteLine("missing " + a);
+					break;
+				}
 				case var a when a.StartsWith("attrs:"):
 					if (!DumpAttributes(md, types, a.Substring(6))) Console.WriteLine("missing " + a);
 					break;
@@ -420,7 +425,7 @@ static class Program {
 
 	// What every dump of a PDB checks, printing `bad pdb: <what>` for each failure: a MethodDebugInformation
 	// row per MethodDef row, and in each method sequence point offsets strictly increasing and inside its
-	// IL, and every document index a Document row.
+	// IL, and every document index a Document row; then the LocalScope rows (CheckScopes).
 	static void CheckPdb(PEReader pe, MetadataReader md, MetadataReader pdb) {
 		if (pdb.GetTableRowCount(TableIndex.MethodDebugInformation) != md.GetTableRowCount(TableIndex.MethodDef)) {
 			Console.WriteLine("bad pdb: MethodDebugInformation rows are not MethodDef's");
@@ -444,6 +449,50 @@ static class Program {
 				}
 			} catch (BadImageFormatException e) {
 				Console.WriteLine("bad pdb: " + name + ": " + e.Message);
+			}
+		}
+		CheckScopes(pe, md, pdb);
+	}
+
+	// The LocalScope rows sorted by method, then start ascending, then length descending; each method's
+	// first scope its whole IL, the others nested in it and in each other, none empty, and no name twice
+	// in one scope.
+	static void CheckScopes(PEReader pe, MetadataReader md, MetadataReader pdb) {
+		var methods = md.GetTableRowCount(TableIndex.MethodDef);
+		int lastMethod = 0, lastStart = 0, lastLength = 0, size = 0;
+		var ends = new Stack<int>();
+		var name = "";
+		for (var row = 1; row <= pdb.GetTableRowCount(TableIndex.LocalScope); row++) {
+			try {
+				var s = pdb.GetLocalScope(MetadataTokens.LocalScopeHandle(row));
+				var method = MetadataTokens.GetRowNumber(s.Method);
+				if (method < 1 || method > methods) {
+					Console.WriteLine("bad pdb: scope " + row + " names method " + method);
+					continue;
+				}
+				if (method < lastMethod || method == lastMethod && (s.StartOffset < lastStart || s.StartOffset == lastStart && s.Length > lastLength))
+					Console.WriteLine("bad pdb: scope " + row + " is out of order");
+				if (method != lastMethod) {
+					var m = md.GetMethodDefinition(MetadataTokens.MethodDefinitionHandle(method));
+					name = TypeName(md, m.GetDeclaringType()) + "::" + md.GetString(m.Name);
+					size = m.RelativeVirtualAddress == 0 ? 0 : pe.GetMethodBody(m.RelativeVirtualAddress).GetILBytes()!.Length;
+					ends.Clear();
+					if (s.StartOffset != 0 || s.Length != size) Console.WriteLine("bad pdb: " + name + "'s first scope is not its " + size + " bytes of IL");
+				}
+				var where = name + "'s scope " + s.StartOffset + "+" + s.Length;
+				if (s.Length <= 0) Console.WriteLine("bad pdb: " + where + " is empty");
+				if (s.EndOffset > size) Console.WriteLine("bad pdb: " + where + " is past its " + size + " bytes of IL");
+				while (ends.Count > 0 && ends.Peek() <= s.StartOffset) ends.Pop();
+				if (ends.Count > 0 && s.EndOffset > ends.Peek()) Console.WriteLine("bad pdb: " + where + " overlaps the scope around it");
+				ends.Push(s.EndOffset);
+				var names = new HashSet<string>();
+				foreach (var vh in s.GetLocalVariables())
+					if (!names.Add(pdb.GetString(pdb.GetLocalVariable(vh).Name))) Console.WriteLine("bad pdb: " + where + " names a variable twice");
+				lastMethod = method;
+				lastStart = s.StartOffset;
+				lastLength = s.Length;
+			} catch (Exception e) when (e is BadImageFormatException || e is ArgumentException) {
+				Console.WriteLine("bad pdb: scope " + row + ": " + e.Message);
 			}
 		}
 	}
@@ -500,6 +549,35 @@ static class Program {
 						}
 						var doc = pdb.GetString(pdb.GetDocument(sp.Document).Name);
 						Console.WriteLine("  " + doc + " " + sp.StartLine + ":" + sp.StartColumn + "-" + sp.EndLine + ":" + sp.EndColumn);
+					}
+				} catch (Exception e) when (e is BadImageFormatException || e is ArgumentException) {
+					Console.WriteLine("bad pdb: " + name + ": " + e.Message);
+				}
+			}
+			return true;
+		}
+		return false;
+	}
+
+	// `scopes:<type>`: each method of the type that has LocalScope rows, in MethodDef order, then its scopes
+	// in row order, each indented two spaces more than the scope around it, with a line per named local.
+	static bool DumpScopes(MetadataReader md, MetadataReader pdb, string item) {
+		foreach (var h in md.TypeDefinitions) {
+			if (TypeName(md, h) != item) continue;
+			foreach (var mh in md.GetTypeDefinition(h).GetMethods()) {
+				var name = item + "::" + md.GetString(md.GetMethodDefinition(mh).Name);
+				try {
+					var ends = new Stack<int>();
+					var first = true;
+					foreach (var sh in pdb.GetLocalScopes(mh)) {
+						var s = pdb.GetLocalScope(sh);
+						if (first) Console.WriteLine("method " + name);
+						first = false;
+						while (ends.Count > 0 && ends.Peek() <= s.StartOffset) ends.Pop();
+						var indent = new string(' ', 2 * (ends.Count + 1));
+						Console.WriteLine(indent + "scope");
+						foreach (var vh in s.GetLocalVariables()) Console.WriteLine(indent + "  local " + pdb.GetString(pdb.GetLocalVariable(vh).Name));
+						ends.Push(s.EndOffset);
 					}
 				} catch (Exception e) when (e is BadImageFormatException || e is ArgumentException) {
 					Console.WriteLine("bad pdb: " + name + ": " + e.Message);
