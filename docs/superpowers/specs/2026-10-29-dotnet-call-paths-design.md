@@ -42,7 +42,10 @@ Facts the survey established, which the design relies on:
   `InvalidCastException` (case `companion-array-map-filter`), which stays. A run-time test cannot separate
   it from `Array<Point>` (both are ``Array`1<object>``), so the typer decides: one small rule in
   `typing/Inline.hx`, keyed on a metadata only hxc's runtime `Array` uses, so no other target changes. The
-  same holds for a `map` whose result is `Array<Dynamic>`, as the inlined `ret` would be the companion.
+  same holds for a `map` whose result is `Array<Dynamic>`, as the inlined `ret` would be the companion. Haxe
+  does not bind a monomorph to `Dynamic` on unify, so a callback that returns `Dynamic` (or `null`) leaves
+  the result's type argument an unbound monomorph at the call, which defaults to `Dynamic` only later: that
+  counts as `Dynamic` too.
 - The second row is the largest cost in the program, and gencs has it too: `new Closure(typeof(P),
   "inc", hash)`, then `VarArgsBase.__hx_invoke1_f` → `__hx_invokeDynamic` → `Runtime.callField` →
   `Type.InvokeMember`. A method of a Haxe *instance* as a value takes `__hx_invokeField`'s string-hash
@@ -81,8 +84,8 @@ Calls made by the writer of this document (check these):
 ## Goals
 
 1. `a.map(f)` and `a.filter(f)` on hxc's runtime `Array<T>` are `inline`, as in Haxe 4.3.7's
-   `std/cs/_std/Array.hx`, except on a receiver or a result typed `Array<Dynamic>`, which keep today's
-   call. With a function literal, the call becomes a loop with no closure allocated on the plain path and no
+   `std/cs/_std/Array.hx`, except on a receiver or a result whose type argument is `Dynamic` or still unbound at the call, which
+   keeps today's call. With a function literal, the call becomes a loop with no closure allocated on the plain path and no
    boxing per element.
 2. A method of a Haxe class used as a value (static, or an instance's) is still a `haxe.lang.Closure`,
    now carrying a generated typed invoker that calls the method directly. It behaves exactly as today's
@@ -154,10 +157,9 @@ In `src/hxc/codegen/dotnet/runtime/Array.hx` (`map` at about line 632, `filter` 
   as ILVerify checks. Haxe-private members of `Array` that today are IL-private would fail; the builder
   checks how hxc writes them and picks members accordingly.
 
-A receiver or result whose static type is `Array<Dynamic>` is not inlined: `Inline.tryInline` returns null
-for a method with `@:inlineUnlessDynamic` when either's type argument follows to `Dynamic`, and the call
-stays what it is today. A type argument still unbound at the call inlines; if it later becomes `Dynamic`
-the code is correct, only slower.
+A receiver or result whose type argument is `Dynamic`, or still an unbound monomorph at the call, is not
+inlined: `Inline.tryInline` returns null for a method with `@:inlineUnlessDynamic` when either's type
+argument follows to `TDynamic` or an unbound `TMono`, and the call stays what it is today.
 
 `iterator()`, `keyValueIterator()`, `__unsafe_get` and `__unsafe_set` are also `inline` in Haxe's std
 and not in hxc's. They are left alone: hxc already wins every array benchmark that uses them.

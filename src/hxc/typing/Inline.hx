@@ -51,9 +51,10 @@ class Inline {
 		return TypeFunctions.hasClassFieldFlag(cf, CfExtern) || TypeFunctions.hasMeta(":extern", cf.meta);
 	}
 
-	static function isDynamicArray(t:T):Bool {
+	// An Array<X> whose X is Dynamic or an unbound monomorph (which defaults to Dynamic later on).
+	static function typeArgUnknown(t:T):Bool {
 		return switch (TypeFunctions.follow(t)) {
-			case TInst(_, [p]): TypeFunctions.follow(p).match(TDynamic(_));
+			case TInst(_, [p]): TypeFunctions.follow(p).match(TDynamic(_) | TMono(_));
 			case _: false;
 		}
 	}
@@ -80,10 +81,11 @@ class Inline {
 			case _:
 				return null;
 		}
-		// hxc's runtime Array marks map and filter with this: an Array<Dynamic> as receiver or result is
-		// the non-generic companion, which reaches every member by name, so the call stays.
+		// hxc's runtime Array marks map and filter with this: an Array<Dynamic> as receiver or result, or one
+		// not yet known to be typed, is the non-generic companion, which reaches every member by name, so the
+		// call stays.
 		if (ethis != null && TypeFunctions.hasMeta(":inlineUnlessDynamic", cf.meta)
-			&& (isDynamicArray(ethis.type) || isDynamicArray(tret)))
+			&& (typeArgUnknown(ethis.type) || typeArgUnknown(tret)))
 			return null;
 		switch (cf.kind) {
 			case Method(MethInline):

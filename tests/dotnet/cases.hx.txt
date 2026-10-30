@@ -12530,12 +12530,16 @@ class P {
 		var ai = [1, 2];
 		var view:Array<Dynamic> = ai;
 		Sys.println(view.map(x -> x * 2));
+		Sys.println([1, 2].map(x -> (viaClosure() : Dynamic)));
+		Sys.println([1].map(x -> { if (!viaClosure()) throw "inlined"; null; }));
 	}
 }
 ===
 [run]
 [true,true]
 [2,4]
+[true,true]
+[null]
 --- array-map-dynamic-result @gencs
 // The result is Array<Dynamic>, from the callback, from the expected type, or only after the call is typed.
 class Pt {
