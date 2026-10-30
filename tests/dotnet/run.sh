@@ -10,7 +10,13 @@
 # as one file). Each case compiles twice into a fresh directory, and its .dll must be
 # byte-identical between the two, pass ILVerify, run (unless @lib) and dump as expected. A second
 # compile that exits differently from the first is reported as "second compile failed (exit N)", not as
-# nondeterminism; on a real mismatch both copies are kept in $HXC_TEST_TMP/nondeterministic/<case>/{a,b}. A
+# nondeterminism; on a real mismatch both copies are kept in $HXC_TEST_TMP/nondeterministic/<case>/{a,b}.
+# A case with `-debug` among its extra args also writes a .pdb, and its second compile is made in
+# another folder: every source file the case wrote is copied to <case>/m/ (same relative paths) and
+# hxc runs there with --cwd <case>/m, writing m/b/P, so the .dll and .pdb must be the same wherever the
+# sources are. That .pdb must also hold neither the case directory's path (as `grep -a -i -F` finds it,
+# written with / or \, as an MSYS or a Windows path) nor the user's profile folder, or the case fails with
+# `the PDB holds a machine path: <path>`. A
 # @stress-fieldlookup case's .dll must also pass HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup
 # called from many threads at once), and a @stress-arrayforward case's HxcCheck's stress-arrayforward
 # (its P.toInts making the first cast of one array from many threads at once). A @runtimeconfig case
@@ -161,6 +167,14 @@ paths() {
 			;;
 	esac
 }
+
+# The user's profile folder in each spelling the machine-path scan looks for (no empty entries: grep -F
+# would match everything with one).
+profile_pats=()
+for pf in "${USERPROFILE:-}" "${HOME:-}"; do
+	[ -n "$pf" ] || continue
+	profile_pats+=("$pf" "$(native "$pf")" "$(cygpath -w "$pf" 2>/dev/null)")
+done
 
 # The fixture libraries of @netlib cases: built into $netlibdir by netlib_build, which sets these.
 netlibdir=""
@@ -638,12 +652,19 @@ run_case() {
 
 	local main=(--main "$module")
 	if [ $lib = 1 ]; then main=("$module"); fi
+	# A case with -debug writes a .pdb, and its second compile runs on a copy of the sources in m/.
+	local debug=0 bdir="b/P" bcwd="$casedir_m"
+	case " $extra " in *" -debug "*) debug=1; bdir="m/b/P"; bcwd="$casedir_m/m" ;; esac
+	if [ $debug = 1 ]; then
+		case "$file" in */*) mkdir -p "$casedir/m/${file%/*}" ;; *) mkdir "$casedir/m" ;; esac
+		write_sources "$source" "$casedir/m" "$file"
+	fi
 	# --cs adds -lib hxcs, and haxelib would find the checkout's own .haxelib above the case directory;
 	# --haxelib-global, which only counts after the library, keeps the global hxcs.
 	set -f
 	local cout ccode=0 bcode=0
 	cout="$("$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs a/P --haxelib-global -D dotnet $extra "${netargs[@]}" 2>&1)" || ccode=$?
-	"$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs b/P --haxelib-global -D dotnet $extra "${netargs[@]}" > /dev/null 2>&1 || bcode=$?
+	"$compiler" --cwd "$bcwd" -cp . "${main[@]}" --cs b/P --haxelib-global -D dotnet $extra "${netargs[@]}" > /dev/null 2>&1 || bcode=$?
 	set +f
 
 	local result="" problem="" dll="" dll_m f
@@ -667,16 +688,37 @@ run_case() {
 		else
 			local keep="$tmproot/nondeterministic/$name" kept=0
 			for f in "$casedir"/a/P/*; do
-				if ! cmp -s "$f" "$casedir/b/P/${f##*/}"; then
+				if ! cmp -s "$f" "$casedir/$bdir/${f##*/}"; then
 					if [ $kept = 0 ]; then
 						rm -rf "$keep"
 						mkdir -p "$keep/a" "$keep/b"
 						kept=1
 					fi
 					cp "$f" "$keep/a/" 2> /dev/null
-					cp "$casedir/b/P/${f##*/}" "$keep/b/" 2> /dev/null
+					cp "$casedir/$bdir/${f##*/}" "$keep/b/" 2> /dev/null
 					problem="${problem}not deterministic: ${f##*/} (both copies are kept in $keep/a and $keep/b)"$'\n'
 				fi
+			done
+		fi
+		# A -debug case's .pdb holds no machine path: the case directory in any spelling, or the user's
+		# profile folder. A Document's name is stored as one blob per part, so grep alone cannot find a
+		# path in it; the names HxcCheck's `docs` decodes are searched as well.
+		if [ $debug = 1 ]; then
+			local pat pdb docs
+			local -a pats=()
+			paths "$casedir"
+			for pat in "$casedir" "$path_m" "$path_w" "${profile_pats[@]}"; do
+				[ -n "$pat" ] && pats+=("$pat")
+			done
+			docs="$(exec dotnet "$checkdll" dump "$dll_m" docs 2>&1)"
+			docs="${docs,,}"
+			for pdb in "$casedir"/a/P/*.pdb; do
+				[ -f "$pdb" ] || continue
+				for pat in "${pats[@]}"; do
+					if [[ $docs == *"${pat,,}"* ]] || grep -a -i -q -F -e "$pat" "$pdb"; then
+						problem="${problem}the PDB holds a machine path: $pat"$'\n'
+					fi
+				done
 			done
 		fi
 		# Every fixture library goes beside the program, not only the ones passed. After the
