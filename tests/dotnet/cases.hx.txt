@@ -6653,6 +6653,22 @@ class P {
 		for (i in 0...x) n += s.length;
 		return n;
 	}
+	static function boomNet(x:Int):Int {
+		for (i in 0...x) if (i == 2) throw "bang";
+		return x;
+	}
+	static function natHaxe(x:Int):Int {
+		var s:String = null;
+		var n = 0;
+		for (i in 0...x) n += s.length;
+		return n;
+	}
+	static function natNet(x:Int):Int {
+		var s:String = null;
+		var n = 0;
+		for (i in 0...x) n += s.length;
+		return n;
+	}
 	static function call(f:Int->Int, x:Int):Int return f(x);
 	static function frames(st:haxe.CallStack):Array<String> {
 		var out = [];
@@ -6664,6 +6680,14 @@ class P {
 		for (i in st) walk(i);
 		return out;
 	}
+	static function netFrames(trace:String):Array<String> {
+		var out = [];
+		for (l in trace.split("\n")) {
+			var t = StringTools.trim(l);
+			if (StringTools.startsWith(t, "at P.")) out.push(t.substr(3, t.indexOf("(") - 3));
+		}
+		return out;
+	}
 	static function main() {
 		try call(boom, 5) catch (e:haxe.Exception) {
 			Sys.println(e.message);
@@ -6673,6 +6697,11 @@ class P {
 		try g(null) catch (e:cs.system.NullReferenceException) Sys.println(e.GetType().FullName + ": " + e.Message);
 		var h = natDirect;
 		try h(1) catch (e:cs.system.NullReferenceException) Sys.println(e.GetType().FullName + ": " + e.Message);
+		// The by-name path throws the exception again from the runtime, which resets its trace: the method's own
+		// frame is not in it. Each method is called once: from the second call on by name, reading `stack` throws.
+		try call(boomNet, 5) catch (e:cs.system.Exception) Sys.println("throw, StackTrace " + netFrames(e.StackTrace));
+		try call(natHaxe, 1) catch (e:haxe.Exception) Sys.println("native, stack " + frames(e.stack));
+		try call(natNet, 1) catch (e:cs.system.Exception) Sys.println("native, StackTrace " + netFrames(e.StackTrace));
 	}
 }
 ===
@@ -6681,6 +6710,9 @@ bang
 [P.boom,P.call,P.main,P.Main]
 System.NullReferenceException: Object reference not set to an instance of an object.
 System.NullReferenceException: Object reference not set to an instance of an object.
+throw, StackTrace [P.call,P.main]
+native, stack [P.call,P.main]
+native, StackTrace [P.call,P.main]
 --- method-value-pdb @dump=pdb:P_inc__Invoke + -debug
 // The invoker class is generated code: all its points are hidden.
 class P {

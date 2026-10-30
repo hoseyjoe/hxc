@@ -12,8 +12,8 @@ import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 // `<Class>_<method>__Invoke` in its class's package and module, with one shared instance in its
 // `__hx_current`. Its `__hx_accepts<N>` holds only for arguments that already have the parameters' types,
 // where the by-name path (Runtime.callMethodCasting) converts nothing, so that its `__hx_call<N>_o`/`_f`
-// behaves as that path does; every other call goes by name. No Haxe line wrote this code: under -debug its
-// statements are hidden points.
+// behaves as that path does, and throws what the method throws again as that path does; every other call goes
+// by name. No Haxe line wrote this code: under -debug its statements are hidden points.
 
 @:access(hxc.codegen.dotnet.ClosuresToClass)
 class MethodInvokers {
@@ -229,15 +229,27 @@ class MethodInvokers {
 		return TypeFunctions.followWithoutNull(sig.ret).match(TDynamic(_)) ? runtimeCall("unbox", value, TypeFunctions.tDynamic, at) : value;
 	}
 
+	// `body` in a try that throws what it catches again, as Runtime.callMethodCasting throws an InnerException:
+	// that resets the exception's trace, so a program reads the same frames as by name, without the method's
+	// own. Throwing the catch's own variable would be a `rethrow`, which keeps them, so this throws a copy.
+	function throwingAgain(body:Array<TExpr>, at:Position):TExpr {
+		var basic = g.ctx.basic;
+		var exception = g.runtimeClass("cs.system.Exception");
+		if (exception == null) throw "internal error: the runtime has no cs.system.Exception";
+		var caught = TypeFunctions.allocVar(VGenerated, "e", TInst(exception, []), at);
+		var copy = TypeFunctions.allocVar(VGenerated, "thrown", caught.type, at);
+		var again = [
+			TypeFunctions.mk(TVarExpr(copy, ClosuresToClass.local(caught, at)), basic.tvoid, at),
+			TypeFunctions.mk(TThrow(ClosuresToClass.local(copy, at)), TypeFunctions.tDynamic, at)
+		];
+		var tried = TypeFunctions.mk(TBlock(body), basic.tvoid, at);
+		return TypeFunctions.mk(TTry(tried, [{v: caught, expr: TypeFunctions.mk(TBlock(again), basic.tvoid, at)}]), basic.tvoid, at);
+	}
+
 	function callO(c:TClass, cf:TClassField, sig:TSignature, args:Array<TVar>, at:Position):Array<TExpr> {
 		var el = [];
 		var e = call(c, cf, sig, args, el, at);
-		if (ClosuresToClass.isVoid(sig.ret)) {
-			el.push(e);
-			el.push(ret(TypeFunctions.nullExpr(TypeFunctions.tDynamic, at), at));
-		} else {
-			el.push(ret(boxed(e, sig, at), at));
-		}
+		el.push(throwingAgain(ClosuresToClass.isVoid(sig.ret) ? [e, ret(TypeFunctions.nullExpr(TypeFunctions.tDynamic, at), at)] : [ret(boxed(e, sig, at), at)], at));
 		return el;
 	}
 
@@ -245,14 +257,14 @@ class MethodInvokers {
 		var basic = g.ctx.basic;
 		var el = [];
 		var e = call(c, cf, sig, args, el, at);
-		if (ClosuresToClass.isVoid(sig.ret)) {
-			el.push(e);
-			el.push(ret(TypeFunctions.mk(TConst(TFloat("0.0")), basic.tfloat, at), at));
+		var body = if (ClosuresToClass.isVoid(sig.ret)) {
+			[e, ret(TypeFunctions.mk(TConst(TFloat("0.0")), basic.tfloat, at), at)];
 		} else if (TypeFunctions.followWithoutNull(sig.ret).match(TAbstract({path: {name: "Int" | "Float"}}, _))) {
-			el.push(ret(TypeFunctions.mkCast(e, basic.tfloat, at), at));
+			[ret(TypeFunctions.mkCast(e, basic.tfloat, at), at)];
 		} else {
-			el.push(ret(runtimeCall("toDouble", boxed(e, sig, at), basic.tfloat, at), at));
+			[ret(runtimeCall("toDouble", boxed(e, sig, at), basic.tfloat, at), at)];
 		}
+		el.push(throwingAgain(body, at));
 		return el;
 	}
 }

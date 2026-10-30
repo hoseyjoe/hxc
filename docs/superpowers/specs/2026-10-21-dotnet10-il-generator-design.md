@@ -1156,10 +1156,16 @@ to compare, so the test is not `@gencs` and the entry quotes the C# compiler's e
   program has a reason to ask for, finds the method, as `Reflect.field(f, "__hx_invoke1_o")` already does in gencs.
 - The frames of a method value that went direct hold the invoker's and `Closure`'s frames instead of the reflection
   and runtime ones (`callField`, `__hx_invokeDynamic`, `callMethodCasting`, ...), in `haxe.CallStack`,
-  `Exception.details()` and `Exception.StackTrace` text. The exception's type and message, and the program's own Haxe
-  frames and their order, stay the same (`method-value-throws`). `haxe.CallStack.callStack()` in a method called by
-  name throws `NullReferenceException` from the method's second call on, when .NET's reflection frames have no
-  declaring type; gencs's by-name calls and hxc's do, and a call that goes direct does not.
+  `Exception.details()` and `Exception.StackTrace` text. The invoker catches what the method throws and throws it again
+  with IL `throw`, as `Runtime.callMethodCasting` does with the `InnerException`, so the exception's trace starts at
+  the same place for the program: the method's own frame is in neither path's `Exception.StackTrace`, nor in the
+  `Exception.stack` of a native exception. The `Exception.stack` of a Haxe `throw`, taken when the exception is made,
+  has it on both. The exception's type and message, and the program's own Haxe frames and their order, stay the same
+  (`method-value-throws`).
+- From the second call on of a method called by name, .NET's reflection frames have no declaring type, and reading them
+  throws `NullReferenceException`: in `haxe.CallStack.callStack()` in the method, and in `e.stack` and `e.details()`
+  in a catch of an exception the method made with a Haxe `throw`. gencs's by-name calls and hxc's do, and a call that
+  goes direct does not. A native exception's `e.stack` and `e.details()` do not, as its reset trace has no such frame.
 - A resource name with a non-ASCII character or a `\` is found by `haxe.Resource` in hxc
   (`resource-non-ascii-name`, `resource-backslash-name`). gencs escapes the name's UTF-8 bytes into the file
   name (`é` is `-x195-x169`) and turns `\` into `-x92`, where `haxe.Resource` escapes the UTF-16 code units at
