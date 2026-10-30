@@ -25170,6 +25170,57 @@ HasNullAnon HasNullAnon HasNullAnon
 HasInlineAnon HasInlineAnon HasInlineAnon
 HasClassStatics haxe.lang.HxObject haxe.lang.HxObject
 HasEnumStatics haxe.lang.HxObject haxe.lang.HxObject
+# Runtime's field calls on a receiver typed as a Haxe class go through its HxObject overloads, as C# picks them in
+# gencs's output (a null receiver included); an interface, an anonymous structure, a Dynamic and a @:nativeGen class
+# keep the Dynamic overloads.
+--- reflect-hxobject-receiver @gencs
+interface I {}
+class Pt implements I {
+	public var x:Float = 1.5;
+	public var n:Int = 2;
+	public var s:String = "s";
+	public function new() {}
+	public function m(a:Int):Int return a + 1;
+}
+class Sub extends Pt {}
+class G<T> {
+	public var v:T;
+	public function new(v) this.v = v;
+}
+@:nativeGen class N {
+	public var y:Int = 4;
+	public function new() {}
+}
+class P {
+	static function run(name:String, f:Void->Dynamic) {
+		try Sys.println(name + ": " + Std.string(f())) catch (e:Dynamic) Sys.println(name + ": EXC " + Type.getClassName(Type.getClass(e)));
+	}
+	static function main() {
+		var p = new Pt(), sub = new Sub(), g = new G(5), n = new N();
+		var i:I = p;
+		var nothing:Pt = null;
+		var a = {q: 9};
+		run("float", () -> Reflect.field(p, "x"));
+		run("int", () -> Reflect.field(p, "n"));
+		run("string", () -> Reflect.field(p, "s"));
+		run("sum", () -> { var t = 0.0; t += Reflect.field(p, "x"); t; });
+		run("set", () -> { Reflect.setField(p, "x", 2.5); p.x; });
+		run("set int", () -> { Reflect.setField(p, "n", 7); p.n; });
+		run("missing", () -> Reflect.field(p, "nope"));
+		run("sub", () -> Reflect.field(sub, "n"));
+		run("generic", () -> Reflect.field(g, "v"));
+		run("nativegen", () -> Reflect.field(n, "y"));
+		run("interface", () -> Reflect.field(i, "n"));
+		run("anon", () -> Reflect.field(a, "q"));
+		run("null", () -> Reflect.field(nothing, "n"));
+		run("null float", () -> { var t:Float = Reflect.field(nothing, "x"); t; });
+		run("null set", () -> { Reflect.setField(nothing, "n", 1); 0; });
+		run("call", () -> Reflect.callMethod(p, Reflect.field(p, "m"), [1]));
+		var dn:Dynamic = nothing;
+		run("dyn null", () -> dn.x);
+	}
+}
+===
 # Overriding what a subclass's interface maps to: Haxe refuses an override of an inline or final method, so the base's
 # method, now `virtual final newslot` for an interface of a subclass, is never overridden (a CLR override of a sealed
 # slot would fail to load). A method with the same name and no `override` is refused too.

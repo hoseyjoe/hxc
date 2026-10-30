@@ -320,6 +320,33 @@ class TexprDynamic {
 		nameAndHash(name, obj.pos);
 	}
 
+	// Pushes the receiver of a Runtime field call and returns the type of the Runtime overload's first
+	// parameter, as C# picks it for the receiver gencs types: the HxObject overload for a value of a Haxe
+	// class (an interface, a struct, a type parameter, a class that extends a .NET class and a
+	// companion-typed value keep the Dynamic one).
+	function fieldReceiver(obj:TExpr):IlSigNorm {
+		var hx = g.runtimeClass("cs.internal.HxObject");
+		var first = LObject;
+		if (hx != null && extendsHxObject(strip(obj).type) && !g.types.isCompanionTyped(obj.type)) {
+			first = tl.sig(TInst(hx, []));
+		}
+		tl.texpr(RValue(first), obj);
+		return first;
+	}
+
+	// Whether a value typed `t` is of a class that derives from haxe.lang.HxObject.
+	function extendsHxObject(t:T):Bool {
+		return switch (TypeFunctions.follow(t)) {
+			case TInst(c, _) if (!c.kind.match(KTypeParameter(_) | KAbstractImpl(_)) && !TypeFunctions.hasClassFlag(c, CInterface)
+				&& !TypeFunctions.hasMeta(":struct", c.meta) && HxGen.isHxGen(TClassDecl(c))):
+				// The root of its superclasses, which a native class would make the base instead.
+				var root = c;
+				while (root.superClass != null) root = root.superClass.c;
+				!TypeFunctions.hasClassFlag(root, CExtern);
+			case _: false;
+		}
+	}
+
 	// Pushes the name and its hash, used at `pos`, after the receiver.
 	function nameAndHash(name:String, pos:Position):Void {
 		code.opToken(IlOps.LDSTR, g.mb.userString(name), 0, 1);
@@ -330,10 +357,11 @@ class TexprDynamic {
 	// is typed like a Float (`resultType`), then converted to it; `e` is the expression whose value this is.
 	function fieldGet(ret:Ret, e:TExpr, obj:TExpr, name:String, resultType:T, throwErrors:Bool):Void {
 		var isFloat = likeFloatReal(resultType);
-		fieldHead(obj, name);
+		var first = fieldReceiver(obj);
+		nameAndHash(name, obj.pos);
 		code.ldcI4(throwErrors ? 1 : 0);
 		if (isFloat) {
-			runtimeCall("getField_f", LObject);
+			runtimeCall("getField_f", first);
 			// gencs casts the Float to the access's type, then the value goes where the expression goes.
 			var rs = tl.sig(resultType);
 			if (!needVal(ret)) {
@@ -341,9 +369,11 @@ class TexprDynamic {
 				return;
 			}
 			tl.convert(LFloat64, rs);
+			// A Float that a Float is wanted for stays a float64, with no box and Runtime.toDouble between.
+			if (rs.match(LFloat64) && ret.match(RValue(LFloat64))) return;
 			finish(rs, own(e), ret);
 		} else {
-			runtimeCall("getField", LObject);
+			runtimeCall("getField", first);
 			switch (ret) {
 				case RValue(want) if (want != null && isNullType(resultType) && !tl.isHaxeNull(want) && !want.match(LString) && tl.keepNull.indexOf(e) < 0):
 					// A Null<T> read meets a cast to another type, which HardNullableSynf applies to the object
@@ -359,10 +389,11 @@ class TexprDynamic {
 	// assignment is typed like a Float (`fieldType`); its value is what the call returns.
 	function fieldSet(ret:Ret, e:TExpr, obj:TExpr, name:String, value:TExpr, fieldType:T):Void {
 		var isFloat = likeFloatReal(fieldType);
-		fieldHead(obj, name);
+		var first = fieldReceiver(obj);
+		nameAndHash(name, obj.pos);
 		tl.texpr(RValue(isFloat ? LFloat64 : LObject), value);
 		if (isFloat) {
-			runtimeCall("setField_f", LObject);
+			runtimeCall("setField_f", first);
 			if (!needVal(ret)) {
 				tl.coerce(LFloat64, ret);
 				return;
@@ -371,7 +402,7 @@ class TexprDynamic {
 			tl.convert(LFloat64, rs);
 			finish(rs, own(e), ret);
 		} else {
-			runtimeCall("setField", LObject);
+			runtimeCall("setField", first);
 			finish(LObject, own(e), ret);
 		}
 	}
@@ -379,9 +410,10 @@ class TexprDynamic {
 	// `obj.name(args)` through Runtime.callField(obj, "name", hash, new object[]{args}), null for no
 	// arguments; the result is converted to the call's type.
 	function fieldCall(ret:Ret, e:TExpr, obj:TExpr, name:String, args:Array<TExpr>):Void {
-		fieldHead(obj, name);
+		var first = fieldReceiver(obj);
+		nameAndHash(name, obj.pos);
 		pushObjects(args);
-		runtimeCall("callField", LObject);
+		runtimeCall("callField", first);
 		finish(LObject, own(e), ret);
 	}
 
