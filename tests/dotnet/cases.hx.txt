@@ -966,6 +966,31 @@ type public beforefieldinit EntryPoint__Main extends [mscorlib]System.Object
   method public hidebysig specialname rtspecialname void .ctor()
   method public static hidebysig void Main()
 entrypoint EntryPoint__Main::Main
+# The CLR reads the apartment from the method it starts, so `main`'s STAThread goes on Main as well, and
+# only that attribute does. gencs leaves its Main bare, a deliberate divergence, so these are not @gencs.
+--- entry-point-keeps-apartment-attribute @dump=attrs:P,entrypoint
+class P {
+	@:meta(System.STAThread())
+	@:meta(System.ComponentModel.Description("stays on main"))
+	static function main() {}
+}
+===
+[dump]
+attrs P
+  method void Main() :: [mscorlib]System.STAThreadAttribute()
+  method void main() :: [mscorlib]System.STAThreadAttribute()
+  method void main() :: [System]System.ComponentModel.DescriptionAttribute(string "stays on main")
+entrypoint P::Main
+--- entry-point-class-keeps-apartment-attribute @module=Main @dump=attrs:EntryPoint__Main,entrypoint
+class Main {
+	@:meta(System.STAThread())
+	static function main() {}
+}
+===
+[dump]
+attrs EntryPoint__Main
+  method void Main() :: [mscorlib]System.STAThreadAttribute()
+entrypoint EntryPoint__Main::Main
 --- ctor-calls-base-without-super
 @:keep class B {}
 @:keep class C extends B {

@@ -7,6 +7,7 @@ import hxc.core.Globals;
 import hxc.core.Type.FlagTClass;
 import hxc.core.Type.ModuleType;
 import hxc.core.Type.TClass;
+import hxc.core.Type.TClassField;
 import hxc.core.Type.TEnum;
 import hxc.core.TypeFunctions;
 import hxc.codegen.dotnet.DotnetTypes;
@@ -147,6 +148,8 @@ class AttributesToIl {
 		"System.Runtime.InteropServices.OutAttribute", "System.Runtime.InteropServices.OptionalAttribute",
 		"System.Runtime.CompilerServices.SpecialNameAttribute"
 	];
+	// What the CLR reads from the method it starts.
+	static final apartmentNames = ["System.STAThreadAttribute", "System.MTAThreadAttribute"];
 	// C#'s names of AttributeTargets' bits, in bit order, as CS0592 lists them.
 	static final targetNames = [
 		"assembly", "module", "class", "struct", "enum", "constructor", "method", "property, indexer", "field", "event", "interface",
@@ -183,6 +186,21 @@ class AttributesToIl {
 	// The rows of `meta`'s @:meta entries on `owner`, a TypeDef, Field, MethodDef, Param or Property token.
 	public static function forMember(g:DotnetCtx, owner:Int, meta:Metadata, target:AttrTarget, pos:Position, ?site:AttrSite):Void {
 		of(g).member(owner, meta, target, pos, site == null ? {name: "", ns: []} : site);
+	}
+
+	// The entry point's rows: the apartment attributes of the Haxe `main`, as well as main's own. The CLR reads the
+	// apartment from the method it starts, which is not `main` but the Main the backend writes to call it, so
+	// without this the attribute does nothing. gencs leaves its Main bare (a deliberate divergence). An entry
+	// that cannot be read says so on `main`, which has just been through member, and is skipped here.
+	public static function forEntryPoint(g:DotnetCtx, owner:Int, main:TClassField, site:AttrSite):Void {
+		var a = of(g);
+		var seen = new Map<String, Bool>();
+		for (m in main.meta) {
+			if (m.name != ":meta") continue;
+			try {
+				if (apartmentNames.indexOf(a.parse(m, site).cls.name) >= 0) a.entry(owner, m, TMethod, site, seen);
+			} catch (e:AttrError) {} catch (u:Unsupported) {}
+		}
 	}
 
 	// A row for one of the backend's own attributes; a `first` one comes before its parent's other rows.

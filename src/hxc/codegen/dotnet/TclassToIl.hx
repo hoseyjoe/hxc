@@ -1958,6 +1958,9 @@ class TclassToIl {
 				if (g.diagnostics == before) clean.set(cf, true);
 			case MOptionalOverload(_, _):
 				overloads.push(m);
+			// (The attribute is read from here, so `main`'s apartment attribute goes on this too.)
+			case MEntryPoint:
+				AttributesToIl.forEntryPoint(g, m.token, g.mainClass.statics.get("main"), site("Main"));
 			// An hxgen class's constructor's parameters keep their typedefs' attributes on the real
 			// constructor and on the static __hx_ctor_* (after its __hx_this), as gencs's argt_s writes both.
 			case MSplitCtor(hc) | MStaticCtor(hc):
