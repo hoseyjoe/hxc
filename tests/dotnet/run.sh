@@ -223,6 +223,8 @@ netlib_build() {
 	netlib_hash="${netlib_hash%% *}"
 	netlibdir="$tmproot/netlib-$netlib_hash"
 	netlibdir_m="$tmproot_m/netlib-$netlib_hash"
+	# For a case's macro that adds a fixture itself (netlib-added-by-macro).
+	export HXC_NETLIB_DIR="$netlibdir_m"
 	# Directories of fixtures no run has used for 30 days go, by their exact names, never the current one.
 	find "$tmproot" -maxdepth 1 -regex '.*/netlib-[0-9a-f]\{40\}' ! -name "netlib-$netlib_hash" -mtime +30 -exec rm -rf {} + 2> /dev/null
 	if [ -f "$netlibdir/.hash" ]; then

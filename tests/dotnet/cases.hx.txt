@@ -19267,6 +19267,340 @@ P.hx:7: characters 3-15 : dotnet: by-reference arguments that are not variables 
 P.hx:9: characters 3-17 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
 P.hx:11: characters 3-29 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
 P.hx:12: characters 3-14 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+# A property override in a class extending a hand-written extern: gencs writes `protected override string Key` and
+# `protected virtual string _get_Key()`, so the base's ReadKey reaches the subclass.
+--- netlib-extern-property-override @gencs @netlib=M4Lib
+@:native("M4.PropBase") extern class B0 {
+	function new();
+	@:protected private var Key(get, never):String;
+	private function get_Key():String;
+	function ReadKey():String;
+}
+@:native("M4.PropAbstract") extern class A0 {
+	function new();
+	@:protected private var Key(get, never):String;
+	private function get_Key():String;
+	function ReadKey():String;
+}
+@:nativeGen class B1 extends B0 {
+	public function new() super();
+	@:protected @:property override function get_Key():String return "sub";
+}
+@:nativeGen class A1 extends A0 {
+	public function new() super();
+	@:protected @:property override function get_Key():String return "sub";
+}
+class P {
+	static function main() {
+		Sys.println(new B1().ReadKey());
+		Sys.println(new A1().ReadKey());
+		declared(new B1());
+		declared(new A1());
+	}
+	// DeclaredOnly | Instance | NonPublic: the subclass has a property of its own, as the styling system's reflection sees.
+	static function declared(x:Dynamic) {
+		var flags:cs.system.reflection.BindingFlags = cast 38;
+		var p = cs.Lib.getNativeType(x).GetProperty("Key", flags);
+		Sys.println(p == null ? "no property" : p.Name + " " + p.GetValue(x, null));
+	}
+}
+===
+[run]
+sub
+sub
+Key sub
+Key sub
+# The property of a .NET base that is not virtual cannot be overridden (gencs: C# error CS0506).
+--- netlib-extern-property-override-non-virtual-refused @netlib=M4Lib
+@:native("M4.PropPlain") extern class B0 {
+	function new();
+	@:protected private var Key(get, never):String;
+	private function get_Key():String;
+}
+@:nativeGen class B1 extends B0 {
+	public function new() super();
+	@:protected @:property override function get_Key():String return "sub";
+}
+class P {
+	static function main() {
+		Sys.println(new B1() != null);
+	}
+}
+===
+[compile]
+P.hx:6: lines 6-9 : dotnet: overriding a non-virtual .NET method is not supported yet
+P.hx:12: characters 15-31 : dotnet: B1 (left out: overriding a non-virtual .NET method) is not supported yet
+# A class implements a property of a hand-written .NET interface with an @:property var, as gencs's gen_prop writes it.
+--- netlib-extern-interface-property @gencs @netlib=M4Lib
+@:native("M4.Box") @:struct extern class HBox {
+	function new(w:Int);
+	var W:Int;
+}
+@:native("M4.IHasBounds") extern interface HHasBounds extends cs.system.IDisposable extends cs.system.IEquatable_1<HHasBounds> {
+	@:property var Bounds(get, never):HBox;
+}
+@:native("M4.BoundsReader") extern class HReader {
+	static function Read(b:HHasBounds):Int;
+}
+@:nativeGen class C implements HHasBounds {
+	public function new() {}
+	@:property public var Bounds(get, never):HBox;
+	function get_Bounds():HBox return new HBox(33);
+	public function Dispose():Void {}
+	public function Equals(o:HHasBounds):Bool return false;
+}
+class P {
+	static function main() {
+		Sys.println(HReader.Read(new C()));
+	}
+}
+===
+[run]
+33
+# Without @:property the var is no member of the CLR class: the interface's refusal stands.
+--- netlib-extern-interface-property-needs-property-refused @netlib=M4Lib
+@:native("M4.Box") @:struct extern class HBox {
+	function new(w:Int);
+	var W:Int;
+}
+@:native("M4.IHasBounds") extern interface HHasBounds extends cs.system.IDisposable extends cs.system.IEquatable_1<HHasBounds> {
+	@:property var Bounds(get, never):HBox;
+}
+@:nativeGen class C implements HHasBounds {
+	public function new() {}
+	public var Bounds(get, never):HBox;
+	function get_Bounds():HBox return new HBox(33);
+	public function Dispose():Void {}
+	public function Equals(o:HHasBounds):Bool return false;
+}
+class P {
+	static function main() {
+		Sys.println(new C() != null);
+	}
+}
+===
+[compile]
+P.hx:8: lines 8-14 : dotnet: a class cannot implement the property Bounds of the hand-written .NET interface extern HHasBounds
+P.hx:17: characters 15-30 : dotnet: C (left out: a class cannot implement the property Bounds of the hand-written .NET interface extern HHasBounds) is not supported yet
+# A generic .NET method taking a delegate, beside one of its name with no arguments, as Avalonia's AppBuilder.Configure<TApp>
+# has: T is inferred from the delegate's type argument, which meets T's constraint.
+--- netlib-extern-generic-delegate-arg @gencs @netlib=M4Lib + -D net-ver=45
+@:native("M4.GenBase") extern class HBase {
+	function new();
+}
+class Thing extends HBase {
+	public function new() super();
+	@:keep public function toString():String return "thing";
+}
+@:native("M4.GenMake") extern class HGen {
+	@:overload static function Make(f:cs.system.Func_1<Thing>):String;
+}
+class P {
+	static function main() {
+		var fn:cs.system.Func_1<Thing> = function() return new Thing();
+		Sys.println(HGen.Make(fn));
+	}
+}
+===
+[run]
+thing
+# A delegate's type argument that doesn't meet the constraint: C# error CS0311.
+--- netlib-extern-generic-delegate-arg-constraint-refused @netlib=M4Lib + -D net-ver=45
+class Other {
+	public function new() {}
+}
+@:native("M4.GenMake") extern class HGen {
+	@:overload static function Make(f:cs.system.Func_1<Other>):String;
+}
+class P {
+	static function main() {
+		var fn:cs.system.Func_1<Other> = function() return new Other();
+		Sys.println(HGen.Make(fn));
+	}
+}
+===
+[compile]
+P.hx:10: characters 15-28 : dotnet: no .NET overload of M4.GenMake.Make takes (System.Func<Other>)
+# The same library named twice, by an init macro and again by the command line, is one library.
+--- netlib-added-by-macro-and-tag @netlib=M4Lib + --macro P.add()
+#if macro
+class P {
+	static function add() {
+		haxe.macro.Compiler.addNativeLib(Sys.getEnv("HXC_NETLIB_DIR") + "/M4Lib.dll");
+	}
+}
+#else
+@:native("M4.Lists") extern class HLists {
+	static function Split(s:String):cs.NativeArray<String>;
+}
+class P {
+	static function main() {
+		var parts = HLists.Split("a,b,c");
+		Sys.println(parts.Length);
+		Sys.println(m4.Lists.Join(parts));
+	}
+}
+#end
+===
+[run]
+3
+a|b|c
+# An init macro adds a .NET library, seen at typing (m4.Lists) and by binding (the extern). Not @gencs: the csproj gencs's
+# output is built with references only the libraries the tag names. @netlib=ValLib is there to build the fixtures.
+--- netlib-added-by-macro @netlib=ValLib + --macro P.add()
+#if macro
+class P {
+	static function add() {
+		haxe.macro.Compiler.addNativeLib(Sys.getEnv("HXC_NETLIB_DIR") + "/M4Lib.dll");
+	}
+}
+#else
+@:native("M4.Lists") extern class HLists {
+	static function Split(s:String):cs.NativeArray<String>;
+}
+class P {
+	static function main() {
+		var parts = HLists.Split("a,b,c");
+		Sys.println(parts.Length);
+		Sys.println(m4.Lists.Join(parts));
+	}
+}
+#end
+===
+[run]
+3
+a|b|c
+# Two Any values compare as gencs writes it, Runtime.eq: equal strings of different references are equal, as are an Int and a
+# Float (utest's Assert.same compares its Any arguments this way).
+--- any-equality @gencs
+class Ref { public function new() {} }
+class P {
+	static function eq(a:Any, b:Any) return a == b;
+	static function main() {
+		var n = 0;
+		var built = "target#" + n;
+		Sys.println(eq("target#0", built));
+		var a:Any = "target#0";
+		var b:Any = built;
+		Sys.println(a == b);
+		Sys.println(a != b);
+		Sys.println(eq(1, 1.0));
+		var r = new Ref();
+		Sys.println(eq(r, r));
+		Sys.println(eq(r, new Ref()));
+		Sys.println(eq(null, built));
+		Sys.println(eq(built, "other"));
+	}
+}
+===
+[run]
+True
+True
+False
+True
+True
+False
+False
+False
+# super.m() of an override runs the nearest override, as C#'s base.M(): the method that first declared the slot may be
+# abstract, and calling that one is a BadImageFormatException.
+--- netlib-extern-super-call-reaches-the-nearest-override @gencs @netlib=M4Lib
+@:native("M4.SuperAbstract") extern class A0 {
+	function Name():String;
+	function Say():String;
+}
+@:native("M4.SuperMid") extern class M0 extends A0 {
+	function new();
+}
+@:nativeGen class S extends M0 {
+	public function new() super();
+	override public function Name():String return "sub " + super.Name();
+	override public function Say():String return "sub " + super.Say();
+}
+class P {
+	static function main() {
+		var s = new S();
+		Sys.println(s.Name());
+		Sys.println(s.Say());
+	}
+}
+===
+[run]
+sub mid
+sub base
+# An abstract method has no body for super.m() to run (C#: error CS0205).
+--- netlib-extern-super-call-of-abstract-refused @netlib=M4Lib
+@:native("M4.SuperConcrete") extern class A0 {
+	function new();
+	function Name():String;
+}
+@:nativeGen class S extends A0 {
+	public function new() super();
+	override public function Name():String return super.Name();
+}
+class P {
+	static function main() {
+		Sys.println(new S().Name());
+	}
+}
+===
+[compile]
+P.hx:7: characters 48-60 : dotnet: super.Name calls the abstract .NET method M4.SuperConcrete.Name
+# `new S()` on a struct with no such constructor is its zeroed value, as in C#; one it declares runs.
+--- netlib-extern-struct-default-ctor @gencs @netlib=M4Lib
+@:native("M4.Box") @:struct extern class B {
+	function new();
+	var W:Int;
+}
+@:native("M4.BoxSeven") @:struct extern class S {
+	function new();
+	var W:Int;
+}
+class P {
+	static function main() {
+		var b = new B();
+		Sys.println(b.W);
+		b.W = 3;
+		Sys.println(b.W);
+		Sys.println(new B().W);
+		Sys.println(new S().W);
+	}
+}
+===
+[run]
+0
+3
+0
+7
+# A class has no such zeroed value: the constructor is still looked for.
+--- netlib-extern-class-default-ctor-refused @netlib=M4Lib
+@:native("M4.NoDefault") extern class N {
+	function new();
+}
+class P {
+	static function main() {
+		new N();
+	}
+}
+===
+[compile]
+P.hx:6: characters 3-10 : dotnet: no .NET constructor of M4.NoDefault takes ()
+# `-` on a Single stays a Single.
+--- single-negate @gencs
+class P {
+	static function main() {
+		var s:Single = 1.5;
+		var n = -s;
+		var d:Float = n;
+		Sys.println(d);
+		Sys.println(takes(-s));
+	}
+	static function takes(s:Single):Float return s;
+}
+===
+[run]
+-1.5
+-1.5
 # M4Lib (@netlib=M4Lib): NativeArray across native calls, then the InterfaceImpl sets of Haxe classes implementing .NET interfaces.
 --- netlib-native-arrays @gencs @netlib=M4Lib
 import m4.*;
@@ -20475,8 +20809,8 @@ class P {
 ===
 [compile]
 P.hx:7: characters 9-30 : dotnet: more than one .NET overload of ValLib.Gen.Foo accepts (int)
-# The only candidate is a constrained generic method, which may apply (ruling E): the call is refused.
---- netlib-extern-single-unknown-candidate-refused @netlib
+# The only candidate is a constrained generic method whose inferred type argument meets the constraint: it binds, as in C#.
+--- netlib-extern-single-constrained-candidate @gencs @netlib
 @:native("ValLib.HxArg") extern class HxArg {
 	static function Only(x:Int):String;
 }
@@ -20486,8 +20820,21 @@ class P {
 	}
 }
 ===
+[run]
+P.hx:6: Only(1)
+# A `class` constraint isn't modelled, so the only candidate may apply (ruling E): the call is refused.
+--- netlib-extern-single-unknown-candidate-refused @netlib=M4Lib
+@:native("M4.GenMake") extern class HGen {
+	static function Cls(x:String):String;
+}
+class P {
+	static function main() {
+		trace(HGen.Cls("x"));
+	}
+}
+===
 [compile]
-P.hx:6: characters 9-22 : dotnet: hxc cannot tell whether the .NET method ValLib.HxArg.Only accepts (int)
+P.hx:6: characters 9-22 : dotnet: hxc cannot tell whether the .NET method M4.GenMake.Cls accepts (string)
 # Ruling K: a Haxe class or interface argument keeps its own type, so a generic method's type argument is that type, as
 # C# infers it (ruling F′: the declared Any binds T1<object>, the same method, and the arguments' own types give its type
 # arguments): a plain class, a Haxe interface, a subclass of a .NET class, a generic Haxe class (a TypeSpec of hxc's own

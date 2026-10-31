@@ -300,6 +300,16 @@ class ExternMembers {
 	// A converted (`:csNative`) extern stands for the metadata as it is; any other is written by hand.
 	static function isHandWritten(c:TClass):Bool return !TypeFunctions.hasMeta(":csNative", c.meta);
 
+	// The .NET struct `c` stands for, when `new c()` is its zeroed value as C# makes it: the struct declares
+	// no constructor without arguments. Null for anything else, which binds a constructor as usual.
+	public function structDefault(c:TClass, classArgs:Array<IlSigNorm>):Null<IlSigNorm> {
+		var link = chain(c)[0];
+		if (!DotnetTypes.isValueType(link.parent)) return null;
+		for (m in link.cls.cmethods)
+			if (m.mname == ".ctor" && m.margs.length == 0) return null;
+		return subst(link.parent, classArgs);
+	}
+
 	// The method of `c`'s .NET class that the extern method `cf` stands for.
 	// - A converted extern's member, or with `exactOnly` (an implementation or override, which takes the
 	//   member's own signature), binds the method with exactly the declared signature, the first along
@@ -958,6 +968,11 @@ class ExternMembers {
 				if (!Lambda.exists([for (i in 0...want.length) i], i -> !kind(i).match(KNull) && paramOf(i) != null && mentionsMethodParam(paramOf(i), j)))
 					return no;
 			typeArgs = inferTypeArgs(m, got, [for (i in 0...want.length) kind(i).match(KNull) ? null : want[i]]);
+			if (typeArgs != null) switch (constraintsHold(m, typeArgs)) {
+				case ANo: return no;
+				case AUnknown: typeArgs = null;
+				case AYes:
+			}
 			if (typeArgs == null) {
 				// Positions without the method's type parameters may still rule it out.
 				for (i in 0...want.length)
@@ -1028,9 +1043,8 @@ class ExternMembers {
 	// The type arguments of the generic method `m` that the declared argument types `want` give (a null one, a
 	// null literal's, gives none, as in C#): each type
 	// parameter meets one type wherever it occurs in the given parameters `got`. Null when one is not
-	// given or meets two types, or when one is constrained, which this does not check (ruling E).
+	// given or meets two types; constraintsHold checks what it gives.
 	function inferTypeArgs(m:IlMethod, got:Array<IlSigNorm>, want:Array<Null<IlSigNorm>>):Null<Array<IlSigNorm>> {
-		for (tp in m.mtypes) if (tp.tflags.constraint.length > 0 || tp.tconstraints.length > 0) return null;
 		var bound:Array<Null<IlSigNorm>> = [for (_ in m.mtypes) null];
 		var clash = false;
 		function meet(g:IlSigNorm, w:IlSigNorm):Void {
@@ -1050,6 +1064,25 @@ class ExternMembers {
 		for (b in bound) {
 			if (b == null) return null;
 			r.push(b);
+		}
+		return r;
+	}
+
+	// Whether the inferred `typeArgs` meet the constraints of `m`'s type parameters: C# leaves a method out when
+	// one doesn't. A type constraint is a conversion. `class`, `struct` and `new()` aren't modelled, nor is a
+	// constraint naming the class's type parameters, so those are unknown (ruling E).
+	function constraintsHold(m:IlMethod, typeArgs:Array<IlSigNorm>):Applies {
+		var r = AYes;
+		for (j in 0...m.mtypes.length) {
+			if (m.mtypes[j].tflags.constraint.length > 0) r = AUnknown;
+			for (c in m.mtypes[j].tconstraints) {
+				var to = DotnetTypes.substitute(c.snorm, [], typeArgs);
+				switch (hasTypeParam(to) ? AUnknown : converts(typeArgs[j], to)) {
+					case ANo: return ANo;
+					case AUnknown: r = AUnknown;
+					case AYes:
+				}
+			}
 		}
 		return r;
 	}
@@ -1316,6 +1349,44 @@ class ExternMembers {
 		var r = [for (i in cls.cimplements) subst(i.snorm, args)];
 		if (cls.csuper != null) r.unshift(subst(cls.csuper.snorm, args));
 		return r;
+	}
+
+	// What `super.m()` runs when it binds the virtual `m`: the nearest override along `start`'s chain, as
+	// C#'s `base.M()`. Calling the method that declared the slot skips the overrides between, and is the
+	// runtime's BadImageFormatException when that method is abstract; an abstract nearest one is refused.
+	public function superCall(start:TClass, m:ExternMethod):ExternMethod {
+		if (!m.isVirtual) return m;
+		var want = switch (m.sig) {
+			case LMethod(_, _, l): [for (a in l) subst(a, sigArgs(m.parent))];
+			case _: throw "internal error: not a method signature";
+		}
+		for (link in chain(start)) {
+			for (o in link.cls.cmethods) {
+				if (o.mname != m.name || o.margs.length != want.length || o.mtypes.length != m.genericCount) continue;
+				if (o.mflags.contract.indexOf(CMStatic) >= 0) continue;
+				if (!IlPaths.sigsEq([for (a in o.margs) open(a.sig.snorm, linkArgs(link), false)], want)) continue;
+				if (o.mflags.impl.indexOf(IAbstract) >= 0)
+					throw Unsupported.error("super." + m.name + " calls the abstract .NET method " + sigS(link.parent) + "." + m.name);
+				return {
+					parent: link.parent,
+					name: m.name,
+					sig: o.msig.snorm,
+					isStatic: false,
+					genericCount: m.genericCount,
+					isVirtual: m.isVirtual,
+					omitted: m.omitted,
+					typeArgs: m.typeArgs
+				};
+			}
+		}
+		return m;
+	}
+
+	static function sigArgs(s:IlSigNorm):Array<IlSigNorm> {
+		return switch (s) {
+			case LClass(_, l) | LValueType(_, l): l;
+			case _: [];
+		}
 	}
 
 	// The binding of `cf` to `m`, a method of `link`'s class, for a call that gives `given` arguments.

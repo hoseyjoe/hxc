@@ -877,9 +877,9 @@ class TclassToIl {
 			if (i.c == ihx) continue;
 			var isExternInterface = TypeFunctions.hasClassFlag(i.c, CExtern);
 			// gencs's InterfaceProps makes properties only for an interface converted from a --net-lib; a
-			// hand-written extern interface's would be no member of the class.
+			// hand-written extern interface's would be no member of the class, unless its var is @:property.
 			if (isExternInterface && !TypeFunctions.hasMeta(":csNative", i.c.meta)) for (im in i.c.orderedFields)
-				if (im.kind.match(Var(_)))
+				if (im.kind.match(Var(_)) && !hasPropertyVar(c, im.name))
 					throw Unsupported.error("a class cannot implement the property " + im.name + " of the hand-written .NET interface extern "
 						+ DotnetTypes.haxePath(TClassDecl(i.c)));
 			for (im in i.c.orderedFields) {
@@ -1010,7 +1010,21 @@ class TclassToIl {
 		var v = findVar(c, cf.name.substr(4));
 		if (v == null) return null;
 		if (TypeFunctions.hasClassFlag(c, CExtern)) return TypeFunctions.hasMeta(":csNative", c.meta) && isCallVar(v.cf) ? v : null;
+		if (isExternPropertyOverride(v, cf)) return v;
 		return isPropertyVar(v.owner, v.cf) && !TypeFunctions.isPhysicalField(v.cf) ? v : null;
+	}
+
+	// Whether the class or a Haxe superclass has the variable `name` marked @:property.
+	static function hasPropertyVar(c:TClass, name:String):Bool {
+		var v = findVar(c, name);
+		return v != null && !TypeFunctions.hasClassFlag(v.owner, CExtern) && TypeFunctions.hasMeta(":property", v.cf.meta);
+	}
+
+	// An @:property override of the accessor of a .NET base class's property, the var `v` a hand-written extern's:
+	// gencs writes `override T X { get { return _get_X(); } }`.
+	static function isExternPropertyOverride(v:VarAt, cf:TClassField):Bool {
+		return TypeFunctions.hasClassFlag(v.owner, CExtern) && isCallVar(v.cf) && TypeFunctions.hasMeta(":property", cf.meta)
+			&& TypeFunctions.hasClassFieldFlag(cf, CfOverride);
 	}
 
 	// The class's implementation of the .NET interface property `iv` of `i`: a property var of the class or a
@@ -1167,7 +1181,11 @@ class TclassToIl {
 				|| e.set != null && TypeFunctions.hasClassFieldFlag(e.set, CfOverride);
 			if (isOverride && e.v.owner == c) throw new Unsupported("accessors of .NET interface properties that override a method", true);
 			// C# overrides a property only when its base declares it virtual (gencs's C# fails with CS0506).
-			if (isOverride && !isVirtualProperty(e.v.owner, e.v.cf, ownMethod(e.v.owner, "get_" + name), ownMethod(e.v.owner, "set_" + name))) {
+			// A .NET base's accessor is its method, which must be virtual and of the override's signature (CS0506).
+			if (TypeFunctions.hasClassFlag(e.v.owner, CExtern)) {
+				for (body in [e.get, e.set])
+					if (body != null) overrideShape(g, c, TypeFunctions.extractParamTypes(c.params), body, functionSig(g, body.type));
+			} else if (isOverride && !isVirtualProperty(e.v.owner, e.v.cf, ownMethod(e.v.owner, "get_" + name), ownMethod(e.v.owner, "set_" + name))) {
 				var o = e.get != null && TypeFunctions.hasClassFieldFlag(e.get, CfOverride) ? e.get : e.set;
 				throw at(Unsupported.error(o.name + " cannot override the accessor of the non-virtual .NET interface property " + name), o.pos);
 			}
@@ -1184,7 +1202,8 @@ class TclassToIl {
 				token: 0
 			};
 			function accessor(body:TClassField, isSet:Bool):MethodPlan {
-				var flags = MethodAttrs.PUBLIC | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME;
+				var protected = TypeFunctions.hasClassFlag(e.v.owner, CExtern) && TypeFunctions.hasMeta(":protected", body.meta);
+				var flags = (protected ? MethodAttrs.FAMILY : MethodAttrs.PUBLIC) | MethodAttrs.HIDE_BY_SIG | MethodAttrs.SPECIAL_NAME;
 				if (isOverride) flags |= MethodAttrs.VIRTUAL;
 				else if (isVirtual) flags |= MethodAttrs.VIRTUAL | MethodAttrs.NEW_SLOT;
 				// C# makes the accessor of a non-virtual property that implements an interface method final virtual.
@@ -1238,6 +1257,9 @@ class TclassToIl {
 			if (!TypeFunctions.hasClassFlag(i.c, CExtern)) continue;
 			var m = i.c.fields.get(name);
 			if (m != null && accessorOf(i.c, m) != null) return true;
+			// A hand-written interface's property need not declare its accessor.
+			var v = i.c.fields.get(name.substr(4));
+			if (v != null && isCallVar(v)) return true;
 		}
 		return false;
 	}
