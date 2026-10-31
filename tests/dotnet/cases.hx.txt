@@ -19382,6 +19382,45 @@ class P {
 [compile]
 P.hx:8: lines 8-14 : dotnet: a class cannot implement the property Bounds of the hand-written .NET interface extern HHasBounds
 P.hx:17: characters 15-30 : dotnet: C (left out: a class cannot implement the property Bounds of the hand-written .NET interface extern HHasBounds) is not supported yet
+# A generic .NET method taking a delegate, beside one of its name with no arguments, as Avalonia's AppBuilder.Configure<TApp>
+# has: T is inferred from the delegate's type argument, which meets T's constraint.
+--- netlib-extern-generic-delegate-arg @gencs @netlib=M4Lib + -D net-ver=45
+@:native("M4.GenBase") extern class HBase {
+	function new();
+}
+class Thing extends HBase {
+	public function new() super();
+	@:keep public function toString():String return "thing";
+}
+@:native("M4.GenMake") extern class HGen {
+	@:overload static function Make(f:cs.system.Func_1<Thing>):String;
+}
+class P {
+	static function main() {
+		var fn:cs.system.Func_1<Thing> = function() return new Thing();
+		Sys.println(HGen.Make(fn));
+	}
+}
+===
+[run]
+thing
+# A delegate's type argument that doesn't meet the constraint: C# error CS0311.
+--- netlib-extern-generic-delegate-arg-constraint-refused @netlib=M4Lib + -D net-ver=45
+class Other {
+	public function new() {}
+}
+@:native("M4.GenMake") extern class HGen {
+	@:overload static function Make(f:cs.system.Func_1<Other>):String;
+}
+class P {
+	static function main() {
+		var fn:cs.system.Func_1<Other> = function() return new Other();
+		Sys.println(HGen.Make(fn));
+	}
+}
+===
+[compile]
+P.hx:10: characters 15-28 : dotnet: no .NET overload of M4.GenMake.Make takes (System.Func<Other>)
 # M4Lib (@netlib=M4Lib): NativeArray across native calls, then the InterfaceImpl sets of Haxe classes implementing .NET interfaces.
 --- netlib-native-arrays @gencs @netlib=M4Lib
 import m4.*;

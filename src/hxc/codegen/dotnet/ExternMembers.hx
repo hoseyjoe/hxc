@@ -958,6 +958,11 @@ class ExternMembers {
 				if (!Lambda.exists([for (i in 0...want.length) i], i -> !kind(i).match(KNull) && paramOf(i) != null && mentionsMethodParam(paramOf(i), j)))
 					return no;
 			typeArgs = inferTypeArgs(m, got, [for (i in 0...want.length) kind(i).match(KNull) ? null : want[i]]);
+			if (typeArgs != null) switch (constraintsHold(m, typeArgs)) {
+				case ANo: return no;
+				case AUnknown: typeArgs = null;
+				case AYes:
+			}
 			if (typeArgs == null) {
 				// Positions without the method's type parameters may still rule it out.
 				for (i in 0...want.length)
@@ -1028,9 +1033,8 @@ class ExternMembers {
 	// The type arguments of the generic method `m` that the declared argument types `want` give (a null one, a
 	// null literal's, gives none, as in C#): each type
 	// parameter meets one type wherever it occurs in the given parameters `got`. Null when one is not
-	// given or meets two types, or when one is constrained, which this does not check (ruling E).
+	// given or meets two types; constraintsHold checks what it gives.
 	function inferTypeArgs(m:IlMethod, got:Array<IlSigNorm>, want:Array<Null<IlSigNorm>>):Null<Array<IlSigNorm>> {
-		for (tp in m.mtypes) if (tp.tflags.constraint.length > 0 || tp.tconstraints.length > 0) return null;
 		var bound:Array<Null<IlSigNorm>> = [for (_ in m.mtypes) null];
 		var clash = false;
 		function meet(g:IlSigNorm, w:IlSigNorm):Void {
@@ -1050,6 +1054,25 @@ class ExternMembers {
 		for (b in bound) {
 			if (b == null) return null;
 			r.push(b);
+		}
+		return r;
+	}
+
+	// Whether the inferred `typeArgs` meet the constraints of `m`'s type parameters: C# leaves a method out when
+	// one doesn't. A type constraint is a conversion. `class`, `struct` and `new()` aren't modelled, nor is a
+	// constraint naming the class's type parameters, so those are unknown (ruling E).
+	function constraintsHold(m:IlMethod, typeArgs:Array<IlSigNorm>):Applies {
+		var r = AYes;
+		for (j in 0...m.mtypes.length) {
+			if (m.mtypes[j].tflags.constraint.length > 0) r = AUnknown;
+			for (c in m.mtypes[j].tconstraints) {
+				var to = DotnetTypes.substitute(c.snorm, [], typeArgs);
+				switch (hasTypeParam(to) ? AUnknown : converts(typeArgs[j], to)) {
+					case ANo: return ANo;
+					case AUnknown: r = AUnknown;
+					case AYes:
+				}
+			}
 		}
 		return r;
 	}

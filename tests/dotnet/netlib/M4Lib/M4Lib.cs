@@ -96,6 +96,77 @@ namespace M4 {
 		public string Log => string.Join(" ", log);
 		public static string Name(Type t) => t.IsGenericType ? t.Name + "[" + string.Join(",", Array.ConvertAll(t.GetGenericArguments(), Name)) + "]" : t.FullName ?? t.Name;
 	}
+	public static class Gen {
+		public static T Id<T>(T x) { Console.WriteLine("Id<" + Sess.Name(typeof(T)) + ">"); return x; }
+		public static List<T> Of<T>(T a, T b) { Console.WriteLine("Of<" + Sess.Name(typeof(T)) + ">"); return new List<T> { a, b }; }
+		public static string Type<T>() => Sess.Name(typeof(T));
+		public static T Make<T>() where T : new() => new T();
+		public static string Apply<T, R>(Func<T, R> f, T x) => "Apply<" + Sess.Name(typeof(T)) + "," + Sess.Name(typeof(R)) + ">=" + f(x);
+		public static int Count<T>(IEnumerable<T> e) { int n = 0; foreach (var _ in e) n++; Console.WriteLine("Count<" + Sess.Name(typeof(T)) + ">"); return n; }
+		public static string First<T>(T[] a) => "First<" + Sess.Name(typeof(T)) + ">=" + a[0];
+	}
+	// 2b. generic interface methods implemented by Haxe; generic base class methods overridden by Haxe
+	public interface IVisitor { string Visit<T>(T x); }
+	public interface IBox<T> { T Get(); void Set(T v); }
+	public static class UseGen {
+		public static string Visit(IVisitor v) => v.Visit(1) + "," + v.Visit("s");
+		public static string RoundTrip(IBox<string> b) { b.Set("x"); return b.Get(); }
+		public static string Call(Base<string> b) => b.Show("v") + "|" + b.Name();
+	}
+	public class Base<T> {
+		public virtual string Show(T x) => "Base.Show(" + x + ")";
+		public virtual string Name() => "Base";
+	}
+	public class Vec<T> {
+		public T X; public Vec(T x) { X = x; }
+		public static Vec<T> operator +(Vec<T> a, Vec<T> b) => a;
+		public static bool operator ==(Vec<T> a, Vec<T> b) => ReferenceEquals(a, b) || (!ReferenceEquals(a, null) && !ReferenceEquals(b, null) && Equals(a.X, b.X));
+		public static bool operator !=(Vec<T> a, Vec<T> b) => !(a == b);
+		public override bool Equals(object o) => o is Vec<T> v && Equals(v.X, X);
+		public override int GetHashCode() => 0;
+	}
+	// 3. delegates and events
+	public delegate bool Check(object sender, string cert, int errors);
+	public delegate void Note(string s);
+	public class Client {
+		public Check Validate { get; set; }
+		public Func<string, bool> Filter;
+		public event Note Noted;
+		public event EventHandler Changed;
+		public string Run() => Validate == null ? "no validator" : "valid=" + Validate(this, "cert", 0) + "," + Validate(this, "bad", 2);
+		public string RunFilter() => Filter == null ? "no filter" : "filter=" + Filter("a") + "," + Filter("bb");
+		public void Fire(string s) { if (Noted != null) Noted(s); else Console.WriteLine("nobody noted " + s); Changed?.Invoke(this, EventArgs.Empty); }
+	}
+	// Keeps a callback and calls it later, twice, from another thread.
+	public static class Later {
+		static Func<string, string> kept;
+		public static void Keep(Func<string, string> f) { kept = f; }
+		public static string CallTwice() {
+			string r = null;
+			var t = new System.Threading.Thread(() => r = kept("a") + "," + kept("b"));
+			t.Start();
+			t.Join();
+			return r;
+		}
+	}
+	public static class Lists {
+		public static List<string> Names() => new List<string> { "ann", "bob", "cy" };
+		public static int Sum(int[] a) { int s = 0; foreach (var x in a) s += x; return s; }
+		public static string[] Split(string s) => s.Split(',');
+		public static void Fill(int[] a) { for (int i = 0; i < a.Length; i++) a[i] = i * 10; }
+		public static float[] Floats(int n) { var r = new float[n]; for (int i = 0; i < n; i++) r[i] = i + 0.5f; return r; }
+		public static string Join(string[] a) => string.Join("|", a);
+		public static int Len(object[] a) => a.Length;
+	}
+	public class Outer { public class Inner { public string Name = "inner"; } public System.Collections.Generic.List<Inner> Items = new System.Collections.Generic.List<Inner> { new Inner() }; }
+	public class PropBase { protected virtual string Key => "base"; public string ReadKey() => Key; }
+	public abstract class PropAbstract { protected abstract string Key { get; } public string ReadKey() => Key; }
+	public class PropPlain { protected string Key => "plain"; public string ReadKey() => Key; }
+	public struct Box { public int W; public Box(int w) { W = w; } }
+	public interface IHasBounds : IDisposable, IEquatable<IHasBounds> { Box Bounds { get; } }
+	public static class BoundsReader { public static int Read(IHasBounds b) => b.Bounds.W; }
+	public class GenBase { }
+	public static class GenMake { public static string Make<T>() where T : GenBase, new() => "none"; public static string Make<T>(System.Func<T> f) where T : GenBase => f().ToString(); }
 	public interface IPing { string Ping(); }
 	public interface IPingMore : IPing { string More(); }
 	public interface IFiles { void OnFiles(string[] paths); }
