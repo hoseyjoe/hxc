@@ -159,6 +159,9 @@ namespace M4 {
 		public static int Len(object[] a) => a.Length;
 	}
 	public class Outer { public class Inner { public string Name = "inner"; } public System.Collections.Generic.List<Inner> Items = new System.Collections.Generic.List<Inner> { new Inner() }; }
+	public class PropBase { protected virtual string Key => "base"; public string ReadKey() => Key; }
+	public abstract class PropAbstract { protected abstract string Key { get; } public string ReadKey() => Key; }
+	public class PropPlain { protected string Key => "plain"; public string ReadKey() => Key; }
 	public interface IPing { string Ping(); }
 	public interface IPingMore : IPing { string More(); }
 	public interface IFiles { void OnFiles(string[] paths); }

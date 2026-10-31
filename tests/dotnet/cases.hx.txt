@@ -19267,6 +19267,69 @@ P.hx:7: characters 3-15 : dotnet: by-reference arguments that are not variables 
 P.hx:9: characters 3-17 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
 P.hx:11: characters 3-29 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
 P.hx:12: characters 3-14 : dotnet: by-reference arguments that are not variables of the parameter's type are not supported yet
+# A property override in a class extending a hand-written extern: gencs writes `protected override string Key` and
+# `protected virtual string _get_Key()`, so the base's ReadKey reaches the subclass.
+--- netlib-extern-property-override @gencs @netlib=M4Lib
+@:native("M4.PropBase") extern class B0 {
+	function new();
+	@:protected private var Key(get, never):String;
+	private function get_Key():String;
+	function ReadKey():String;
+}
+@:native("M4.PropAbstract") extern class A0 {
+	function new();
+	@:protected private var Key(get, never):String;
+	private function get_Key():String;
+	function ReadKey():String;
+}
+@:nativeGen class B1 extends B0 {
+	public function new() super();
+	@:protected @:property override function get_Key():String return "sub";
+}
+@:nativeGen class A1 extends A0 {
+	public function new() super();
+	@:protected @:property override function get_Key():String return "sub";
+}
+class P {
+	static function main() {
+		Sys.println(new B1().ReadKey());
+		Sys.println(new A1().ReadKey());
+		declared(new B1());
+		declared(new A1());
+	}
+	// DeclaredOnly | Instance | NonPublic: the subclass has a property of its own, as the styling system's reflection sees.
+	static function declared(x:Dynamic) {
+		var flags:cs.system.reflection.BindingFlags = cast 38;
+		var p = cs.Lib.getNativeType(x).GetProperty("Key", flags);
+		Sys.println(p == null ? "no property" : p.Name + " " + p.GetValue(x, null));
+	}
+}
+===
+[run]
+sub
+sub
+Key sub
+Key sub
+# The property of a .NET base that is not virtual cannot be overridden (gencs: C# error CS0506).
+--- netlib-extern-property-override-non-virtual-refused @netlib=M4Lib
+@:native("M4.PropPlain") extern class B0 {
+	function new();
+	@:protected private var Key(get, never):String;
+	private function get_Key():String;
+}
+@:nativeGen class B1 extends B0 {
+	public function new() super();
+	@:protected @:property override function get_Key():String return "sub";
+}
+class P {
+	static function main() {
+		Sys.println(new B1() != null);
+	}
+}
+===
+[compile]
+P.hx:6: lines 6-9 : dotnet: overriding a non-virtual .NET method is not supported yet
+P.hx:12: characters 15-31 : dotnet: B1 (left out: overriding a non-virtual .NET method) is not supported yet
 # M4Lib (@netlib=M4Lib): NativeArray across native calls, then the InterfaceImpl sets of Haxe classes implementing .NET interfaces.
 --- netlib-native-arrays @gencs @netlib=M4Lib
 import m4.*;
