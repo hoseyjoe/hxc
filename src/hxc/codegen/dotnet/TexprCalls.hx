@@ -1185,6 +1185,7 @@ class TexprCalls {
 			}
 		}
 		var m = g.externs.method(c, cf, false, site);
+		if (isSuper) m = g.externs.superCall(start != null ? start.c : c, m);
 		// A generic method's type arguments: those the call's argument types give when the extern method has
 		// no type parameters (ExternMembers.method), else the extern method's own.
 		var margs:Array<IlSigNorm> = m.typeArgs != null ? m.typeArgs : own;

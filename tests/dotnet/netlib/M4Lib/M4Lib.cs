@@ -159,6 +159,9 @@ namespace M4 {
 		public static int Len(object[] a) => a.Length;
 	}
 	public class Outer { public class Inner { public string Name = "inner"; } public System.Collections.Generic.List<Inner> Items = new System.Collections.Generic.List<Inner> { new Inner() }; }
+	public abstract class SuperAbstract { public abstract string Name(); public virtual string Say() => "base"; }
+	public class SuperMid : SuperAbstract { public override string Name() => "mid"; }
+	public abstract class SuperConcrete { public SuperConcrete() { } public abstract string Name(); }
 	public class PropBase { protected virtual string Key => "base"; public string ReadKey() => Key; }
 	public abstract class PropAbstract { protected abstract string Key { get; } public string ReadKey() => Key; }
 	public class PropPlain { protected string Key => "plain"; public string ReadKey() => Key; }

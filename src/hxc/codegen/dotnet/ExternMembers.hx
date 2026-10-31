@@ -1341,6 +1341,44 @@ class ExternMembers {
 		return r;
 	}
 
+	// What `super.m()` runs when it binds the virtual `m`: the nearest override along `start`'s chain, as
+	// C#'s `base.M()`. Calling the method that declared the slot skips the overrides between, and is the
+	// runtime's BadImageFormatException when that method is abstract; an abstract nearest one is refused.
+	public function superCall(start:TClass, m:ExternMethod):ExternMethod {
+		if (!m.isVirtual) return m;
+		var want = switch (m.sig) {
+			case LMethod(_, _, l): [for (a in l) subst(a, sigArgs(m.parent))];
+			case _: throw "internal error: not a method signature";
+		}
+		for (link in chain(start)) {
+			for (o in link.cls.cmethods) {
+				if (o.mname != m.name || o.margs.length != want.length || o.mtypes.length != m.genericCount) continue;
+				if (o.mflags.contract.indexOf(CMStatic) >= 0) continue;
+				if (!IlPaths.sigsEq([for (a in o.margs) open(a.sig.snorm, linkArgs(link), false)], want)) continue;
+				if (o.mflags.impl.indexOf(IAbstract) >= 0)
+					throw Unsupported.error("super." + m.name + " calls the abstract .NET method " + sigS(link.parent) + "." + m.name);
+				return {
+					parent: link.parent,
+					name: m.name,
+					sig: o.msig.snorm,
+					isStatic: false,
+					genericCount: m.genericCount,
+					isVirtual: m.isVirtual,
+					omitted: m.omitted,
+					typeArgs: m.typeArgs
+				};
+			}
+		}
+		return m;
+	}
+
+	static function sigArgs(s:IlSigNorm):Array<IlSigNorm> {
+		return switch (s) {
+			case LClass(_, l) | LValueType(_, l): l;
+			case _: [];
+		}
+	}
+
 	// The binding of `cf` to `m`, a method of `link`'s class, for a call that gives `given` arguments.
 	// `checkReturn`: the declared return type, with the call's type arguments `inst`, must convert from
 	// `m`'s, with `candInst` (the receiver's class's, ruling M) and `typeArgs`.

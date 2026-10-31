@@ -19478,6 +19478,50 @@ True
 False
 False
 False
+# super.m() of an override runs the nearest override, as C#'s base.M(): the method that first declared the slot may be
+# abstract, and calling that one is a BadImageFormatException.
+--- netlib-extern-super-call-reaches-the-nearest-override @gencs @netlib=M4Lib
+@:native("M4.SuperAbstract") extern class A0 {
+	function Name():String;
+	function Say():String;
+}
+@:native("M4.SuperMid") extern class M0 extends A0 {
+	function new();
+}
+@:nativeGen class S extends M0 {
+	public function new() super();
+	override public function Name():String return "sub " + super.Name();
+	override public function Say():String return "sub " + super.Say();
+}
+class P {
+	static function main() {
+		var s = new S();
+		Sys.println(s.Name());
+		Sys.println(s.Say());
+	}
+}
+===
+[run]
+sub mid
+sub base
+# An abstract method has no body for super.m() to run (C#: error CS0205).
+--- netlib-extern-super-call-of-abstract-refused @netlib=M4Lib
+@:native("M4.SuperConcrete") extern class A0 {
+	function new();
+	function Name():String;
+}
+@:nativeGen class S extends A0 {
+	public function new() super();
+	override public function Name():String return super.Name();
+}
+class P {
+	static function main() {
+		Sys.println(new S().Name());
+	}
+}
+===
+[compile]
+P.hx:7: characters 48-60 : dotnet: super.Name calls the abstract .NET method M4.SuperConcrete.Name
 # M4Lib (@netlib=M4Lib): NativeArray across native calls, then the InterfaceImpl sets of Haxe classes implementing .NET interfaces.
 --- netlib-native-arrays @gencs @netlib=M4Lib
 import m4.*;
