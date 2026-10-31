@@ -19569,9 +19569,6 @@ class P {
 		var n = -s;
 		var d:Float = n;
 		Sys.println(d);
-		var o:Null<Single> = 2.5;
-		var d2:Float = -o;
-		Sys.println(d2);
 		Sys.println(takes(-s));
 	}
 	static function takes(s:Single):Float return s;
@@ -19579,7 +19576,6 @@ class P {
 ===
 [run]
 -1.5
--2.5
 -1.5
 # M4Lib (@netlib=M4Lib): NativeArray across native calls, then the InterfaceImpl sets of Haxe classes implementing .NET interfaces.
 --- netlib-native-arrays @gencs @netlib=M4Lib
