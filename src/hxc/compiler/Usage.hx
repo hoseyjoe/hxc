@@ -14,6 +14,7 @@ class Usage {
 		{cat: "Target", names: ["--cpp"], deps: ["-cpp"], hint: "<directory>", doc: "generate C++ code into target directory", basic: true},
 		{cat: "Target", names: ["--cppia"], deps: ["-cppia"], hint: "<file>", doc: "generate Cppia bytecode into target file", basic: true},
 		{cat: "Target", names: ["--cs"], deps: ["-cs"], hint: "<directory>", doc: "generate C# code into target directory", basic: true},
+		{cat: "Target", names: ["--dotnet"], deps: [], hint: "<directory>", doc: "generate a .NET assembly into target directory", basic: true},
 		{cat: "Target", names: ["--java"], deps: ["-java"], hint: "<directory>", doc: "generate Java code into target directory", basic: true},
 		{cat: "Target", names: ["--jvm"], deps: [], hint: "<file>", doc: "generate JVM bytecode into target file", basic: true},
 		{cat: "Target", names: ["--python"], deps: ["-python"], hint: "<file>", doc: "generate Python code into target file", basic: true},

@@ -32,8 +32,8 @@ output.
 | Compilation server | `--wait stdio` and `--server-connect`; listening on a TCP port is not yet supported |
 | Editor support | Hover, completion, signature help, go to definition, document symbols, diagnostics |
 | `--jvm` | Supported, with Java libraries through `--java-lib` (needs hxjava) |
-| `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set |
-| `--cs <dir> -D dotnet` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, generic instantiations and the casts between them, the Serializer, exceptions and calls into `--net-lib` assemblies (overloads, generic methods, `Nullable<T>`, indexers, properties, delegates) and a subset of inline C# work; see [.NET output](#net-output) |
+| `--cs` | Type-checks against .NET assemblies given with `--net-lib`/`--net-std` (needs hxcs, like Haxe); no output is written yet, unless `-D dotnet` is set (see `--dotnet`) |
+| `--dotnet <dir>` | Writes `<name>.dll` (plus `<name>.runtimeconfig.json` with `-main`) for .NET 10 or later, straight to IL with no C# step (needs hxcs, like `--cs` above). Early: classes (with reflection), interfaces, structs, generics, statics, strings, arrays, `Dynamic`, anonymous objects, `Null<T>`, enums, closures, `dynamic` methods, `Int64`, `Std`/`Type`/`Reflect`, generic instantiations and the casts between them, the Serializer, exceptions and calls into `--net-lib` assemblies (overloads, generic methods, `Nullable<T>`, indexers, properties, delegates) and a subset of inline C# work; see [.NET output](#net-output) |
 | `--lua`, `--python`, `--php`, `--hl`, `--neko`, `--swf` | Accepted on the command line; no output is written yet |
 
 Prebuilt binaries are available for Windows x64, Linux x64 and macOS on Apple silicon.
@@ -83,7 +83,7 @@ hxc -p src -m Main --js bin/main.js           # JavaScript
 hxc -p src -m Main --cpp bin/cpp              # C++, built with hxcpp
 hxc -p src -m Main --cppia bin/main.cppia     # cppia
 hxc -p src -m Main --jvm bin/main.jar          # JVM bytecode
-hxc -p src -m Main --cs bin/net -D dotnet    # .NET 10 assembly, bin/net/net.dll (early)
+hxc -p src -m Main --dotnet bin/net           # .NET 10 assembly, bin/net/net.dll (early)
 hxc -p src --run Main arg1 arg2               # run in the interpreter
 hxc -p src -m Main --xml types.xml --no-output
 hxc build.hxml
@@ -104,7 +104,7 @@ host:port` connects out to a client that is listening instead.
 
 ### .NET output
 
-`--cs <dir> -D dotnet` writes `<dir>/<name>.dll` straight as IL, with no C# step. Like `--cs`, it needs
+`--dotnet <dir>` writes `<dir>/<name>.dll` straight as IL, with no C# step; `--cs <dir> -D dotnet` is the same build. Like `--cs`, it needs
 hxcs (`haxelib install hxcs`): hxcs supplies the reference assemblies and the standard library's
 runtime sources. With `-main` it also writes `<name>.runtimeconfig.json` for `net10.0`, so
 `dotnet <name>.dll` runs the program on .NET 10; `-D dotnet-version=<N>` builds it for a later .NET

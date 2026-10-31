@@ -4,7 +4,7 @@
 #                       [--no-gencs-cache]
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
 # [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds] [@optimized] [@trimmed]
-# [+ extra hxc args]`, its source, `===`,
+# [@dotnet-flag] [+ extra hxc args]`, its source, `===`,
 # and the expected result. The source goes in the module's file; a source line `//// <path>` starts
 # another file, at <path> relative to the case directory (not in a @gencs case, whose source gencs gets
 # as one file). Each case compiles twice into a fresh directory, and its .dll must be
@@ -56,6 +56,7 @@
 # default, or after @run-timeout's seconds for that case; its output then ends with
 # `[timeout after Ns]` (a gencs run that times out fails the case), and the other cases go on.
 # Compiles and builds have no such limit.
+# A @dotnet-flag case compiles with `--dotnet <dir>` where the others use `--cs <dir> -D dotnet`.
 # Case directories go under $HXC_TEST_TMP, by default tests/dotnet/tmp (gitignored), so one
 # antivirus exclusion covers the assemblies they write.
 # Cases run -j at a time (default $HXC_TEST_JOBS, or 8), each in its own directory. Their reports
@@ -644,6 +645,7 @@ run_trimmed() {
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
 	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 trimmed=0 limit t n netargs=()
+	local target=--cs define=(-D dotnet)
 	for t in $tags; do
 		case "$t" in
 			@lib) lib=1 ;;
@@ -656,6 +658,7 @@ run_case() {
 			@runtimeconfig) config=1 ;;
 			@optimized) optimized=1 ;;
 			@trimmed) trimmed=1 ;;
+			@dotnet-flag) target=--dotnet; define=() ;;
 			@netlib | @netlib=?*) ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
 		esac
@@ -711,8 +714,8 @@ run_case() {
 	# --haxelib-global, which only counts after the library, keeps the global hxcs.
 	set -f
 	local cout ccode=0 bcode=0
-	cout="$("$compiler" --cwd "$casedir_m" -cp . "${main[@]}" --cs a/P --haxelib-global -D dotnet $extra "${netargs[@]}" 2>&1)" || ccode=$?
-	"$compiler" --cwd "$bcwd" -cp . "${main[@]}" --cs b/P --haxelib-global -D dotnet $extra "${netargs[@]}" > /dev/null 2>&1 || bcode=$?
+	cout="$("$compiler" --cwd "$casedir_m" -cp . "${main[@]}" "$target" a/P --haxelib-global "${define[@]}" $extra "${netargs[@]}" 2>&1)" || ccode=$?
+	"$compiler" --cwd "$bcwd" -cp . "${main[@]}" "$target" b/P --haxelib-global "${define[@]}" $extra "${netargs[@]}" > /dev/null 2>&1 || bcode=$?
 	set +f
 
 	local result="" problem="" dll="" dll_m f

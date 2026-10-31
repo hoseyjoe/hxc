@@ -30293,3 +30293,23 @@ ILLink.Descriptors.xml
 	<assembly fullname="a&amp;b" preserve="all" />
 </linker>
 carriage returns: 0
+--- dotnet-flag @dotnet-flag
+class P {
+	static function main() {
+		#if dotnet
+		Sys.println("the dotnet define is set");
+		#end
+		Sys.println("written by --dotnet");
+	}
+}
+===
+[run]
+the dotnet define is set
+written by --dotnet
+--- dotnet-flag-with-another-target @dotnet-flag + --js o.js
+class P {
+	static function main() {}
+}
+===
+[compile]
+Error: Multiple targets

@@ -797,6 +797,14 @@ class Compiler {
 					targetDir = "cs";
 					ownPackages = ["cs"];
 					ctx.file = argValue(args, i++, a);
+				case "--dotnet":
+					// (no single-dash alias); like --jvm, the cs platform with the dotnet define, so the IL
+					// generator writes the output.
+					ctx.defines.rawDefine("dotnet");
+					setPlatform(Cs);
+					targetDir = "cs";
+					ownPackages = ["cs"];
+					ctx.file = argValue(args, i++, a);
 				case "-php" | "--php" | "-swf" | "--swf"
 					| "-python" | "--python" | "-lua" | "--lua"
 					| "-hl" | "--hl":
@@ -1716,7 +1724,7 @@ class Compiler {
 						hxc.codegen.jvm.GenerateJvm.generate(ctx.jvmFlag, ctx);
 						tGen();
 					} else if (platform == Cs && ctx.defines.rawDefined("dotnet")) {
-						// --cs alone writes nothing; the dotnet define selects the IL generator.
+						// --cs alone writes nothing; the dotnet define, which --dotnet sets, selects the IL generator.
 						ctx.log("Generating dotnet: " + ctx.file);
 						var tGen = hxc.core.Timer.timer(["generate", "dotnet"]);
 						hxc.codegen.dotnet.GenerateDotnet.generate(ctx);
@@ -4524,7 +4532,7 @@ class Compiler {
 				continue;
 			}
 			// A C# target likewise pulls in hxcs.
-			if ((a == "--cs" || a == "-cs") && hasValue) {
+			if ((a == "--cs" || a == "-cs" || a == "--dotnet") && hasValue) {
 				acc.push(a);
 				acc.push(l[i + 1]);
 				l = ["-lib", "hxcs"].concat(l.slice(i + 2));
