@@ -19421,6 +19421,30 @@ class P {
 ===
 [compile]
 P.hx:10: characters 15-28 : dotnet: no .NET overload of M4.GenMake.Make takes (System.Func<Other>)
+# The same library named twice, by an init macro and again by the command line, is one library.
+--- netlib-added-by-macro-and-tag @netlib=M4Lib + --macro P.add()
+#if macro
+class P {
+	static function add() {
+		haxe.macro.Compiler.addNativeLib(Sys.getEnv("HXC_NETLIB_DIR") + "/M4Lib.dll");
+	}
+}
+#else
+@:native("M4.Lists") extern class HLists {
+	static function Split(s:String):cs.NativeArray<String>;
+}
+class P {
+	static function main() {
+		var parts = HLists.Split("a,b,c");
+		Sys.println(parts.Length);
+		Sys.println(m4.Lists.Join(parts));
+	}
+}
+#end
+===
+[run]
+3
+a|b|c
 # An init macro adds a .NET library, seen at typing (m4.Lists) and by binding (the extern). Not @gencs: the csproj gencs's
 # output is built with references only the libraries the tag names. @netlib=ValLib is there to build the fixtures.
 --- netlib-added-by-macro @netlib=ValLib + --macro P.add()
