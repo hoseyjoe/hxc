@@ -1950,7 +1950,8 @@ class EvalMacro {
 						var ec = getContext(com);
 						var savedPos = curPos;
 						curPos = e.pos;
-						// A macro method receives its arguments as expressions; a plain function (like
+						// A macro method's arguments go as in any macro call: an Expr parameter gets the expression, a
+						// String one the constant (queues-core registers its types so); a plain function (like
 						// Compiler.nullSafety) receives constants: the arguments type against the
 						// function's signature (so a malformed object literal errors here) and the typed
 						// constants convert to values.
@@ -1958,7 +1959,7 @@ class EvalMacro {
 						var isMacroFn = cf != null && cf.kind.match(Method(MethMacro));
 						var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s2): s2; case _: null; };
 						var vargs = if (isMacroFn) {
-							[for (a in args) encodeExpr(ec, a)];
+							typeMacroArgs(ec, initTyper, args, sig == null ? null : sig.args, e.pos);
 						} else if (sig != null) {
 							var tctx = new hxc.typing.TyperContext(macroCom);
 							// The macro typer stays in nullModule until a load sets its module, and the init macro's

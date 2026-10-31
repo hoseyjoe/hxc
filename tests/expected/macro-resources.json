@@ -1,5 +1,6 @@
 {
 	"macro-resource-listed": "m2=two\nm1=one",
+	"macro-resource-init-macro-string-args": "n=text",
 	"macro-resource-added-while-typing-main": "late=from an expression macro",
 	"macro-resource-replaces-cli": "b=bee\na=from macro",
 	"macro-resource-replaces-cli-after-others": "b=bee\nz=cmd-b\na=from macro",
