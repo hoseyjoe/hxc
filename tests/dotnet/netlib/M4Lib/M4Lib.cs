@@ -166,7 +166,7 @@ namespace M4 {
 	public interface IHasBounds : IDisposable, IEquatable<IHasBounds> { Box Bounds { get; } }
 	public static class BoundsReader { public static int Read(IHasBounds b) => b.Bounds.W; }
 	public class GenBase { }
-	public static class GenMake { public static string Make<T>() where T : GenBase, new() => "none"; public static string Make<T>(System.Func<T> f) where T : GenBase => f().ToString(); }
+	public static class GenMake { public static string Make<T>() where T : GenBase, new() => "none"; public static string Make<T>(System.Func<T> f) where T : GenBase => f().ToString(); public static string Cls<T>(T t) where T : class => t.ToString(); }
 	public interface IPing { string Ping(); }
 	public interface IPingMore : IPing { string More(); }
 	public interface IFiles { void OnFiles(string[] paths); }

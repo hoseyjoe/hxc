@@ -20686,8 +20686,8 @@ class P {
 ===
 [compile]
 P.hx:7: characters 9-30 : dotnet: more than one .NET overload of ValLib.Gen.Foo accepts (int)
-# The only candidate is a constrained generic method, which may apply (ruling E): the call is refused.
---- netlib-extern-single-unknown-candidate-refused @netlib
+# The only candidate is a constrained generic method whose inferred type argument meets the constraint: it binds, as in C#.
+--- netlib-extern-single-constrained-candidate @gencs @netlib
 @:native("ValLib.HxArg") extern class HxArg {
 	static function Only(x:Int):String;
 }
@@ -20697,8 +20697,21 @@ class P {
 	}
 }
 ===
+[run]
+P.hx:6: Only(1)
+# A `class` constraint isn't modelled, so the only candidate may apply (ruling E): the call is refused.
+--- netlib-extern-single-unknown-candidate-refused @netlib=M4Lib
+@:native("M4.GenMake") extern class HGen {
+	static function Cls(x:String):String;
+}
+class P {
+	static function main() {
+		trace(HGen.Cls("x"));
+	}
+}
+===
 [compile]
-P.hx:6: characters 9-22 : dotnet: hxc cannot tell whether the .NET method ValLib.HxArg.Only accepts (int)
+P.hx:6: characters 9-22 : dotnet: hxc cannot tell whether the .NET method M4.GenMake.Cls accepts (string)
 # Ruling K: a Haxe class or interface argument keeps its own type, so a generic method's type argument is that type, as
 # C# infers it (ruling F′: the declared Any binds T1<object>, the same method, and the arguments' own types give its type
 # arguments): a plain class, a Haxe interface, a subclass of a .NET class, a generic Haxe class (a TypeSpec of hxc's own
