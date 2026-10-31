@@ -117,6 +117,11 @@ class IlBytes {
 		while (length % n != 0) u8(0);
 	}
 
+	// Drops everything from `to` on.
+	public function truncate(to:Int):Void {
+		length = to;
+	}
+
 	public function patchU32(pos:Int, v:Int):Void {
 		buf.setInt32(pos, v);
 	}

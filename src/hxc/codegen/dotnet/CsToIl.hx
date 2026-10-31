@@ -1150,10 +1150,10 @@ class CsToIl {
 		// As Roslyn: `<=` is `!(a > b)` and `>=` is `!(a < b)`, unordered for doubles, so NaN compares false.
 		var un = isUnsigned(t) || isFloat(t) && (op == "<=" || op == ">=");
 		switch (op) {
-			case "<": il.op(isUnsigned(t) ? IlOps.CLT_UN : IlOps.CLT, 2, 1);
-			case ">": il.op(isUnsigned(t) ? IlOps.CGT_UN : IlOps.CGT, 2, 1);
-			case "<=": il.op(un ? IlOps.CGT_UN : IlOps.CGT, 2, 1);
-			case _: il.op(un ? IlOps.CLT_UN : IlOps.CLT, 2, 1);
+			case "<": il.compare(isUnsigned(t) ? IlOps.CLT_UN : IlOps.CLT, isFloat(t));
+			case ">": il.compare(isUnsigned(t) ? IlOps.CGT_UN : IlOps.CGT, isFloat(t));
+			case "<=": il.compare(un ? IlOps.CGT_UN : IlOps.CGT, isFloat(t));
+			case _: il.compare(un ? IlOps.CLT_UN : IlOps.CLT, isFloat(t));
 		}
 		if (op == "<=" || op == ">=") not();
 		return LBool;

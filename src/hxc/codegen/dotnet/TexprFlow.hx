@@ -74,11 +74,20 @@ class TexprFlow {
 		// A loop head is a backward branch target, which needs an empty stack.
 		if (code.depth != 0) throw new Unsupported("loops inside expressions", true);
 		var top = code.newLabel(), cont = code.newLabel(), brk = code.newLabel();
-		code.mark(top);
 		var isDo = flag.match(DoWhile);
-		tl.loops.push({brk: brk, cont: isDo ? cont : top, tries: tl.tryDepth});
+		// As Roslyn, the condition goes after the body, with a jump to it first, so that an iteration takes one branch.
+		// A constant one has nothing to test.
+		var atBottom = isDo || !TexprToIl.isBoolConst(cond);
+		if (atBottom && !isDo) {
+			// The jump is no line of the source.
+			if (tl.points) code.point(null);
+			code.willReach(top);
+			code.branch(IlOps.BR, cont);
+		}
+		code.mark(top);
+		tl.loops.push({brk: brk, cont: atBottom ? cont : top, tries: tl.tryDepth});
 		try {
-			if (isDo) {
+			if (atBottom) {
 				tl.statementPoint(body);
 				tl.texpr(RVoid, body);
 				code.markIfUsed(cont);

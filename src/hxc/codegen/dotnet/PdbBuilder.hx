@@ -46,6 +46,7 @@ class PdbBuilder {
 	// The debug information of the method whose MethodDef token is `token`, with `localsSig` its
 	// StandAloneSig token (0 for none) and `code` its body.
 	public function method(token:Int, localsSig:Int, code:IlCode):Void {
+		code.finish();
 		scopes(token & 0xFFFFFF, code);
 		if (code.points == null || code.points.length == 0) return;
 		var points = [for (p in code.points) {offset: p.offset, at: resolve(p.pos)}];

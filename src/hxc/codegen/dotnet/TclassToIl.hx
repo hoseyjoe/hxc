@@ -1844,7 +1844,13 @@ class TclassToIl {
 		}
 		if (plan.initFlag) mb.field(plan.token, FieldAttrs.PRIVATE | FieldAttrs.STATIC, initFlagName, g.sigs.field(LBool));
 		for (m in plan.methods) {
-			m.token = mb.method(plan.token, m.flags, 0, m.name, g.sigs.method(m.hasThis, m.ret, m.args, m.generics.length), m.argNames,
+			// A rare path the runtime's small methods keep apart (@:hxcCold) stays apart: inlined, it would bring its
+			// dynamic calls into every caller. 8 is noinlining (ECMA-335 II.23.1.11).
+			var impl = switch (m.kind) {
+				case MField(cf) if (TypeFunctions.hasMeta(":hxcCold", cf.meta)): 8;
+				case _: 0;
+			}
+			m.token = mb.method(plan.token, m.flags, impl, m.name, g.sigs.method(m.hasThis, m.ret, m.args, m.generics.length), m.argNames,
 				NullableToIl.returnRow(g, m));
 			switch (m.kind) {
 				case MField(cf):

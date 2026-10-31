@@ -34,7 +34,8 @@ import haxe.iterators.ArrayKeyValueIterator;
 // or an array of a type parameter (`@:inlineUnlessDynamic`, typing/Inline.hx); iterator, keyValueIterator, __unsafe_get
 // and __unsafe_set are not inline, as gencs emits them as methods too, so no caller reads `__a`
 // itself. The members this adds never show in reflection: the vars and the bodies of the Equals
-// and GetHashCode overrides skip it, and the helpers are extern inline, so no method exists for them;
+// and GetHashCode overrides skip it, the helpers are extern inline, so no method exists for them, and the
+// methods holding the rare paths of map, filter, push and the element accessors are `@:skipReflection`;
 // none of them is a member of the `Array` companion interface. Equality sees an array and its forward as
 // one array.
 #if core_api_serialize
@@ -170,6 +171,8 @@ final class Array<T> implements ArrayAccess<T> {
 							var target = new Array<T_c>(typed);
 							target.__hx_from = cast this;
 							__hx_fwd = target;
+							// No fast path of a member can use it now (__unsafe_get).
+							__a = new NativeArray(0);
 						}
 					}
 				}
@@ -331,6 +334,15 @@ final class Array<T> implements ArrayAccess<T> {
 	}
 
 	public function push(x:T):Int {
+		if (__hx_from != null || length >= __a.Length)
+			return __hx_pushSlow(x);
+		__a[length] = x;
+		return ++length;
+	}
+
+	// hxc: what push does when it has to forward, grow or keep a forwarder's length in step, apart so that
+	// push stays small enough to inline.
+	@:keep @:skipReflection @:hxcCold private function __hx_pushSlow(x:T):Int {
 		if (__hx_fwd != null)
 			return __hx_resolve().push(x);
 		if (length >= __a.Length) {
@@ -641,7 +653,7 @@ final class Array<T> implements ArrayAccess<T> {
 		}
 	}
 
-	@:keep @:skipReflection private function __hx_mapForward<S>(f:T->S):Array<S> return __hx_resolve().map(f);
+	@:keep @:skipReflection @:hxcCold private function __hx_mapForward<S>(f:T->S):Array<S> return __hx_resolve().map(f);
 
 	public function contains(x:T):Bool {
 		if (__hx_fwd != null) {
@@ -674,7 +686,7 @@ final class Array<T> implements ArrayAccess<T> {
 		}
 	}
 
-	@:keep @:skipReflection private function __hx_filterForward(f:T->Bool):Array<T> return cast __hx_resolve().filter(f);
+	@:keep @:skipReflection @:hxcCold private function __hx_filterForward(f:T->Bool):Array<T> return cast __hx_resolve().filter(f);
 
 	public function copy():Array<T> {
 		var len = length;
@@ -709,12 +721,32 @@ final class Array<T> implements ArrayAccess<T> {
 	}
 
 	@:keep private function __get(idx:Int):T {
-		if (__hx_fwd != null)
-			return __hx_resolve().__get(idx);
-		return if ((cast idx : UInt) >= length) null else __a[idx];
+		if ((cast idx : UInt) >= (cast __a.Length : UInt))
+			return __hx_getSlow(idx);
+		return if ((cast idx : UInt) >= (cast length : UInt)) null else __a[idx];
 	}
 
+	// hxc: what __get, __unsafe_get and __unsafe_set do outside `__a`: forward, or do what the store does with an
+	// index outside it. Apart so that those stay small enough to inline, and not inlined themselves (@:hxcCold), as
+	// the dynamic calls of the forwarding would come with them.
+	@:keep @:skipReflection @:hxcCold private function __hx_getSlow(idx:Int):T
+		return __hx_fwd != null ? __hx_resolve().__get(idx) : null;
+
+	@:keep @:skipReflection @:hxcCold private function __hx_unsafeGetSlow(idx:Int):T
+		return __hx_fwd != null ? __hx_resolve().__unsafe_get(idx) : __a[idx];
+
+	@:keep @:skipReflection @:hxcCold private function __hx_unsafeSetSlow(idx:Int, val:T):T
+		return __hx_fwd != null ? __hx_resolve().__unsafe_set(idx, val) : __a[idx] = val;
+
 	@:keep private function __set(idx:Int, v:T):T {
+		if ((cast idx : UInt) < (cast length : UInt) && (cast idx : UInt) < (cast __a.Length : UInt))
+			return __a[idx] = v;
+		return __hx_setSlow(idx, v);
+	}
+
+	// hxc: what __set does when it has to forward, grow or move `length`, apart so that __set stays small enough
+	// to inline.
+	@:keep @:skipReflection @:hxcCold private function __hx_setSlow(idx:Int, v:T):T {
 		if (__hx_fwd != null)
 			return __hx_resolve().__set(idx, v);
 		var idx:UInt = idx;
@@ -736,16 +768,14 @@ final class Array<T> implements ArrayAccess<T> {
 		return __a[idx] = v;
 	}
 
+	// hxc: a forwarder's `__a` is empty, so its forward needs no test of its own here, nor in __get, __set and push: the
+	// test of the index against `__a`, which the JIT then leaves out of the access, sends a forwarder to the rare path.
 	private function __unsafe_get(idx:Int):T {
-		if (__hx_fwd != null)
-			return __hx_resolve().__unsafe_get(idx);
-		return __a[idx];
+		return if ((cast idx : UInt) < (cast __a.Length : UInt)) __a[idx] else __hx_unsafeGetSlow(idx);
 	}
 
 	private function __unsafe_set(idx:Int, val:T):T {
-		if (__hx_fwd != null)
-			return __hx_resolve().__unsafe_set(idx, val);
-		return __a[idx] = val;
+		return if ((cast idx : UInt) < (cast __a.Length : UInt)) __a[idx] = val else __hx_unsafeSetSlow(idx, val);
 	}
 }
 

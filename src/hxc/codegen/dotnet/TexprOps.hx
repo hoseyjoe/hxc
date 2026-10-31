@@ -470,15 +470,15 @@ class TexprOps {
 					code.op(IlOps.CEQ, 2, 1);
 					not();
 				case OpLt:
-					code.op(unsigned ? IlOps.CLT_UN : IlOps.CLT, 2, 1);
+					code.compare(unsigned ? IlOps.CLT_UN : IlOps.CLT, isFloat);
 				case OpGt:
-					code.op(unsigned ? IlOps.CGT_UN : IlOps.CGT, 2, 1);
+					code.compare(unsigned ? IlOps.CGT_UN : IlOps.CGT, isFloat);
 				case OpLte:
 					// An unordered comparison is true on NaN, so inverting it makes <= false there.
-					code.op(isFloat || unsigned ? IlOps.CGT_UN : IlOps.CGT, 2, 1);
+					code.compare(isFloat || unsigned ? IlOps.CGT_UN : IlOps.CGT, isFloat);
 					not();
 				case _:
-					code.op(isFloat || unsigned ? IlOps.CLT_UN : IlOps.CLT, 2, 1);
+					code.compare(isFloat || unsigned ? IlOps.CLT_UN : IlOps.CLT, isFloat);
 					not();
 			}
 		}

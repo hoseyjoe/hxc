@@ -542,13 +542,13 @@ class TexprDynamic {
 					}
 					code.ldcI4(0);
 					switch (op) {
-						case OpLt: code.op(IlOps.CLT, 2, 1);
-						case OpGt: code.op(IlOps.CGT, 2, 1);
+						case OpLt: code.compare(IlOps.CLT, false);
+						case OpGt: code.compare(IlOps.CGT, false);
 						case OpLte:
-							code.op(IlOps.CGT, 2, 1);
+							code.compare(IlOps.CGT, false);
 							tl.ops.not();
 						case _:
-							code.op(IlOps.CLT, 2, 1);
+							code.compare(IlOps.CLT, false);
 							tl.ops.not();
 					}
 					finish(LBool, own(e), ret);

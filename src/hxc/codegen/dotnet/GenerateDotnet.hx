@@ -302,6 +302,12 @@ class DotnetCtx {
 			case _:
 		}
 		if (c == null) return false;
+		// haxe.lang.HxObject is the root's base without a Haxe declaration saying so.
+		switch (to) {
+			case LClass(p, []) if (HxGen.derivesFromHxObject(c) && classAt(p) == runtimeClass("cs.internal.HxObject")):
+				return true;
+			case _:
+		}
 		// Each class's type in terms of its own type parameters, then with `args` for them.
 		function open(c:TClass, sup:TClass, params:Array<T>):Null<IlSigNorm> {
 			return try types.withParams(c.params, [], () -> types.classSig(sup, params)) catch (_:Unsupported) null;

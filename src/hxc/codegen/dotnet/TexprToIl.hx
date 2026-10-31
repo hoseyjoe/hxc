@@ -663,11 +663,17 @@ class TexprToIl {
 
 	// Through the address on the stack, as C# reads and writes a ref parameter.
 	function loadIndirect(t:IlSigNorm):Void {
-		if (DotnetTypes.isValueType(t) || isTypeParam(t)) code.opToken(IlOps.LDOBJ, g.typeTokenOf(t), 1, 1) else code.op(IlOps.LDIND_REF, 1, 1);
+		var short = IlCode.ldindOf(t);
+		if (short >= 0) code.op(short, 1, 1)
+		else if (DotnetTypes.isValueType(t) || isTypeParam(t)) code.opToken(IlOps.LDOBJ, g.typeTokenOf(t), 1, 1)
+		else code.op(IlOps.LDIND_REF, 1, 1);
 	}
 
 	function storeIndirect(t:IlSigNorm):Void {
-		if (DotnetTypes.isValueType(t) || isTypeParam(t)) code.opToken(IlOps.STOBJ, g.typeTokenOf(t), 2, 0) else code.op(IlOps.STIND_REF, 2, 0);
+		var short = IlCode.stindOf(t);
+		if (short >= 0) code.op(short, 2, 0)
+		else if (DotnetTypes.isValueType(t) || isTypeParam(t)) code.opToken(IlOps.STOBJ, g.typeTokenOf(t), 2, 0)
+		else code.op(IlOps.STIND_REF, 2, 0);
 	}
 
 	// The prefix a load or store of a @:volatile field takes, as C# compiles a volatile field's.
@@ -1347,6 +1353,8 @@ class TexprToIl {
 
 	static function isNullConst(e:TExpr):Bool return strip(e).expr.match(TConst(TNull));
 
+	static function isBoolConst(e:TExpr):Bool return strip(e).expr.match(TConst(TBool(_)));
+
 	// A read of a field of an anonymous structure or a Dynamic, which gencs makes with Runtime.getField.
 	static function isDynamicRead(e:TExpr):Bool return strip(e).expr.match(TField(_, FAnon(_) | FDynamic(_)));
 
@@ -1445,6 +1453,24 @@ class TexprToIl {
 				var get = native ? null : calls.arrayAccessor(e1.type, "__get");
 				var set = native ? null : calls.arrayAccessor(e1.type, "__set");
 				var elem = native ? vectorElement(calls.vectorSig(e1)) : get.ret;
+				// As C#: the address of a value type's element, taken once. An operand that starts on an empty stack
+				// can't have the array under it.
+				if (native && DotnetTypes.isValueType(elem) && !TexprCalls.needsEmptyStack(e2)) {
+					return {
+						sig: elem,
+						receiver: true,
+						prepare: () -> {
+							texpr(RValue(calls.vectorSig(e1)), e1);
+							texpr(RValue(calls.indexSig(e2)), e2);
+							code.opToken(IlOps.LDELEMA, g.typeTokenOf(elem), 2, 1);
+						},
+						load: () -> {
+							code.op(IlOps.DUP, 1, 2);
+							loadIndirect(elem);
+						},
+						store: () -> storeIndirect(elem)
+					};
+				}
 				var arr = -1, idx = -1;
 				function reload() {
 					code.ldloc(arr);
