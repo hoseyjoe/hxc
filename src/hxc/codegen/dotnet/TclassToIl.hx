@@ -877,9 +877,9 @@ class TclassToIl {
 			if (i.c == ihx) continue;
 			var isExternInterface = TypeFunctions.hasClassFlag(i.c, CExtern);
 			// gencs's InterfaceProps makes properties only for an interface converted from a --net-lib; a
-			// hand-written extern interface's would be no member of the class.
+			// hand-written extern interface's would be no member of the class, unless its var is @:property.
 			if (isExternInterface && !TypeFunctions.hasMeta(":csNative", i.c.meta)) for (im in i.c.orderedFields)
-				if (im.kind.match(Var(_)))
+				if (im.kind.match(Var(_)) && !hasPropertyVar(c, im.name))
 					throw Unsupported.error("a class cannot implement the property " + im.name + " of the hand-written .NET interface extern "
 						+ DotnetTypes.haxePath(TClassDecl(i.c)));
 			for (im in i.c.orderedFields) {
@@ -1012,6 +1012,12 @@ class TclassToIl {
 		if (TypeFunctions.hasClassFlag(c, CExtern)) return TypeFunctions.hasMeta(":csNative", c.meta) && isCallVar(v.cf) ? v : null;
 		if (isExternPropertyOverride(v, cf)) return v;
 		return isPropertyVar(v.owner, v.cf) && !TypeFunctions.isPhysicalField(v.cf) ? v : null;
+	}
+
+	// Whether the class or a Haxe superclass has the variable `name` marked @:property.
+	static function hasPropertyVar(c:TClass, name:String):Bool {
+		var v = findVar(c, name);
+		return v != null && !TypeFunctions.hasClassFlag(v.owner, CExtern) && TypeFunctions.hasMeta(":property", v.cf.meta);
 	}
 
 	// An @:property override of the accessor of a .NET base class's property, the var `v` a hand-written extern's:
@@ -1251,6 +1257,9 @@ class TclassToIl {
 			if (!TypeFunctions.hasClassFlag(i.c, CExtern)) continue;
 			var m = i.c.fields.get(name);
 			if (m != null && accessorOf(i.c, m) != null) return true;
+			// A hand-written interface's property need not declare its accessor.
+			var v = i.c.fields.get(name.substr(4));
+			if (v != null && isCallVar(v)) return true;
 		}
 		return false;
 	}

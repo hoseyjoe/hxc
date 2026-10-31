@@ -19330,6 +19330,58 @@ class P {
 [compile]
 P.hx:6: lines 6-9 : dotnet: overriding a non-virtual .NET method is not supported yet
 P.hx:12: characters 15-31 : dotnet: B1 (left out: overriding a non-virtual .NET method) is not supported yet
+# A class implements a property of a hand-written .NET interface with an @:property var, as gencs's gen_prop writes it.
+--- netlib-extern-interface-property @gencs @netlib=M4Lib
+@:native("M4.Box") @:struct extern class HBox {
+	function new(w:Int);
+	var W:Int;
+}
+@:native("M4.IHasBounds") extern interface HHasBounds extends cs.system.IDisposable extends cs.system.IEquatable_1<HHasBounds> {
+	@:property var Bounds(get, never):HBox;
+}
+@:native("M4.BoundsReader") extern class HReader {
+	static function Read(b:HHasBounds):Int;
+}
+@:nativeGen class C implements HHasBounds {
+	public function new() {}
+	@:property public var Bounds(get, never):HBox;
+	function get_Bounds():HBox return new HBox(33);
+	public function Dispose():Void {}
+	public function Equals(o:HHasBounds):Bool return false;
+}
+class P {
+	static function main() {
+		Sys.println(HReader.Read(new C()));
+	}
+}
+===
+[run]
+33
+# Without @:property the var is no member of the CLR class: the interface's refusal stands.
+--- netlib-extern-interface-property-needs-property-refused @netlib=M4Lib
+@:native("M4.Box") @:struct extern class HBox {
+	function new(w:Int);
+	var W:Int;
+}
+@:native("M4.IHasBounds") extern interface HHasBounds extends cs.system.IDisposable extends cs.system.IEquatable_1<HHasBounds> {
+	@:property var Bounds(get, never):HBox;
+}
+@:nativeGen class C implements HHasBounds {
+	public function new() {}
+	public var Bounds(get, never):HBox;
+	function get_Bounds():HBox return new HBox(33);
+	public function Dispose():Void {}
+	public function Equals(o:HHasBounds):Bool return false;
+}
+class P {
+	static function main() {
+		Sys.println(new C() != null);
+	}
+}
+===
+[compile]
+P.hx:8: lines 8-14 : dotnet: a class cannot implement the property Bounds of the hand-written .NET interface extern HHasBounds
+P.hx:17: characters 15-30 : dotnet: C (left out: a class cannot implement the property Bounds of the hand-written .NET interface extern HHasBounds) is not supported yet
 # M4Lib (@netlib=M4Lib): NativeArray across native calls, then the InterfaceImpl sets of Haxe classes implementing .NET interfaces.
 --- netlib-native-arrays @gencs @netlib=M4Lib
 import m4.*;
