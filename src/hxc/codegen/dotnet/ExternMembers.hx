@@ -300,6 +300,16 @@ class ExternMembers {
 	// A converted (`:csNative`) extern stands for the metadata as it is; any other is written by hand.
 	static function isHandWritten(c:TClass):Bool return !TypeFunctions.hasMeta(":csNative", c.meta);
 
+	// The .NET struct `c` stands for, when `new c()` is its zeroed value as C# makes it: the struct declares
+	// no constructor without arguments. Null for anything else, which binds a constructor as usual.
+	public function structDefault(c:TClass, classArgs:Array<IlSigNorm>):Null<IlSigNorm> {
+		var link = chain(c)[0];
+		if (!DotnetTypes.isValueType(link.parent)) return null;
+		for (m in link.cls.cmethods)
+			if (m.mname == ".ctor" && m.margs.length == 0) return null;
+		return subst(link.parent, classArgs);
+	}
+
 	// The method of `c`'s .NET class that the extern method `cf` stands for.
 	// - A converted extern's member, or with `exactOnly` (an implementation or override, which takes the
 	//   member's own signature), binds the method with exactly the declared signature, the first along

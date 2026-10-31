@@ -19522,6 +19522,65 @@ class P {
 ===
 [compile]
 P.hx:7: characters 48-60 : dotnet: super.Name calls the abstract .NET method M4.SuperConcrete.Name
+# `new S()` on a struct with no such constructor is its zeroed value, as in C#; one it declares runs.
+--- netlib-extern-struct-default-ctor @gencs @netlib=M4Lib
+@:native("M4.Box") @:struct extern class B {
+	function new();
+	var W:Int;
+}
+@:native("M4.BoxSeven") @:struct extern class S {
+	function new();
+	var W:Int;
+}
+class P {
+	static function main() {
+		var b = new B();
+		Sys.println(b.W);
+		b.W = 3;
+		Sys.println(b.W);
+		Sys.println(new B().W);
+		Sys.println(new S().W);
+	}
+}
+===
+[run]
+0
+3
+0
+7
+# A class has no such zeroed value: the constructor is still looked for.
+--- netlib-extern-class-default-ctor-refused @netlib=M4Lib
+@:native("M4.NoDefault") extern class N {
+	function new();
+}
+class P {
+	static function main() {
+		new N();
+	}
+}
+===
+[compile]
+P.hx:6: characters 3-10 : dotnet: no .NET constructor of M4.NoDefault takes ()
+# `-` on a Single stays a Single.
+--- single-negate @gencs
+class P {
+	static function main() {
+		var s:Single = 1.5;
+		var n = -s;
+		var d:Float = n;
+		Sys.println(d);
+		var o:Null<Single> = 2.5;
+		var d2:Float = -o;
+		Sys.println(d2);
+		Sys.println(takes(-s));
+	}
+	static function takes(s:Single):Float return s;
+}
+===
+[run]
+-1.5
+-2.5
+-1.5
 # M4Lib (@netlib=M4Lib): NativeArray across native calls, then the InterfaceImpl sets of Haxe classes implementing .NET interfaces.
 --- netlib-native-arrays @gencs @netlib=M4Lib
 import m4.*;

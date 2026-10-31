@@ -1489,6 +1489,12 @@ class TexprCalls {
 			return;
 		}
 		if (isExtern(c)) {
+			var zero = args.length == 0 ? g.externs.structDefault(c, g.types.classArgs(c, params)) : null;
+			if (zero != null) {
+				zeroed(zero);
+				tl.coerce(zero, ret);
+				return;
+			}
 			var ctor = externCtor(c, params, args);
 			code.opToken(IlOps.NEWOBJ, ctor.token, ctor.argc, 1);
 			tl.coerce(ctor.parent, ret);
@@ -1499,15 +1505,19 @@ class TexprCalls {
 		if (ctor.token == 0) {
 			// A struct without a constructor that takes arguments: a zeroed value.
 			if (!DotnetTypes.isValueType(t) || args.length > 0) throw "internal error: no constructor of " + Globals.sTypePath(c.path);
-			var tmp = code.addLocal(t);
-			code.ldloca(tmp);
-			code.opToken(IlOps.INITOBJ, g.typeTokenOf(t), 1, 0);
-			code.ldloc(tmp);
+			zeroed(t);
 		} else {
 			pushArgs(args, ctor.args, ctorTargets(c, params, args));
 			code.opToken(IlOps.NEWOBJ, ctor.token, args.length, 1);
 		}
 		tl.coerce(t, ret);
+	}
+
+	function zeroed(t:IlSigNorm):Void {
+		var tmp = code.addLocal(t);
+		code.ldloca(tmp);
+		code.opToken(IlOps.INITOBJ, g.typeTokenOf(t), 1, 0);
+		code.ldloc(tmp);
 	}
 
 	static function isNativeArrayClass(c:TClass):Bool {

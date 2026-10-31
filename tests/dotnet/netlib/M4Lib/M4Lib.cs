@@ -166,6 +166,8 @@ namespace M4 {
 	public abstract class PropAbstract { protected abstract string Key { get; } public string ReadKey() => Key; }
 	public class PropPlain { protected string Key => "plain"; public string ReadKey() => Key; }
 	public struct Box { public int W; public Box(int w) { W = w; } }
+	public struct BoxSeven { public int W; public BoxSeven() { W = 7; } }
+	public class NoDefault { public NoDefault(int w) { } }
 	public interface IHasBounds : IDisposable, IEquatable<IHasBounds> { Box Bounds { get; } }
 	public static class BoundsReader { public static int Read(IHasBounds b) => b.Bounds.W; }
 	public class GenBase { }

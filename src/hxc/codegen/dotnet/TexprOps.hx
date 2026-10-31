@@ -690,7 +690,7 @@ class TexprOps {
 			case Neg:
 				var own = tl.sig(e.type);
 				var t = tl.unNull(own);
-				if (!isNumeric(t)) throw new Unsupported("the - operator on these types", false);
+				if (!isNumeric(t) && !t.match(LFloat32)) throw new Unsupported("the - operator on these types", false);
 				tl.nullOperand(RValue(t), e1, false);
 				code.op(IlOps.NEG, 1, 1);
 				tl.dyn.finish(t, own, ret);
