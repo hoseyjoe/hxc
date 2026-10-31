@@ -3236,6 +3236,57 @@ class P {
 	}
 }
 ===
+--- reference-equals-without-a-box @gencs
+// Object.ReferenceEquals is `ceq`, as C# compiles it, and the JIT drops a value type's box next to that even in
+// unoptimized code. So a Null<Int>, whose constructor makes this test, allocates nothing, which only shows before the
+// optimizer has seen the method. What it compares and its arguments' order stay those of the call.
+import cs.system.Object;
+
+class P {
+	static function allocated():Float {
+		return untyped __cs__("(double)System.GC.GetAllocatedBytesForCurrentThread()");
+	}
+
+	static function nullable(i:Int):Null<Int> {
+		return i;
+	}
+
+	static function arg(s:String, v:Dynamic):Dynamic {
+		Sys.println(s);
+		return v;
+	}
+
+	static function main() {
+		var sum = 0;
+		allocated();
+		nullable(0);
+		var before = allocated();
+		for (i in 0...10) {
+			var v = nullable(i);
+			if (v != null) sum += v;
+		}
+		var after = allocated();
+		Sys.println(sum);
+		// Under the 24 bytes of a box for each of the ten. gencs's `allocated` boxes what it reads, once.
+		Sys.println(after - before < 240);
+
+		var o:Dynamic = {};
+		var boxed:Dynamic = 1;
+		Sys.println(Object.ReferenceEquals(o, o));
+		Sys.println(Object.ReferenceEquals(o, {}));
+		Sys.println(Object.ReferenceEquals(o, null));
+		Sys.println(Object.ReferenceEquals(null, null));
+		Sys.println(Object.ReferenceEquals(boxed, boxed));
+		Sys.println(Object.ReferenceEquals(1, 1));
+		Sys.println(Object.ReferenceEquals("a" + sum, "a" + sum));
+		Sys.println(Object.ReferenceEquals(arg("first", o), arg("second", o)));
+		if (Object.ReferenceEquals(o, null)) Sys.println("null");
+		if (!Object.ReferenceEquals(o, null)) Sys.println("not null");
+		var f = Object.ReferenceEquals;
+		Sys.println(f(o, o));
+	}
+}
+===
 --- overload-meta-signature @gencs
 // A signature in an @:overload meta has no method of its own: a call the typer binds to it reaches the method. Std's
 // Reflect.makeVarArgs has one for a function returning nothing, and P.f and P.g are the same shape in a Haxe class, by

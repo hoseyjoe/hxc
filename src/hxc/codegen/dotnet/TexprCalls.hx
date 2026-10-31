@@ -569,6 +569,12 @@ class TexprCalls {
 					2, 1);
 				code.opToken(IlOps.CASTCLASS, g.typeTokenOf(d), 1, 1);
 				tl.coerce(d, ret);
+			case TField(_, FStatic(c, cf)) if (isExtern(c) && cf.name == "ReferenceEquals" && args.length == 2 && Globals.sTypePath(c.path) == "System.Object"):
+				// Object.ReferenceEquals(a, b) is `ceq`, as C# compiles it: the JIT drops a value type's box next to it even in
+				// unoptimized code, which a call would allocate.
+				pushArgs(args, [LObject, LObject]);
+				code.op(IlOps.CEQ, 2, 1);
+				tl.coerce(LBool, ret);
 			case TField(obj, fa = FStatic(c, cf) | FInstance(c, _, cf)) if (isExtern(c)):
 				externCall(ret, obj, fa, c, cf, args, callee.type);
 			case TConst(TSuper):
