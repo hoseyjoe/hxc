@@ -3236,6 +3236,59 @@ class P {
 	}
 }
 ===
+--- overload-meta-signature @gencs
+// A signature in an @:overload meta has no method of its own: a call the typer binds to it reaches the method. Std's
+// Reflect.makeVarArgs has one for a function returning nothing, and P.f and P.g are the same shape in a Haxe class, by
+// the signature and by the field, static and instance.
+class P {
+	static var hits = 0;
+
+	@:overload(function(s:String):Int {})
+	static function f(x:Dynamic):Int {
+		return 1;
+	}
+
+	var n = 2;
+
+	@:overload(function(s:String):Int {})
+	function g(x:Dynamic):Int {
+		return n;
+	}
+
+	static function main() {
+		var v:Dynamic = Reflect.makeVarArgs(function(el:Array<Dynamic>) {
+			hits += el.length;
+		});
+		Sys.println(v(1, 2, 3));
+		Sys.println(hits);
+		var r:Dynamic = Reflect.makeVarArgs(function(el:Array<Dynamic>):Dynamic {
+			return el.length;
+		});
+		Sys.println(r(1, 2));
+		Sys.println(f("s"));
+		Sys.println(f(1.5));
+		var p = new P();
+		Sys.println(p.g("s"));
+		Sys.println(p.g(1.5));
+	}
+
+	function new() {}
+}
+===
+--- overload-meta-signature-alone @gencs
+// With the signature the only use of the field, dead code elimination has to keep the method.
+class P {
+	static var hits = 0;
+
+	static function main() {
+		var v:Dynamic = Reflect.makeVarArgs(function(el:Array<Dynamic>) {
+			hits += el.length;
+		});
+		Sys.println(v(1, 2, 3));
+		Sys.println(hits);
+	}
+}
+===
 --- narrow-number-compound-try
 // A right side holding a try or a loop goes through TexprFlow.spillForTry. gencs's C# doesn't build for these
 // (CS0266), so what's expected is what the same `op=` gives without them: the left side read first, the right side

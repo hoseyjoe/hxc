@@ -1014,12 +1014,20 @@ class TexprCalls {
 
 	// The overload a call of a Haxe method reaches, as the JVM generator picks it.
 	function pickOverload(c:TClass, params:TParams, cf:TClassField, args:Array<TExpr>, isStatic:Bool):TClassField {
-		if (cf.overloads.length == 0 && !TypeFunctions.hasClassFieldFlag(cf, CfOverload)) return cf;
+		if (cf.overloads.length == 0 && !TypeFunctions.hasClassFieldFlag(cf, CfOverload)) return methodOfSignature(c, cf, isStatic);
 		var mapType = (t:T) -> TypeFunctions.applyParams(c.params, params, t);
 		var r = isStatic ? OverloadResolution.filterOverloads(OverloadResolution.findOverload(mapType, c, cf, args)) : OverloadResolution.maybeResolveInstanceOverload(false,
 			mapType, c, cf, args);
 		if (r == null) throw new Unsupported("this call of an overloaded method", false);
-		return r.cf;
+		return methodOfSignature(c, r.cf, isStatic);
+	}
+
+	// A signature in an @:overload meta, as on std's Reflect.makeVarArgs, has no method of its own, and the typer may
+	// have put it in the call: the call binds to the field it belongs to, as C# binds it to the only method gencs writes.
+	function methodOfSignature(c:TClass, cf:TClassField, isStatic:Bool):TClassField {
+		if (g.methodTokens.exists(cf)) return cf;
+		var main = isStatic ? c.statics.get(cf.name) : c.fields.get(cf.name);
+		return main != null && g.methodTokens.exists(main) ? main : cf;
 	}
 
 	// A Haxe class's instance variable as an access through `c` with `params` reaches it: its token, its
