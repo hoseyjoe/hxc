@@ -1172,7 +1172,7 @@ class Compiler {
 					// Every display mode EXCEPT the ones that report the compile itself ignores errors, and
 					// the typer consults that (ignoreError) at the handful of places where an error would
 					// cost the answer rather than describe it.
-					ctx.ignoreErrors = dmode != "diagnostics" && dmode != "statistics";
+					ctx.ignoreErrors = dmode != "diagnostics" && dmode != "statistics";
 					// Only the modes that report the COMPILE keep full typing. A mode that answers about
 					// one position leaves it false, and the field typer reads that to type only the field
 					// under the cursor.
@@ -4395,7 +4395,7 @@ class Compiler {
 	}
 
 	// The java and cs targets have a loader here; for java a directory contributes each .jar inside it.
-	static function registerNativeLibs(ctx:Context, platform:Platform, libs:Array<{file:String, isExtern:Bool}>):Void {
+	public static function registerNativeLibs(ctx:Context, platform:Platform, libs:Array<{file:String, isExtern:Bool}>):Void {
 		if (libs.length == 0) return;
 		if (platform == Cs) {
 			// every library is registered, then every one is read

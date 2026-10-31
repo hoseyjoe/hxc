@@ -3555,6 +3555,11 @@ class EvalStdLib {
 					VFunction(function(args) {
 						var file = decodeText(ctx, arg(args, 0));
 						var com = ctx.com != null ? ctx.com : EvalMacro.hostCom;
+						if (com.platform == Cs) {
+							try hxc.Compiler.registerNativeLibs(com, com.platform, [{file: file, isExtern: false}])
+							catch (e:String) return EvalExceptions.excString(ctx, e);
+							return VNull;
+						}
 						return EvalExceptions.excString(ctx, "Target " + hxc.core.Globals.platformName(com.platform)
 							+ " does not support native libraries (trying to load " + file + ")");
 					}, true);
