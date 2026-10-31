@@ -81,6 +81,13 @@ class TexprOps {
 				// A Null<T> result is computed in T and wrapped again, as HardNullableSynf does.
 				var own = tl.sig(e.type);
 				var t = tl.unNull(own);
+				// The value of a small integer's `op=` whose right side holds a try (TexprFlow.spillForTry).
+				if (isNarrow(own)) {
+					tl.texpr(RValue(LInt32), e1);
+					narrowTail(op, own, e2);
+					tl.coerce(own, ret);
+					return;
+				}
 				// Bitwise operators and shifts take Int operands only.
 				if (!isArith(op) && !(isIntLike(s1) && isIntLike(s2) && isIntLike(t)))
 					throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
@@ -296,6 +303,25 @@ class TexprOps {
 				tl.nullOperand(RValue(t), e2, keepNull);
 				arith(op, t);
 		}
+	}
+
+	// Single and the integers smaller than Int, whose values the stack holds as a float32 and an int32.
+	static function isNarrow(s:IlSigNorm):Bool return s.match(LFloat32 | LChar | LInt8 | LUInt8 | LInt16 | LUInt16);
+
+	// The left operand, of the narrow type `t`, is there; this pushes the right one and applies `op`, as C# binds the
+	// `op=` gencs writes: the right side cast to `t`, except a shift's count, and the result truncated to `t`.
+	function narrowTail(op:Binop, t:IlSigNorm, e2:TExpr):Void {
+		var single = t.match(LFloat32);
+		if (single && !isArith(op)) throw new Unsupported("the " + Ast.sBinop(op) + " operator on these types", false);
+		switch (op) {
+			case OpShl | OpShr | OpUShr:
+				shiftCount(e2, 31);
+				code.op(op.match(OpShl) ? IlOps.SHL : op.match(OpShr) ? IlOps.SHR : IlOps.SHR_UN, 2, 1);
+			case _:
+				tl.nullOperand(RValue(t), e2, false);
+				arith(op, t);
+		}
+		if (!single) tl.convert(LInt32, t);
 	}
 
 	function not():Void {
@@ -687,9 +713,12 @@ class TexprOps {
 		if (tl.dyn.incDec(ret, e, increment, postfix, e1)) return;
 		var p = tl.place(e1);
 		if (p == null) throw new Unsupported("this kind of assignment", false);
-		if (!isNumeric(p.sig)) throw new Unsupported("the " + (increment ? "++" : "--") + " operator on these types", false);
+		var narrow = isNarrow(p.sig);
+		if (!isNumeric(p.sig) && !narrow) throw new Unsupported("the " + (increment ? "++" : "--") + " operator on these types", false);
 		function step() {
-			if (isIntLike(p.sig)) {
+			if (p.sig.match(LFloat32)) {
+				code.opR4(IlOps.LDC_R4, 1.0, 0, 1);
+			} else if (isIntLike(p.sig) || narrow) {
 				code.ldcI4(1);
 			} else if (is64(p.sig)) {
 				code.ldcI4(1);
@@ -698,6 +727,7 @@ class TexprOps {
 				code.opR8(IlOps.LDC_R8, 1.0, 0, 1);
 			}
 			code.op(increment ? IlOps.ADD : IlOps.SUB, 2, 1);
+			if (narrow && !p.sig.match(LFloat32)) tl.convert(LInt32, p.sig);
 		}
 		p.prepare();
 		p.load();
@@ -747,6 +777,8 @@ class TexprOps {
 			stringifyTop(LString);
 			pushString(rhs);
 			concat();
+		} else if (isNarrow(p.sig)) {
+			narrowTail(op, p.sig, rhs);
 		} else {
 			numericTail(op, p.sig, rhs, p.sig, false);
 		}

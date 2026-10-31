@@ -429,10 +429,10 @@ class TexprToIl {
 			else if (from.match(LInt32 | LInt8 | LInt16) && to.match(LUInt64)) code.op(IlOps.CONV_I8, 1, 1);
 			else if (from.match(LFloat64) && to.match(LUInt64)) code.op(IlOps.CONV_U8, 1, 1);
 			// To the small integers and Char, as C#'s unchecked casts truncate.
-			else if ((isIntLike(from) || is64(from)) && to.match(LChar | LUInt16)) code.op(IlOps.CONV_U2, 1, 1);
-			else if ((isIntLike(from) || is64(from)) && to.match(LInt16)) code.op(IlOps.CONV_I2, 1, 1);
-			else if ((isIntLike(from) || is64(from)) && to.match(LUInt8)) code.op(IlOps.CONV_U1, 1, 1);
-			else if ((isIntLike(from) || is64(from)) && to.match(LInt8)) code.op(IlOps.CONV_I1, 1, 1);
+			else if (from.match(LInt32 | LUInt32 | LInt64 | LUInt64 | LChar | LInt8 | LUInt8 | LInt16 | LUInt16) && to.match(LChar | LUInt16)) code.op(IlOps.CONV_U2, 1, 1);
+			else if (from.match(LInt32 | LUInt32 | LInt64 | LUInt64 | LChar | LInt8 | LUInt8 | LInt16 | LUInt16) && to.match(LInt16)) code.op(IlOps.CONV_I2, 1, 1);
+			else if (from.match(LInt32 | LUInt32 | LInt64 | LUInt64 | LChar | LInt8 | LUInt8 | LInt16 | LUInt16) && to.match(LUInt8)) code.op(IlOps.CONV_U1, 1, 1);
+			else if (from.match(LInt32 | LUInt32 | LInt64 | LUInt64 | LChar | LInt8 | LUInt8 | LInt16 | LUInt16) && to.match(LInt8)) code.op(IlOps.CONV_I1, 1, 1);
 			else if (from.match(LFloat64 | LInt64 | LUInt64) && to.match(LUInt32)) code.op(IlOps.CONV_U4, 1, 1);
 			else if (isTypeParam(from) || isTypeParam(to)) {
 				// Between a type parameter and another type that is one at run time, as C# casts through object.

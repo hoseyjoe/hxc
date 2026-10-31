@@ -3042,6 +3042,253 @@ class P {
 	}
 }
 ===
+--- narrow-number-compound @gencs
+// `op=`, `++` and `--` on Single and the integers smaller than Int, as C# binds gencs's output: the right side cast to
+// the left's type, the result truncated. In a native array's element, an Array's, a local, a static and an instance
+// variable; wrapping, a shift's count, a remainder by a truncated right side, a Dynamic or narrow right side, the
+// values of the expressions, effects once, and an index that starts on an empty stack.
+import cs.NativeArray;
+import cs.StdTypes;
+
+class P {
+	static var calls = 0;
+	static var sb:UInt8 = 250;
+	static var ss:Single = 0.5;
+	static var bytes = new NativeArray<UInt8>(3);
+
+	var ib:UInt8 = 255;
+	var is:Single = 2.5;
+
+	function new() {}
+
+	static function index():Int {
+		calls++;
+		return 1;
+	}
+
+	static function array():NativeArray<UInt8> {
+		calls++;
+		return bytes;
+	}
+
+	static function main() {
+		var b = new NativeArray<UInt8>(2);
+		var n = 300;
+		b[0] += 200;
+		b[0] += 100;
+		Sys.println(b[0]);
+		b[0]--;
+		b[0]++;
+		b[0]++;
+		Sys.println(b[0]);
+		b[0] -= 46;
+		Sys.println(b[0]);
+		b[0] = 255;
+		b[0]++;
+		Sys.println(b[0]);
+		b[0]--;
+		Sys.println(b[0]);
+		b[0] <<= 2;
+		Sys.println(b[0]);
+		b[0] >>= 1;
+		Sys.println(b[0]);
+		b[0] >>>= 1;
+		Sys.println(b[0]);
+		b[0] <<= n;
+		Sys.println(b[0]);
+		b[0] = 77;
+		b[0] &= 12;
+		b[0] |= 3;
+		b[0] ^= 5;
+		Sys.println(b[0]);
+		b[0] = 100;
+		b[0] %= n;
+		Sys.println(b[0]);
+		b[0] *= 7;
+		Sys.println(b[0]);
+
+		var s = new NativeArray<Single>(2);
+		s[0] += 1.5;
+		s[0] *= 3;
+		s[0]++;
+		s[0]--;
+		s[0]++;
+		Sys.println(s[0]);
+		s[0] /= 2;
+		Sys.println(s[0]);
+		s[0] %= 2;
+		Sys.println(s[0]);
+		s[0] -= n;
+		Sys.println(s[0]);
+		var f = 0.1;
+		s[1] += f;
+		s[1] += f;
+		s[1] += f;
+		Sys.println(s[1] == 0.3 ? "same" : "different");
+		s[1] = 16777216;
+		s[1]++;
+		Sys.println(s[1]);
+
+		var h = new NativeArray<Int16>(2);
+		h[0] += 32767;
+		h[0] += 1;
+		Sys.println(h[0]);
+		h[0]--;
+		Sys.println(h[0]);
+		h[0]++;
+		h[0]--;
+		h[0] -= 1;
+		Sys.println(h[0]);
+
+		var i8 = new NativeArray<Int8>(2);
+		i8[0] += 127;
+		i8[0] += 1;
+		Sys.println(i8[0]);
+		i8[0]--;
+		Sys.println(i8[0]);
+
+		var u16 = new NativeArray<UInt16>(2);
+		u16[0] -= 1;
+		Sys.println(u16[0]);
+		u16[0]++;
+		Sys.println(u16[0]);
+
+		Sys.println((b[1] += 7) + " " + (b[1]++) + " " + (++b[1]) + " " + (b[1]--) + " " + (--b[1]));
+		Sys.println((s[1] = 1.5) + " " + (s[1] += 1) + " " + (s[1]++) + " " + (++s[1]));
+
+		var d:Dynamic = 300;
+		b[0] = 1;
+		b[0] += d;
+		Sys.println(b[0]);
+		var e:Dynamic = 1.5;
+		s[0] = 1;
+		s[0] += e;
+		Sys.println(s[0]);
+
+		b[0] = 1;
+		h[0] = cast -3;
+		b[0] += (cast h[0] : UInt8);
+		Sys.println(b[0]);
+		b[1] = cast h[0];
+		Sys.println(b[1]);
+		b[1] += b[0];
+		Sys.println(b[1]);
+		h[1] = cast 40000;
+		Sys.println(h[1]);
+		h[1] += h[0];
+		Sys.println(h[1]);
+		u16[0] = cast h[0];
+		Sys.println(u16[0]);
+		u16[0] += (cast b[0] : UInt16);
+		Sys.println(u16[0]);
+		i8[0] = cast h[1];
+		Sys.println(i8[0]);
+		s[0] = 1;
+		s[0] += b[0];
+		s[0] += h[0];
+		Sys.println(s[0]);
+
+		var lb:UInt8 = 255;
+		lb += 2;
+		lb++;
+		Sys.println(lb);
+		var ls:Single = 0.5;
+		ls += 1;
+		ls++;
+		Sys.println(ls);
+		sb += 10;
+		sb++;
+		Sys.println(sb);
+		ss *= 3;
+		ss--;
+		Sys.println(ss);
+		var o = new P();
+		o.ib += 2;
+		o.ib++;
+		Sys.println(o.ib);
+		o.is /= 2;
+		o.is++;
+		Sys.println(o.is);
+
+		var a:Array<UInt8> = [250];
+		a[0] += 10;
+		a[0]++;
+		Sys.println(a[0]);
+		var as:Array<Single> = [0.5];
+		as[0] *= 3;
+		as[0]--;
+		Sys.println(as[0]);
+
+		array()[index()] += 7;
+		array()[index()]++;
+		Sys.println(bytes[1] + " " + calls);
+		bytes[{
+			var k = 0;
+			while (k < 2) k++;
+			k;
+		}] += 4;
+		Sys.println(bytes[2]);
+		try {
+			bytes[9] += 1;
+		} catch (e:cs.system.IndexOutOfRangeException) {
+			Sys.println("out of range");
+		}
+	}
+}
+===
+--- narrow-number-compound-try
+// A right side holding a try or a loop goes through TexprFlow.spillForTry. gencs's C# doesn't build for these
+// (CS0266), so what's expected is what the same `op=` gives without them: the left side read first, the right side
+// cast to the left's type, the result truncated.
+import cs.NativeArray;
+import cs.StdTypes;
+
+class P {
+	static function one():Int return 1;
+
+	static function main() {
+		var b = new NativeArray<UInt8>(2);
+		b[0] = 250;
+		b[0] += try one() catch (e:Dynamic) 0;
+		Sys.println(b[0]);
+		b[0] += {
+			var k = 0;
+			while (k < 9) k++;
+			k;
+		};
+		Sys.println(b[0]);
+		b[0] = 100;
+		b[0] %= try 300 catch (e:Dynamic) 0;
+		Sys.println(b[0]);
+		Sys.println(b[1] += try 300 catch (e:Dynamic) 0);
+		b[1] = 1;
+		b[1] <<= try 9 catch (e:Dynamic) 0;
+		Sys.println(b[1]);
+		var l:UInt8 = 255;
+		l += try one() catch (e:Dynamic) 0;
+		Sys.println(l);
+		b[0] = 7;
+		b[0] += {
+			b[0] = 100;
+			try one() catch (e:Dynamic) 0;
+		};
+		Sys.println(b[0]);
+		var s = new NativeArray<Single>(1);
+		s[0] = 1.5;
+		s[0] += try one() catch (e:Dynamic) 0;
+		Sys.println(s[0]);
+	}
+}
+===
+[run]
+251
+4
+12
+44
+0
+0
+8
+2.5
 --- native-array-element-in-place @gencs
 // `op=` and `++` on a native array's element of a value type go through its address, taken once: each number type,
 // their values, an index and an array with effects, a right side that replaces the array or moves the index, an
