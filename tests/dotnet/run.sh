@@ -128,7 +128,14 @@ checkdll="$checkdir/bin/out/HxcCheck.dll"
 # Each case writes its report to $resdir/<i>.out and <i>.err, then `<cases> <failures> <seconds>` to
 # $resdir/<i>.res, and has its directory in $resdir.
 resdir="$(mktemp -d "$tmproot/results.XXXXXX")" || { echo "could not create a directory for the results" >&2; exit 1; }
-trap 'rm -rf "$resdir"' EXIT
+# A .NET program's Console.Out writes in the console's code page, so a case's output could depend on the shell it
+# runs from, while expectations and cached gencs results are UTF-8. The console is the caller's: it gets its page back.
+consolecp=""
+if command -v chcp.com > /dev/null 2>&1; then
+	consolecp="$(chcp.com | tr -dc 0-9)"
+	if [ -n "$consolecp" ]; then chcp.com 65001 > /dev/null; fi
+fi
+trap 'rm -rf "$resdir"; if [ -n "$consolecp" ]; then chcp.com "$consolecp" > /dev/null; fi' EXIT
 
 runlimit="${HXC_RUN_TIMEOUT:-120}"
 # A case's run time limit: @run-timeout's, or $runlimit. Sets $limit.
