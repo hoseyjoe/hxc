@@ -19446,6 +19446,38 @@ class P {
 [run]
 3
 a|b|c
+# Two Any values compare as gencs writes it, Runtime.eq: equal strings of different references are equal, as are an Int and a
+# Float (utest's Assert.same compares its Any arguments this way).
+--- any-equality @gencs
+class Ref { public function new() {} }
+class P {
+	static function eq(a:Any, b:Any) return a == b;
+	static function main() {
+		var n = 0;
+		var built = "target#" + n;
+		Sys.println(eq("target#0", built));
+		var a:Any = "target#0";
+		var b:Any = built;
+		Sys.println(a == b);
+		Sys.println(a != b);
+		Sys.println(eq(1, 1.0));
+		var r = new Ref();
+		Sys.println(eq(r, r));
+		Sys.println(eq(r, new Ref()));
+		Sys.println(eq(null, built));
+		Sys.println(eq(built, "other"));
+	}
+}
+===
+[run]
+True
+True
+False
+True
+True
+False
+False
+False
 # M4Lib (@netlib=M4Lib): NativeArray across native calls, then the InterfaceImpl sets of Haxe classes implementing .NET interfaces.
 --- netlib-native-arrays @gencs @netlib=M4Lib
 import m4.*;

@@ -69,6 +69,16 @@ class TexprDynamic {
 	// Followed as Haxe's `follow` does (Null<T> included, abstracts not).
 	static function isTDynamic(t:T):Bool return TypeFunctions.follow(t).match(TDynamic(_));
 
+	// isTDynamic through abstracts, as gencs's real type sees Any: Dynamic.
+	static function isRealTDynamic(t:T, depth = 0):Bool {
+		if (depth > 20) return false;
+		return switch (TypeFunctions.follow(t)) {
+			case TDynamic(_): true;
+			case TAbstract(a, tl) if (!TypeFunctions.hasMeta(":coreType", a.meta)): isRealTDynamic(TypeFunctions.getUnderlyingType(a, tl), depth + 1);
+			case _: false;
+		}
+	}
+
 	static function isStringType(t:T):Bool {
 		return switch (TypeFunctions.follow(t)) {
 			case TInst(c, _): isPath(c.path, [], "String");
@@ -507,7 +517,7 @@ class TexprDynamic {
 				if (!eqChanges(e1, e2)) return false;
 				// Runtime.refEq when neither side is basic, Dynamic, a String or a type parameter.
 				var isBasicOp = isBasic(e1.type) || isBasic(e2.type);
-				var isRef = !isBasicOp && !(isTDynamic(e1.type) || isTDynamic(e2.type) || isStringType(e1.type) || isStringType(e2.type)
+				var isRef = !isBasicOp && !(isRealTDynamic(e1.type) || isRealTDynamic(e2.type) || isStringType(e1.type) || isStringType(e2.type)
 					|| isTypeParamType(e1.type) || isTypeParamType(e2.type));
 				tl.nullOperand(RValue(LObject), e1, false);
 				tl.nullOperand(RValue(LObject), e2, false);
