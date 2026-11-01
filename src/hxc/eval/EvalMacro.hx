@@ -1950,16 +1950,13 @@ class EvalMacro {
 						var ec = getContext(com);
 						var savedPos = curPos;
 						curPos = e.pos;
-						// A macro method receives its arguments as expressions; a plain function (like
-						// Compiler.nullSafety) receives constants: the arguments type against the
-						// function's signature (so a malformed object literal errors here) and the typed
+						// A macro method is called as a plain function (like Compiler.nullSafety) is: the
+						// arguments type against the function's signature (so a malformed object literal
+						// errors here, and a value given for an Expr parameter is refused) and the typed
 						// constants convert to values.
 						var cf = macroWorldField({pack: t.pack, name: t.name}, t.method, {pack: t.pack, name: t.module}, t.moduleOnly);
-						var isMacroFn = cf != null && cf.kind.match(Method(MethMacro));
 						var sig = cf == null ? null : switch (TypeFunctions.follow(cf.type)) { case TFun(s2): s2; case _: null; };
-						var vargs = if (isMacroFn) {
-							[for (a in args) encodeExpr(ec, a)];
-						} else if (sig != null) {
+						var vargs = if (sig != null) {
 							var tctx = new hxc.typing.TyperContext(macroCom);
 							// The macro typer stays in nullModule until a load sets its module, and the init macro's
 							// arguments type there: a bare enum value resolves against the expected type by joining that
