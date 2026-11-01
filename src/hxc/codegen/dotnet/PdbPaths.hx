@@ -3,9 +3,10 @@ package hxc.codegen.dotnet;
 import haxe.io.Path;
 
 // The name a PDB's Document row gives a source file, with forward slashes, by the first rule that fits:
-// a -D dotnet-pathmap entry, relative to the current folder, haxe-std/ under the std path,
-// haxelib/<library>/ under a library's class path, hxc-runtime/ under the embedded runtime, else the
-// full path with a warning. The names the DLL holds for trace and ?pos arguments are Haxe's own.
+// a -D dotnet-pathmap entry, hxc-runtime/ under the embedded runtime, the full path in a -D dotnet-debug-jit
+// build, relative to the current folder, haxe-std/ under the std path, haxelib/<library>/ under a library's
+// class path, else the full path with a warning. The names the DLL holds for trace and ?pos arguments are
+// Haxe's own.
 
 class PdbPaths {
 	static inline final STD = "haxe-std/";
@@ -17,16 +18,19 @@ class PdbPaths {
 	final stdRoots:Array<String>;
 	final libraries:Array<{classPath:String, library:String}>;
 	final pathmap:Array<{from:String, to:String}>;
+	// A debugger opens a Document by its name, and a short name is no file it can open.
+	final fullPaths:Bool;
 	final warn:(String) -> Void;
 	// The files the full-path warning has named.
 	final warned = new Map<String, Bool>();
 
 	public function new(cwd:String, stdRoots:Array<String>, libraries:Array<{classPath:String, library:String}>, pathmap:Array<{from:String, to:String}>,
-			warn:(String) -> Void) {
+			fullPaths:Bool, warn:(String) -> Void) {
 		this.cwd = folder(cwd);
 		this.stdRoots = [for (r in stdRoots) folder(r)];
 		this.libraries = [for (l in libraries) {classPath: folder(l.classPath), library: l.library}];
 		this.pathmap = pathmap;
+		this.fullPaths = fullPaths;
 		this.warn = warn;
 	}
 
@@ -76,6 +80,7 @@ class PdbPaths {
 		}
 		if (best != null) return best.to + rest;
 		if (virtual) return RUNTIME + path.substr(RuntimeSources.ROOT.length);
+		if (fullPaths) return path;
 		rest = after(path, cwd);
 		if (rest != null) return rest;
 		for (root in stdRoots) {

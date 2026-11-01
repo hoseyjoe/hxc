@@ -335,26 +335,28 @@ name in the PDB. Inside a closure's body, a variable it captured is a field of t
 named local; the function that declared it still names its own copy.
 `-D dotnet-debug-jit` needs `-debug`, and is a compile error without it.
 
-Today the PDB names each source file by a short path, so it does not hold the build machine's folders. The
-first of these rules that fits gives the name, written with forward slashes (a later change may make
-`-D dotnet-debug-jit` builds use full paths by default, if a debugger turns out not to bind breakpoints
-to the short ones):
+A `-D dotnet-debug-jit` build is for debugging on the machine that built it, so its PDB names each source
+file by full path, and a debugger opens them with no setup: VS Code binds a breakpoint to a short name too,
+then cannot open the file (`Could not load source 'src/data/Puzzles.hx': Incorrect format of 'source' message.`).
+Any other PDB names files by short paths, so it does not hold the build machine's folders. The first of
+these rules that fits gives the name, written with forward slashes:
 
 1. `-D dotnet-pathmap=<from>=<to>[,<from>=<to>...]`: a file whose full path starts with `<from>` gets
    `<to>` in its place. The longest `<from>` wins, and a relative `<from>` is resolved against the
    current folder. A value that is not `<from>=<to>` pairs is a compile error: `-D dotnet-pathmap must be
    <from>=<to> pairs separated by commas, like C:/work/=src/ (not <the value>)`.
-2. A file under the current folder (where hxc runs, or `--cwd`): its path relative to that folder, such
-   as `src/db/Foo.hx`.
-3. A file under the Haxe std: `haxe-std/` plus the path under it, such as `haxe-std/haxe/Exception.hx`
-   (the overlays under `cs/_std/` keep that folder).
-4. A file of a haxelib library: `haxelib/<library>/` plus the path under the library's class path.
-5. hxc's own runtime files: `hxc-runtime/` plus the path. Those files exist only inside the hxc binary,
+2. hxc's own runtime files: `hxc-runtime/` plus the path. Those files exist only inside the hxc binary,
    so their text is embedded in the PDB, and there is no folder to map for them.
-6. Anything else: its full path, with a warning that names `-D dotnet-pathmap`.
+3. In a `-D dotnet-debug-jit` build, anything else: its full path.
+4. A file under the current folder (where hxc runs, or `--cwd`): its path relative to that folder, such
+   as `src/db/Foo.hx`.
+5. A file under the Haxe std: `haxe-std/` plus the path under it, such as `haxe-std/haxe/Exception.hx`
+   (the overlays under `cs/_std/` keep that folder).
+6. A file of a haxelib library: `haxelib/<library>/` plus the path under the library's class path.
+7. Anything else: its full path, with a warning that names `-D dotnet-pathmap`.
 
-The debugger has to be told where those folders are. In VS Code, add a `sourceFileMap` to the `coreclr`
-launch configuration, and let `symbolOptions` find the `.pdb`:
+To debug a build with short names, the debugger has to be told where those folders are. In VS Code, add a
+`sourceFileMap` to the `coreclr` launch configuration, and let `symbolOptions` find the `.pdb`:
 
 ```json
 {

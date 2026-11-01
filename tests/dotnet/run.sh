@@ -17,7 +17,8 @@
 # sources are. That .pdb must also hold neither the case directory's path nor the user's profile folder
 # (written with / or \, as an MSYS or a Windows path, in any case), as `grep -a -i -F` finds it in the
 # file or in the Document names HxcCheck's docs prints (a name is stored part by part, so the file alone
-# never shows it whole), or the case fails with `the PDB holds a machine path: <path>`.
+# never shows it whole), or the case fails with `the PDB holds a machine path: <path>`. `-D dotnet-debug-jit`
+# asks for full paths in the .pdb, so that case compiles twice in one folder, as a case without -debug does.
 # A @stress-fieldlookup case's .dll must also pass HxcCheck's stress-fieldlookup (haxe.lang.FieldLookup
 # called from many threads at once), and a @stress-arrayforward case's HxcCheck's stress-arrayforward
 # (its P.toInts making the first cast of one array from many threads at once). A @runtimeconfig case
@@ -703,9 +704,13 @@ run_case() {
 
 	local main=(--main "$module")
 	if [ $lib = 1 ]; then main=("$module"); fi
-	# A case with -debug writes a .pdb, and its second compile runs on a copy of the sources in m/.
+	# A case with -debug writes a .pdb, and its second compile runs on a copy of the sources in m/, unless
+	# -D dotnet-debug-jit puts the folder in that .pdb.
 	local debug=0 bdir="b/P" bcwd="$casedir_m"
-	case " $extra " in *" -debug "*) debug=1; bdir="m/b/P"; bcwd="$casedir_m/m" ;; esac
+	case " $extra " in
+		*" -D dotnet-debug-jit "*) ;;
+		*" -debug "*) debug=1; bdir="m/b/P"; bcwd="$casedir_m/m" ;;
+	esac
 	if [ $debug = 1 ]; then
 		case "$file" in */*) mkdir -p "$casedir/m/${file%/*}" ;; *) mkdir "$casedir/m" ;; esac
 		write_sources "$source" "$casedir/m" "$file"
