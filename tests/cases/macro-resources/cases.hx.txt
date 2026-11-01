@@ -5,7 +5,7 @@ class P {
 	}
 }
 
---- macro-resource-init-macro-string-args + --macro M.add("n","text")
+--- macro-resource-init-macro-string-args + --macro M.add('n','text')
 class P {
 	static function main() {
 		for (n in haxe.Resource.listNames()) Sys.println(n + "=" + haxe.Resource.getString(n));
