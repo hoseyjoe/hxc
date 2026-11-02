@@ -14071,6 +14071,40 @@ Array`1[System.Object]
 G`1[System.Object]
 G`1[System.Int32]
 True
+# A generic method of a @:nativeGen class keeps its type arguments, where gencs erases those of an hxgeneric one: its
+# parameter may be a .NET generic, and no List<C> is a List<object>. haxeui-cs's Continue.then, given a Task<IStorageFile>.
+--- nativegen-method-type-argument-stays @gencs
+import cs.system.collections.generic.List_1;
+class C { public function new() {} }
+@:nativeGen class N {
+	public static function count<T>(l:List_1<T>):Int return l.Count;
+	public function first<T>(l:List_1<T>):T return l[0];
+	public function new() {}
+}
+@:nativeGen class NG<T> {
+	public function new() {}
+	public function count<U>(l:List_1<U>):Int return l.Count;
+}
+class P {
+	static function main() {
+		var l = new List_1<C>();
+		l.Add(new C());
+		Sys.println(N.count(l));
+		Sys.println(new N().first(l) != null);
+		Sys.println(new NG<Int>().count(l));
+		var ints = new List_1<Int>();
+		ints.Add(7);
+		Sys.println(N.count(ints));
+		Sys.println(new N().first(ints));
+	}
+}
+===
+[run]
+1
+True
+1
+1
+7
 --- method-type-argument-erasure @gencs
 // Method type parameters: which instantiations gencs gives a generic method, and how a class type parameter flows.
 class C { public function new() {} }
