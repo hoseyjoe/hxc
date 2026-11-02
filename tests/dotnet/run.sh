@@ -4,7 +4,7 @@
 #                       [--no-gencs-cache]
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
 # [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds] [@optimized] [@trimmed]
-# [@dotnet-flag] [+ extra hxc args]`, its source, `===`,
+# [@aot] [@dotnet-flag] [+ extra hxc args]`, its source, `===`,
 # and the expected result. The source goes in the module's file; a source line `//// <path>` starts
 # another file, at <path> relative to the case directory (not in a @gencs case, whose source gencs gets
 # as one file). Each case compiles twice into a fresh directory, and its .dll must be
@@ -27,7 +27,9 @@
 # long-running program sees it. A @trimmed case's program also goes through the IL trimmer (trimmed.csproj.in:
 # a self-contained `dotnet publish` in full mode, with a small host that calls its Main); what that build
 # prints must be what the program printed, or the result gets a [trimmed] section. The first @trimmed run on a
-# machine restores the runtime pack and ILLink from NuGet.
+# machine restores the runtime pack and ILLink from NuGet. An @aot case is compiled a third time, into c/P with
+# -D dotnet-aot, and the native program hxc leaves there must print what the program printed, or the result gets
+# an [aot] section. It needs a C++ linker, and the first @aot run on a machine restores ILCompiler from NuGet.
 # ILVerify's report fails a case, unless the expectation has a [verify] section holding exactly that report.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
@@ -640,11 +642,31 @@ run_trimmed() {
 	esac
 }
 
+# Compiles the case with -D dotnet-aot into c/P and runs the program $2 (no suffix) hxc leaves there for at most
+# $1 seconds, setting $ran as run_program does. A compile that fails sets $aot_problem instead.
+run_aot() {
+	local lim="$1" program="$2" code=0 log
+	set -f
+	log="$("$compiler" --cwd "$casedir_m" -cp . "${main[@]}" "$target" c/P --haxelib-global "${define[@]}" $extra "${netargs[@]}" -D dotnet-aot 2>&1)" || code=$?
+	set +f
+	if [ $code != 0 ]; then
+		aot_problem="the -D dotnet-aot compile failed (exit $code):"$'\n'"$log"$'\n'
+		return
+	fi
+	code=0
+	ran="$(cd "$casedir/c/P" && exec timeout -k 10 "$lim" "./$program" 2>&1)" || code=$?
+	case $code in
+		0) ;;
+		124 | 137) ran="${ran}"$'\n'"[timeout after ${lim}s]" ;;
+		*) ran="${ran}"$'\n'"[exit $code]" ;;
+	esac
+}
+
 # Runs case $1 (tags $2, extra args $3, source $4, expected result $5) in directory $6, which must
 # not exist yet, and prints its report.
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 trimmed=0 limit t n netargs=()
+	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 trimmed=0 aot=0 limit t n netargs=()
 	local target=--cs define=(-D dotnet)
 	for t in $tags; do
 		case "$t" in
@@ -658,6 +680,7 @@ run_case() {
 			@runtimeconfig) config=1 ;;
 			@optimized) optimized=1 ;;
 			@trimmed) trimmed=1 ;;
+			@aot) aot=1 ;;
 			@dotnet-flag) target=--dotnet; define=() ;;
 			@netlib | @netlib=?*) ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
@@ -680,6 +703,12 @@ run_case() {
 	if [ $trimmed = 1 ] && { [ $lib = 1 ] || [ $config = 1 ]; }; then
 		echo "FAIL $name"
 		echo "@trimmed compares the program's run with its trimmed build's, and a @lib or @runtimeconfig case does not run"
+		failed=$((failed + 1))
+		return
+	fi
+	if [ $aot = 1 ] && { [ $lib = 1 ] || [ $config = 1 ]; }; then
+		echo "FAIL $name"
+		echo "@aot compares the program's run with its native build's, and a @lib or @runtimeconfig case does not run"
 		failed=$((failed + 1))
 		return
 	fi
@@ -802,6 +831,17 @@ run_case() {
 					tout="$norm"
 					normalize "$rout"
 					[ "$tout" != "$norm" ] && result="${result:+$result$'\n'}[trimmed]"$'\n'"$tout"
+				fi
+			fi
+			if [ $aot = 1 ]; then
+				local aot_problem="" aout program="${dll##*/}"
+				run_aot "$limit" "${program%.dll}"
+				problem="${problem}${aot_problem}"
+				if [ -z "$aot_problem" ]; then
+					normalize "$ran"
+					aout="$norm"
+					normalize "$rout"
+					[ "$aout" != "$norm" ] && result="${result:+$result$'\n'}[aot]"$'\n'"$aout"
 				fi
 			fi
 			if [ $gencs = 1 ] && [ -f "$gencsroot/$name/out" ]; then

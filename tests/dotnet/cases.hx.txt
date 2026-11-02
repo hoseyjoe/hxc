@@ -30313,3 +30313,123 @@ class P {
 ===
 [compile]
 Error: Multiple targets
+# -D dotnet-aot: Reflect and Type reach the Haxe assembly's members by name, and generic Haxe classes and methods
+# are made at run time, all of which the native build must keep.
+--- aot-reflection-and-generics @aot
+enum Color { Red; Rgb(r:Int, g:Int, b:Int); }
+class Pt {
+	public static var count = 0;
+	public var x:Int;
+	public function new(x:Int) { this.x = x; count++; }
+	public function twice():Int return x * 2;
+}
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class Gm {
+	public function new() {}
+	public function id<T>(x:T):T return x;
+}
+class P {
+	static function main() {
+		var p = new Pt(3);
+		var d:Dynamic = p;
+		Sys.println(Reflect.field(p, "x") + " " + d.twice() + " " + Reflect.field(Pt, "count"));
+		var q:Pt = Type.createInstance(Type.resolveClass("Pt"), [5]);
+		Sys.println(q.twice() + " " + Type.getInstanceFields(Pt));
+		Sys.println(Type.createEnum(Type.resolveEnum("Color"), "Rgb", [1, 2, 3]));
+		var ser = haxe.Serializer.run({p: p, c: Rgb(4, 5, 6)});
+		var back:Dynamic = haxe.Unserializer.run(ser);
+		Sys.println(ser + " " + back.p.x + " " + back.c);
+		var byName:Dynamic = Type.createInstance(Type.resolveClass("Box"), [7]);
+		Sys.println(byName.get());
+		var g:Dynamic = new Gm();
+		Sys.println(g.id(9));
+		var a:Box<Dynamic> = new Box<Dynamic>(1.5);
+		var f:Box<Float> = cast a;
+		Sys.println(f.get() + 1);
+	}
+}
+===
+[run]
+3 6 1
+10 [twice,x]
+Rgb(1,2,3)
+oy1:cwy5:Colory3:Rgb:3i4i5i6y1:pcy2:Pty1:xi3gg 3 Rgb(4,5,6)
+7
+9
+2.5
+# The native program starts at hxc's entry point, so main's STAThread still counts.
+--- aot-keeps-the-entry-point @aot
+class P {
+	@:meta(System.STAThread())
+	static function main() {
+		Sys.println(cs.system.threading.Thread.CurrentThread.GetApartmentState() != cs.system.threading.ApartmentState.MTA);
+	}
+}
+===
+[run]
+True
+--- aot-references-the-net-lib @aot @netlib=M4Lib
+@:native("M4.PropBase") extern class B0 {
+	function new();
+	function ReadKey():String;
+}
+class P {
+	static function main() {
+		Sys.println(new B0().ReadKey());
+	}
+}
+===
+[run]
+base
+# A framework type reached only through Dynamic is kept by a descriptor (without it, Port is not found).
+--- aot-descriptor-keeps-framework-members @aot + -D dotnet-aot-descriptor=keep.xml
+class P {
+	static function main() {
+		var u:Dynamic = new cs.system.Uri("http://example.com:81/a");
+		Sys.println(u.Port);
+	}
+}
+//// keep.xml
+<linker>
+	<assembly fullname="System.Private.Uri">
+		<type fullname="System.Uri" preserve="all" />
+	</assembly>
+</linker>
+===
+[run]
+81
+--- aot-needs-a-main @lib + -D dotnet-aot
+class P {}
+===
+[compile]
+dotnet: -D dotnet-aot needs -main: a library has no entry point to start a native program at
+--- aot-descriptor-must-exist + -D dotnet-aot -D dotnet-aot-descriptor=nope.xml
+class P {
+	static function main() {}
+}
+===
+[compile]
+dotnet: -D dotnet-aot-descriptor: nope.xml was not found
+# An onAfterGenerate hook can still write to the output directory, so the native program is built after it runs.
+--- aot-comes-after-the-after-generate-hooks @aot + --macro M.hook()
+class P {
+	static function main() {
+		Sys.println("native");
+	}
+}
+//// M.hx
+class M {
+	public static function hook() {
+		haxe.macro.Context.onAfterGenerate(function() {
+			var exe = haxe.macro.Compiler.getOutput() + "/P" + (Sys.systemName() == "Windows" ? ".exe" : "");
+			sys.io.File.saveContent(exe, "written by the hook");
+		});
+	}
+}
+===
+[run]
+native

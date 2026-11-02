@@ -447,11 +447,21 @@ class GenerateDotnet {
 		].join("\n");
 	}
 
-	public static function generate(ctx:Context):Void {
+	// The output directory, with `/` separators and no trailing one.
+	public static function outputDir(ctx:Context):String {
 		var dir = ctx.file.split("\\").join("/");
 		while (dir.length > 1 && StringTools.endsWith(dir, "/")) dir = dir.substr(0, dir.length - 1);
-		// The assembly is named by -D dll-name, else by the output directory's last segment.
-		var name = ctx.defines.rawDefined("dll_name") ? ctx.defines.rawDefinedValueSafe("dll_name") : dir.substr(dir.lastIndexOf("/") + 1);
+		return dir;
+	}
+
+	// The assembly is named by -D dll-name, else by the output directory's last segment.
+	public static function assemblyName(ctx:Context, dir:String):String {
+		return ctx.defines.rawDefined("dll_name") ? ctx.defines.rawDefinedValueSafe("dll_name") : dir.substr(dir.lastIndexOf("/") + 1);
+	}
+
+	public static function generate(ctx:Context):Void {
+		var dir = outputDir(ctx);
+		var name = assemblyName(ctx, dir);
 		var isDll = ctx.main == null;
 		var mb = new ModuleBuilder(name, isDll);
 		var g = new DotnetCtx(ctx, mb);
@@ -477,6 +487,7 @@ class GenerateDotnet {
 		// -D dotnet-debug-jit asks the JIT to keep what the PDB's .hx lines step through; without -debug there is none.
 		if (ctx.defines.rawDefined("dotnet_debug_jit") && !ctx.debug)
 			g.error("-D dotnet-debug-jit needs -debug: without the PDB there are no .hx lines to step through", Position.nullPos);
+		AotPublish.check(ctx, g, isDll);
 		// Resources (-resource files, or a macro's Context.addResource) are manifest resources, and
 		// haxe.Resource.content lists them; before planning, so the class gets its static constructor.
 		ResourcesToIl.fillContent(ctx);

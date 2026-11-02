@@ -1675,6 +1675,7 @@ class Compiler {
 				ctx.diagnostics = ctx.diagnostics.filter(function(d) return d.printedOnly == true);
 				abortOnDiagnostics(ctx, platform);
 			}
+			var dotnetWritten = false;
 			{
 				var tFilter = hxc.core.Timer.timer(["filters"]);
 				hxc.filters.Filters.run(new hxc.typing.TyperContext(ctx));
@@ -1729,6 +1730,7 @@ class Compiler {
 						var tGen = hxc.core.Timer.timer(["generate", "dotnet"]);
 						hxc.codegen.dotnet.GenerateDotnet.generate(ctx);
 						tGen();
+						dotnetWritten = true;
 					}
 				}
 			}
@@ -1738,6 +1740,11 @@ class Compiler {
 			// the compile like the final error check does, so a real target that printed an error does not
 			// exit 0.
 			abortOnDiagnostics(ctx, platform);
+			// After the callbacks, which can still write to the output, and only from an assembly written without errors.
+			if (dotnetWritten && ctx.defines.rawDefined("dotnet_aot")) {
+				hxc.codegen.dotnet.AotPublish.publish(ctx);
+				abortOnDiagnostics(ctx, platform);
+			}
 			if (platform == Eval) {
 				// --interp: run the program through the evaluator so its own output (Sys.println,
 				// utest, ...) is the only thing on stdout, matching what haxe --interp prints.

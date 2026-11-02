@@ -120,6 +120,20 @@ the trimmer can't see, so without it a fully trimmed program can lose them and f
 not keep members of .NET libraries that only dynamic access reaches (a `Dynamic` holding a `System.Uri`,
 say). It is opt-in because `GetManifestResourceNames` lists the resource in an untrimmed run.
 
+`-D dotnet-aot` also compiles the program to a native executable with Native AOT, `<dir>/<name>.exe`
+(`<dir>/<name>` off Windows), for the machine's own OS and CPU; it can go in an `.hxml` like any define. It runs
+`dotnet publish` on a project hxc writes to `<dir>/aot`, so it needs the .NET SDK and the C++ linker Native AOT
+uses (on Windows, Visual Studio's C++ build tools), and the first build restores the compiler from NuGet. The
+publish's report, warnings included, is in `<dir>/aot/publish.log` and the native debug symbols are in
+`<dir>/aot/publish`. A program starts faster and uses less memory than under the JIT, but a long run can be slower.
+
+Haxe's own reflection works as it does under the JIT, as the assembly's members are all kept. Members of .NET
+libraries that only dynamic access reaches are not (a `Dynamic` holding a `System.Uri`, or `Type.createInstance` of
+a framework class): they fail at run time unless `-D dotnet-aot-descriptor=<file>` names an
+[ILLink descriptor](https://learn.microsoft.com/dotnet/core/deploying/trimming/trimming-options#root-descriptors)
+that keeps them. `Sys.programPath()` returns an empty string. A `--net-lib` assembly that relies on run-time code
+generation will not work, and a native library it loads still has to be beside the executable.
+
 The assembly's references resolve against hxcs's `netlib` directory for `-D net-ver` (default 20), or
 the directories given with `--net-std`. By default that means a reference to `mscorlib` 2.0.0.0,
 which .NET 10 and later forward to their own libraries.
