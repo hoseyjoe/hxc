@@ -1089,11 +1089,14 @@ class TexprCalls {
 
 	// A method's token as a call reaches it, with a MethodSpec for a generic method, and its argument
 	// and return types there. `declared` is the method's type with the class's type arguments applied;
-	// the call's `calleeType` gives the method's own, those `given` binds aside.
+	// the call's `calleeType` gives the method's own, those `given` binds aside. As gencs's change_param_type,
+	// a class that is not hxgen (with type parameters of its own: not hxgeneric) keeps those: `Continue.then<T>` of
+	// a @:nativeGen class takes a Task<IStorageFile>, which no Task<object> is.
 	function methodRef(plan:ClassPlan, owner:IlSigNorm, inst:Array<IlSigNorm>, target:TClassField, declared:T,
 			calleeType:T, ?given:Array<Null<T>>):{token:Int, args:Array<IlSigNorm>, ret:IlSigNorm} {
 		var token = g.memberOf(plan, owner, target);
-		var margs = [for (t in DotnetTypes.inferParams(target.params, declared, calleeType, false, given)) g.types.typeArg(t)];
+		var native = plan.c != null && !(plan.c.params.length == 0 ? HxGen.isHxGen(TClassDecl(plan.c)) : HxGeneric.isHxGeneric(g, plan.c));
+		var margs = [for (t in DotnetTypes.inferParams(target.params, declared, calleeType, false, given)) native ? g.types.nativeArg(t) : g.types.typeArg(t)];
 		if (margs.length > 0) token = g.mb.methodSpec(token, g.sigs.methodSpec(margs));
 		var m = g.methodSigs.get(target);
 		return {
