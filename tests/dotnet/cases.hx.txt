@@ -30491,3 +30491,82 @@ class M {
 ===
 [run]
 native
+# -D dotnet-r2r: the precompiled assembly runs as its IL does, with reflection by name, Dynamic calls and generic
+# classes made at run time, which fall back to the JIT.
+--- r2r-runs-precompiled @r2r
+class Pt {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function twice():Int return x * 2;
+}
+class Box<T> {
+	public var v:T;
+	public function new(v:T) this.v = v;
+	public function get():T return v;
+}
+class P {
+	static function main() {
+		var d:Dynamic = new Pt(3);
+		var q:Pt = Type.createInstance(Type.resolveClass("Pt"), [5]);
+		Sys.println(Reflect.field(d, "x") + " " + d.twice() + " " + q.twice());
+		var byName:Dynamic = Type.createInstance(Type.resolveClass("Box"), [7]);
+		Sys.println(byName.get() + " " + new Box<Float>(1.5).get());
+		var total = 0;
+		for (i in 0...1000) total += i;
+		Sys.println(total);
+	}
+}
+===
+[run]
+3 6 10
+7 1.5
+499500
+# A library is precompiled too, so one hxc compile can be and another not.
+--- r2r-library @lib @r2r
+class P {
+	public static function area(w:Int, h:Int):Int return w * h;
+}
+===
+--- r2r-references-the-net-lib @r2r @netlib=M4Lib
+@:native("M4.PropBase") extern class B0 {
+	function new();
+	function ReadKey():String;
+}
+class P {
+	static function main() {
+		Sys.println(new B0().ReadKey());
+	}
+}
+===
+[run]
+base
+# The precompiled assembly keeps the IL one's debug directory, so the PDB hxc wrote still matches it.
+--- r2r-keeps-the-pdb @r2r + -debug
+class P {
+	static function main() {
+		Sys.println("stepped");
+	}
+}
+===
+[run]
+stepped
+# The assembly hxc writes without the define holds only IL.
+--- r2r-not-without-the-define @lib @dump=r2r
+class P {}
+===
+[dump]
+il only
+--- r2r-not-with-aot + -D dotnet-r2r -D dotnet-aot
+class P {
+	static function main() {}
+}
+===
+[compile]
+dotnet: -D dotnet-r2r and -D dotnet-aot can't be used together: a native program has no use for an assembly's ReadyToRun code
+--- r2r-not-with-debug-jit + -debug -D dotnet-r2r -D dotnet-debug-jit
+class P {
+	static function main() {}
+}
+===
+[compile]
+dotnet: -D dotnet-r2r and -D dotnet-debug-jit can't be used together: the precompiled code is optimized, which -D dotnet-debug-jit asks the JIT not to do

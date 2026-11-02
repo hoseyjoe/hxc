@@ -134,6 +134,16 @@ a framework class): they fail at run time unless `-D dotnet-aot-descriptor=<file
 that keeps them. `Sys.programPath()` returns an empty string. A `--net-lib` assembly that relies on run-time code
 generation will not work, and a native library it loads still has to be beside the executable.
 
+`-D dotnet-r2r` precompiles the assembly with ReadyToRun instead: `<dir>/<name>.dll` keeps its IL and gains machine
+code for the machine's own OS and CPU, so it runs with `dotnet <name>.dll` and is referenced as before, and its PDB
+still matches. It works for a library as well as a program, so of several assemblies some can be precompiled and
+some not; `--net-lib` assemblies are left as they are. The program starts nearly as fast as a native one, and its
+hot methods are still compiled again by the JIT, so a long run keeps the JIT's speed; on another OS or CPU the
+runtime ignores the machine code and runs the IL. It runs `dotnet publish` on a project hxc writes to `<dir>/r2r`,
+whose report is in `<dir>/r2r/publish.log`, so it needs the .NET SDK, and the first build restores Crossgen2 from
+NuGet. It can't be used with `-D dotnet-aot`, or with `-D dotnet-debug-jit`, whose unoptimized code the precompiled
+code would replace.
+
 The assembly's references resolve against hxcs's `netlib` directory for `-D net-ver` (default 20), or
 the directories given with `--net-std`. By default that means a reference to `mscorlib` 2.0.0.0,
 which .NET 10 and later forward to their own libraries.

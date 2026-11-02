@@ -488,7 +488,7 @@ class GenerateDotnet {
 		// -D dotnet-debug-jit asks the JIT to keep what the PDB's .hx lines step through; without -debug there is none.
 		if (ctx.defines.rawDefined("dotnet_debug_jit") && !ctx.debug)
 			g.error("-D dotnet-debug-jit needs -debug: without the PDB there are no .hx lines to step through", Position.nullPos);
-		AotPublish.check(ctx, g, isDll);
+		Publish.check(ctx, g, isDll);
 		// Resources (-resource files, or a macro's Context.addResource) are manifest resources, and
 		// haxe.Resource.content lists them; before planning, so the class gets its static constructor.
 		ResourcesToIl.fillContent(ctx);
