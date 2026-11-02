@@ -11,8 +11,8 @@ wrong, with the exact text of any message).
 2. `dotnet out/out.dll` prints eight lines, each naming `src/sample/Main.hx` and a line number:
    `total 28`, `inner 56`, `closure 15`, `caught side too large: 3`, `field 42`, `mapped [2,3]`,
    `static value 2`, `instance value 5`.
-3. The PDB names files by short paths (`src/sample/Main.hx`, `src/sample/Shapes.hx`, `haxe-std/...`,
-   `hxc-runtime/...`), so each debugger has to be told where those folders are (below).
+3. `-D dotnet-debug-jit` makes the PDB name files by full path, so a debugger needs no source map; only
+   `hxc-runtime/...` keeps a short name, with its text embedded.
 
 The lines used below (1-based):
 
@@ -44,19 +44,18 @@ The lines used below (1-based):
 Prerequisite: the C# extension (or C# Dev Kit), which provides the `coreclr` debugger.
 
 Open the folder `tests/dotnet/debugger` of the checkout (File > Open Folder). Its
-`.vscode/launch.json` launches `out/out.dll` with `"justMyCode": false`, looks for the PDB in `out/`, and
-maps `src/` and `haxe-std/` to real folders with `sourceFileMap`. (`haxelib/<library>/` can be mapped the
-same way; the sample uses no library.)
+`.vscode/launch.json` launches `out/out.dll` with `"justMyCode": false` and looks for the PDB in `out/`.
 
-1. **Breakpoint binding, before the program starts.** (This result decides whether a later task adds a
-   full-path fallback under `-D dotnet-debug-jit`, so write down exactly what you see.) Open
+1. **Breakpoint binding, before the program starts.** Open
    `src/sample/Shapes.hx`, click in the gutter left of line 11 to set a breakpoint, then press F5
    (start "Debug the sample (.NET)"). The breakpoint binds if its dot stays solid red once the debugger
    has started (it does not turn hollow grey with a "will not currently be hit" message) and execution
    stops on line 11 with the line highlighted. A dot that is solid only before F5 proves nothing.
-   Result:
+   Result: stopped on line 11 (VS Code's C# debugger, driven through its toolbar commands, DAP messages
+   logged). With short names and no `sourceFileMap` it binds and stops too, then cannot open the file:
+   `Could not load source 'src/data/Puzzles.hx': Incorrect format of 'source' message.` Hence full paths.
 2. **Step over.** (The items go over, out, into because item 1 already stops inside `Shapes.hx`.) Press F10. The highlight moves to line 12.
-   Result:
+   Result: moved to line 12, then line 13. Continue stopped at line 11 again, on the next iteration.
 3. **Step out.** Press Shift+F11. Execution returns to `src/sample/Main.hx`, at line 10 (the call site) or
    the line after it, and the Call Stack shows `sample.Main.main` at a `.hx` line.
    Result:
@@ -85,7 +84,7 @@ same way; the sample uses no library.)
    Result:
 9. **Stepping into `Reflect.field` shows hxc's runtime source.** Set a breakpoint on `src/sample/Main.hx`
    line 25 and continue to it. Press F11 until execution is inside `Reflect.field`. A source file opens:
-   either `haxe-std/cs/_std/Reflect.hx` (found through `sourceFileMap`) or a tab named `hxc-runtime/...` holding
+   either `cs/_std/Reflect.hx` under the Haxe std folder or a tab named `hxc-runtime/...` holding
    hxc's embedded text. Write down the name, which of the two it is, and whether stepping goes on line by
    line in it. If a "source not available" page opens instead, copy its text.
    Result:
@@ -131,22 +130,15 @@ Prerequisite: a Visual Studio with the ".NET desktop development" workload.
 Visual Studio cannot open a DLL as a project, so start it through a console project: create any C#
 Console project, open its Properties > Debug > Launch Profiles, and add an "Executable" profile whose
 executable is `dotnet` and whose arguments are the full path of `tests/dotnet/debugger/out/out.dll` in
-your checkout; select that profile. (The project's own program does not run.) Then set up symbols and
-sources, with `<sample>` meaning the full path of `tests/dotnet/debugger` in your checkout:
+your checkout; select that profile. (The project's own program does not run.) Then set up symbols, with
+`<sample>` meaning the full path of `tests/dotnet/debugger` in your checkout:
 
 - Tools > Options > Debugging > Symbols: add the folder `<sample>/out`.
 - Tools > Options > Debugging > General: untick "Enable Just My Code".
-- Solution Explorer: right-click the solution > Properties > Common Properties > Debug Source Files, and
-  add `<sample>/` (the folder that `src/sample/Main.hx` is relative to) and `C:/HaxeToolkit/haxe/std/`.
-  The PDB names a std file `haxe-std/haxe/Exception.hx`; Visual Studio is expected to join each listed
-  folder with the document name or its trailing parts, so `haxe/Exception.hx` is found under the std
-  folder. This route is what is being tested: record in item 1 whether it worked, for the sample's own
-  files and for a std file.
 
 Write in item 1's Result how you started the program, and which of these settings you had to use.
 
-1. **Breakpoint binding, before the program starts.** (This result decides whether a later task adds a
-   full-path fallback under `-D dotnet-debug-jit`, so write down exactly what you see.) With the settings
+1. **Breakpoint binding, before the program starts.** With the settings
    above, open `src/sample/Shapes.hx` (File > Open > File) and click the margin left of line 11. Press F5.
    The breakpoint binds if its circle stays solid red once debugging has started (it does not turn hollow
    with "The breakpoint will not currently be hit") and execution stops on line 11. A circle that is

@@ -592,6 +592,30 @@ class Mod {
 ===
 [dump]
 document src/pack/Mod.hx sha256 csharp
+# -D dotnet-debug-jit names a file by its full path, which a debugger can open with no source map. A
+# -D dotnet-pathmap entry still wins, and a runtime file, on no disk, keeps its name and embedded text.
+--- pdb-names-debug-jit + -debug -D dotnet-debug-jit
+class P {
+	static function main() {
+		Sys.println(new cs.system.diagnostics.StackTrace(true).GetFrame(0).GetFileName());
+	}
+}
+===
+[run]
+$CASE/P.hx
+--- pdb-names-debug-jit-pathmap @module=pack.Mod @dump=doc:src/pack/Mod.hx,doc:hxc-runtime/cs/internal/Runtime.hx + -debug -D dotnet-debug-jit -D dotnet-pathmap=pack/=src/pack/
+package pack;
+class Mod {
+	static function main() {
+		Sys.println(new cs.system.diagnostics.StackTrace(true).GetFrame(0).GetFileName());
+	}
+}
+===
+[run]
+src/pack/Mod.hx
+[dump]
+document src/pack/Mod.hx sha256 csharp
+document hxc-runtime/cs/internal/Runtime.hx sha256 csharp embedded ok
 --- pdb-pathmap-malformed @lib + -debug -D dotnet-pathmap=foo
 class P {}
 ===

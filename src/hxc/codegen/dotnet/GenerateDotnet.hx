@@ -109,7 +109,8 @@ class DotnetCtx {
 			else
 				pathmap = parsed;
 		}
-		return new PdbPaths(cwd, ctx.stdPath, ctx.libraryClassPaths, pathmap, s -> ctx.warning(hxc.core.WarningList.Warning.WUser, [], s, Position.nullPos));
+		return new PdbPaths(cwd, ctx.stdPath, ctx.libraryClassPaths, pathmap, ctx.defines.rawDefined("dotnet_debug_jit"),
+			s -> ctx.warning(hxc.core.WarningList.Warning.WUser, [], s, Position.nullPos));
 	}
 
 	static function normalizePath(p:String):String {

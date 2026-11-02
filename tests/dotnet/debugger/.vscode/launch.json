@@ -12,10 +12,6 @@
 			"justMyCode": false,
 			"symbolOptions": {
 				"searchPaths": ["${workspaceFolder}/out"]
-			},
-			"sourceFileMap": {
-				"src/": "${workspaceFolder}/src/",
-				"haxe-std/": "C:/HaxeToolkit/haxe/std/"
 			}
 		}
 	]
