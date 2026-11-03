@@ -30570,3 +30570,145 @@ class P {
 ===
 [compile]
 dotnet: -D dotnet-r2r and -D dotnet-debug-jit can't be used together: the precompiled code is optimized, which -D dotnet-debug-jit asks the JIT not to do
+# -D dotnet-exe=launcher: the SDK's launcher starts the assembly beside it on the installed .NET, so the program runs as
+# `dotnet P.dll` does, with Dynamic calls and reflection by name.
+--- exe-launcher @exe=launcher
+class Pt {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function twice():Int return x * 2;
+}
+class P {
+	static function main() {
+		var d:Dynamic = new Pt(3);
+		var q:Pt = Type.createInstance(Type.resolveClass("Pt"), [5]);
+		Sys.println(Reflect.field(d, "x") + " " + d.twice() + " " + q.twice());
+		Sys.println(new cs.system.Object().GetType().Assembly.Location == "" ? "bundled" : "installed");
+	}
+}
+===
+[run]
+3 6 10
+installed
+# -D dotnet-exe=self-contained: one file holds the assembly and the runtime, so it runs alone in an empty folder, and the
+# framework's assemblies come from the file (their Location is empty), not from the installed .NET.
+--- exe-self-contained @exe=self-contained
+class Pt {
+	public var x:Int;
+	public function new(x:Int) this.x = x;
+	public function twice():Int return x * 2;
+}
+class P {
+	static function main() {
+		var d:Dynamic = new Pt(3);
+		var q:Pt = Type.createInstance(Type.resolveClass("Pt"), [5]);
+		Sys.println(Reflect.field(d, "x") + " " + d.twice() + " " + q.twice());
+		Sys.println(new cs.system.Object().GetType().Assembly.Location == "" ? "bundled" : "installed");
+	}
+}
+===
+[run]
+3 6 10
+installed
+[exe]
+3 6 10
+bundled
+# With -D dotnet-r2r, the launcher starts the precompiled assembly, and the self-contained program holds it.
+--- exe-launcher-r2r @exe=launcher @r2r
+class P {
+	static function main() {
+		var total = 0;
+		for (i in 0...1000) total += i;
+		Sys.println(total);
+	}
+}
+===
+[run]
+499500
+--- exe-self-contained-r2r @exe=self-contained @r2r
+class P {
+	static function main() {
+		var total = 0;
+		for (i in 0...1000) total += i;
+		Sys.println(total);
+	}
+}
+===
+[run]
+499500
+# A launcher finds a --net-lib assembly beside it, and a self-contained program holds it.
+--- exe-launcher-references-the-net-lib @exe=launcher @netlib=M4Lib
+@:native("M4.PropBase") extern class B0 {
+	function new();
+	function ReadKey():String;
+}
+class P {
+	static function main() {
+		Sys.println(new B0().ReadKey());
+	}
+}
+===
+[run]
+base
+--- exe-self-contained-references-the-net-lib @exe=self-contained @netlib=M4Lib
+@:native("M4.PropBase") extern class B0 {
+	function new();
+	function ReadKey():String;
+}
+class P {
+	static function main() {
+		Sys.println(new B0().ReadKey());
+	}
+}
+===
+[run]
+base
+# The program starts at hxc's entry point, so main's STAThread still counts.
+--- exe-self-contained-keeps-the-entry-point @exe=self-contained
+class P {
+	@:meta(System.STAThread())
+	static function main() {
+		Sys.println(cs.system.threading.Thread.CurrentThread.GetApartmentState() != cs.system.threading.ApartmentState.MTA);
+	}
+}
+===
+[run]
+True
+# An onAfterGenerate hook can still write to the output directory, so the program is made after it runs.
+--- exe-comes-after-the-after-generate-hooks @exe=launcher + --macro M.hook()
+class P {
+	static function main() {
+		Sys.println("launched");
+	}
+}
+//// M.hx
+class M {
+	public static function hook() {
+		haxe.macro.Context.onAfterGenerate(function() {
+			var exe = haxe.macro.Compiler.getOutput() + "/P" + (Sys.systemName() == "Windows" ? ".exe" : "");
+			sys.io.File.saveContent(exe, "written by the hook");
+		});
+	}
+}
+===
+[run]
+launched
+--- exe-needs-a-main @lib + -D dotnet-exe=launcher
+class P {}
+===
+[compile]
+dotnet: -D dotnet-exe needs -main: a library has no entry point for a program to start at
+--- exe-kind-must-be-known + -D dotnet-exe=native
+class P {
+	static function main() {}
+}
+===
+[compile]
+dotnet: -D dotnet-exe must be launcher or self-contained (not native)
+--- exe-not-with-aot + -D dotnet-exe=self-contained -D dotnet-aot
+class P {
+	static function main() {}
+}
+===
+[compile]
+dotnet: -D dotnet-exe and -D dotnet-aot can't be used together: -D dotnet-aot's native program is already an executable

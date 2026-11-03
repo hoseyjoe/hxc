@@ -2,9 +2,10 @@
 # Runs the .NET generator's cases in cases.hx.txt.
 #   tests/dotnet/run.sh --compiler <hxc> [--std <dir>] [--case <name>] [--haxe <haxe>] [-j <jobs>]
 #                       [--no-gencs-cache]
+# --case runs the cases whose names match it, a shell pattern like `exe-*`.
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
 # [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds] [@optimized] [@trimmed]
-# [@aot] [@r2r] [@dotnet-flag] [+ extra hxc args]`, its source, `===`,
+# [@aot] [@r2r] [@exe=launcher|@exe=self-contained] [@dotnet-flag] [+ extra hxc args]`, its source, `===`,
 # and the expected result. The source goes in the module's file; a source line `//// <path>` starts
 # another file, at <path> relative to the case directory (not in a @gencs case, whose source gencs gets
 # as one file). Each case compiles twice into a fresh directory, and its .dll must be
@@ -34,7 +35,10 @@
 # An @r2r case is compiled a third time too, into c/P with -D dotnet-r2r: the assembly hxc leaves there must hold
 # ReadyToRun code, its debug directory (with -debug) must still match its PDB as the IL one's does, and unless @lib
 # it must print what the program printed, or the result gets an [r2r] section. The first @r2r run on a machine
-# restores Crossgen2 from NuGet.
+# restores Crossgen2 from NuGet. An @exe case is compiled once more, into d/P with -D dotnet-exe set to the tag's
+# kind (and -D dotnet-r2r with @r2r, whose assembly there must then hold ReadyToRun code): a launcher runs where hxc
+# left it, and a self-contained program alone in d/alone. It must print what the program printed, or the result
+# gets an [exe] section. The first self-contained run on a machine restores the runtime pack from NuGet.
 # ILVerify's report fails a case, unless the expectation has a [verify] section holding exactly that report.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
@@ -703,11 +707,48 @@ run_r2r() {
 	run_program "$casedir/c/P" "$lim" "$file"
 }
 
+# Compiles the case with -D dotnet-exe=$2 (and -D dotnet-r2r for an @r2r case) into d/P and runs the program $3 (no
+# suffix) hxc leaves there for at most $1 seconds, setting $ran as run_program does: a launcher where hxc wrote it,
+# with every fixture library beside it, and a self-contained program alone in d/alone, as it holds its libraries. A
+# compile that fails, or an @r2r assembly with no ReadyToRun code, sets $exe_problem instead.
+run_exe() {
+	local lim="$1" kind="$2" program="$3" code=0 log out dir="$casedir/d/P" r2rdef=()
+	[ $r2r = 1 ] && r2rdef=(-D dotnet-r2r)
+	set -f
+	log="$("$compiler" --cwd "$casedir_m" -cp . "${main[@]}" "$target" d/P --haxelib-global "${define[@]}" $extra "${netargs[@]}" "${r2rdef[@]}" -D "dotnet-exe=$kind" 2>&1)" || code=$?
+	set +f
+	if [ $code != 0 ]; then
+		exe_problem="the -D dotnet-exe=$kind compile failed (exit $code):"$'\n'"$log"$'\n'
+		return
+	fi
+	if [ $r2r = 1 ]; then
+		paths "$dir/$program.dll"
+		out="$(exec dotnet "$checkdll" dump "$path_m" r2r 2>&1)"
+		if [ "$out" != "readytorun" ]; then
+			exe_problem="the -D dotnet-exe=$kind assembly holds no ReadyToRun code: $out"$'\n'
+			return
+		fi
+	fi
+	if [ "$kind" = self-contained ]; then
+		mkdir "$casedir/d/alone"
+		cp "$dir/$program" "$dir/$program.exe" "$casedir/d/alone/" 2> /dev/null
+		dir="$casedir/d/alone"
+	elif [ -n "$netlibs" ]; then
+		cp "$netlibdir"/*.dll "$dir/"
+	fi
+	ran="$(cd "$dir" && exec timeout -k 10 "$lim" "./$program" 2>&1)" || code=$?
+	case $code in
+		0) ;;
+		124 | 137) ran="${ran}"$'\n'"[timeout after ${lim}s]" ;;
+		*) ran="${ran}"$'\n'"[exit $code]" ;;
+	esac
+}
+
 # Runs case $1 (tags $2, extra args $3, source $4, expected result $5) in directory $6, which must
 # not exist yet, and prints its report.
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 trimmed=0 aot=0 r2r=0 limit t n netargs=()
+	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 trimmed=0 aot=0 r2r=0 exe="" limit t n netargs=()
 	local target=--cs define=(-D dotnet)
 	for t in $tags; do
 		case "$t" in
@@ -723,6 +764,7 @@ run_case() {
 			@trimmed) trimmed=1 ;;
 			@aot) aot=1 ;;
 			@r2r) r2r=1 ;;
+			@exe=launcher | @exe=self-contained) exe="${t#@exe=}" ;;
 			@dotnet-flag) target=--dotnet; define=() ;;
 			@netlib | @netlib=?*) ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
@@ -757,6 +799,12 @@ run_case() {
 	if [ $r2r = 1 ] && [ $config = 1 ]; then
 		echo "FAIL $name"
 		echo "@r2r compares the program's run with its precompiled build's, and a @runtimeconfig case does not run"
+		failed=$((failed + 1))
+		return
+	fi
+	if [ -n "$exe" ] && { [ $lib = 1 ] || [ $config = 1 ]; }; then
+		echo "FAIL $name"
+		echo "@exe compares the program's run with its executable's, and a @lib or @runtimeconfig case does not run"
 		failed=$((failed + 1))
 		return
 	fi
@@ -945,6 +993,18 @@ run_case() {
 '"$r2rout"
 			fi
 		fi
+		# After the [r2r] section, as an @r2r case's program is precompiled here too.
+		if [ -n "$exe" ]; then
+			local exe_problem="" eout program="${dll##*/}"
+			run_exe "$limit" "$exe" "${program%.dll}"
+			problem="${problem}${exe_problem}"
+			if [ -z "$exe_problem" ]; then
+				normalize "$ran"
+				eout="$norm"
+				normalize "$rout"
+				[ "$eout" != "$norm" ] && result="${result:+$result$'\n'}[exe]"$'\n'"$eout"
+			fi
+		fi
 		local mode sout
 		for mode in $stress; do
 			if ! sout="$(exec dotnet "$checkdll" "$mode" "$dll_m" 2>&1)"; then problem="${problem}${mode} failed:"$'\n'"${sout}"$'\n'; fi
@@ -984,7 +1044,8 @@ run_case() {
 name=""
 c_name=(); c_tags=(); c_extra=(); c_source=(); c_expected=(); c_gfile=(); c_gmodule=()
 flush() {
-	if [ -n "$name" ] && { [ -z "$only" ] || [ "$only" = "$name" ]; }; then
+	# shellcheck disable=SC2053 # --case is a pattern
+	if [ -n "$name" ] && { [ -z "$only" ] || [[ $name == $only ]]; }; then
 		c_name+=("$name"); c_tags+=("$tags"); c_extra+=("$extra"); c_source+=("$source"); c_expected+=("$expected")
 	fi
 	name=""

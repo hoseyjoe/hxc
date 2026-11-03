@@ -144,6 +144,16 @@ whose report is in `<dir>/r2r/publish.log`, so it needs the .NET SDK, and the fi
 NuGet. It can't be used with `-D dotnet-aot`, or with `-D dotnet-debug-jit`, whose unoptimized code the precompiled
 code would replace.
 
+`-D dotnet-exe=launcher` adds an executable, `<dir>/<name>.exe` (`<dir>/<name>` off Windows), that starts
+`<dir>/<name>.dll` beside it on the .NET installed on the machine, as `dotnet <name>.dll` does; it is about 160 KB.
+`-D dotnet-exe=self-contained` makes it one file that holds the assembly, the `--net-lib` assemblies and the .NET
+runtime, so it runs on a machine with no .NET installed, on its own (about 70 MB). Both are for the machine's own OS and
+CPU, start at the program's entry point, and need `-main`. With `-D dotnet-r2r` the launcher starts the precompiled
+assembly and the self-contained file holds it. Each runs `dotnet publish` on a project hxc writes to `<dir>/exe`, whose
+report is in `<dir>/exe/publish.log`, so it needs the .NET SDK, and the first self-contained build restores the
+runtime pack from NuGet. A native library a `--net-lib` assembly loads still has to be beside the executable. It can't
+be used with `-D dotnet-aot`, whose native program is already an executable.
+
 The assembly's references resolve against hxcs's `netlib` directory for `-D net-ver` (default 20), or
 the directories given with `--net-std`. By default that means a reference to `mscorlib` 2.0.0.0,
 which .NET 10 and later forward to their own libraries.
