@@ -151,8 +151,14 @@ runtime, so it runs on a machine with no .NET installed, on its own (about 70 MB
 CPU, start at the program's entry point, and need `-main`. With `-D dotnet-r2r` the launcher starts the precompiled
 assembly and the self-contained file holds it. Each runs `dotnet publish` on a project hxc writes to `<dir>/exe`, whose
 report is in `<dir>/exe/publish.log`, so it needs the .NET SDK, and the first self-contained build restores the
-runtime pack from NuGet. A native library a `--net-lib` assembly loads still has to be beside the executable. It can't
-be used with `-D dotnet-aot`, whose native program is already an executable.
+runtime pack from NuGet. The self-contained file also holds the native libraries a `--net-lib` assembly has beside
+it where a `dotnet build` leaves a NuGet package's, in `runtimes/<rid>/native` for the machine's OS and CPU or
+`runtimes/<os>/native` (`win`, `linux`, `osx`), and unpacks them to a folder of the user's the first time it runs; a
+launcher finds them as `dotnet <name>.dll` does, through a `<name>.deps.json` beside it. It can't be used with
+`-D dotnet-aot`, whose native program is already an executable.
+
+`-D dotnet-winexe` makes the `-D dotnet-exe` or `-D dotnet-aot` executable a Windows GUI program, so it opens no
+console window; run from a console, what it prints still reaches that console's output. It changes nothing off Windows.
 
 The assembly's references resolve against hxcs's `netlib` directory for `-D net-ver` (default 20), or
 the directories given with `--net-std`. By default that means a reference to `mscorlib` 2.0.0.0,

@@ -38,7 +38,9 @@
 # restores Crossgen2 from NuGet. An @exe case is compiled once more, into d/P with -D dotnet-exe set to the tag's
 # kind (and -D dotnet-r2r with @r2r, whose assembly there must then hold ReadyToRun code): a launcher runs where hxc
 # left it, and a self-contained program alone in d/alone. It must print what the program printed, or the result
-# gets an [exe] section. The first self-contained run on a machine restores the runtime pack from NuGet.
+# gets an [exe] section. The first self-contained run on a machine restores the runtime pack from NuGet. On Windows,
+# the @aot and @exe executables must have the GUI subsystem when the extra args hold -D dotnet-winexe, and the
+# console one when they don't.
 # ILVerify's report fails a case, unless the expectation has a [verify] section holding exactly that report.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
@@ -47,7 +49,7 @@
 # is expected to compile: unless its expectation has a [compile] section, hxc failing or writing no
 # .dll fails the case.
 # A @netlib case gets fixture .NET libraries, the projects in tests/dotnet/netlib/<Name>/. A bare @netlib
-# passes ValLib, and @netlib=Name[,Name...] passes the named ones (CarLib, EvLib, LibA, LibB, M4Lib, ModLib, ValLib), as
+# passes ValLib, and @netlib=Name[,Name...] passes the named ones (CarLib, EvLib, LibA, LibB, M4Lib, ModLib, NativeLib, ValLib), as
 # `--net-lib <dir>/<Name>.dll` to both hxc compiles and to gencs's haxe command, and as a <Reference> in
 # the csproj gencs's output is built with. Only the named libraries are passed, but every fixture .dll is
 # copied beside hxc's output (after the determinism check) and beside gencs's, so a library that is
@@ -651,8 +653,23 @@ run_trimmed() {
 	esac
 }
 
-# Compiles the case with -D dotnet-aot into c/P and runs the program $2 (no suffix) hxc leaves there for at most
-# $1 seconds, setting $ran as run_program does. A compile that fails sets $aot_problem instead.
+# Sets $sproblem to what is wrong with the subsystem of executable $1, which define $2 made, or to nothing: on
+# Windows it must be the GUI one with -D dotnet-winexe among the case's extra args and the console one without.
+# Off Windows there is no $1 (it has no .exe suffix) and nothing to check.
+subsystem_problem() {
+	local pe got want=3
+	sproblem=""
+	[ -f "$1" ] || return 0
+	case " $extra " in *" -D dotnet-winexe "*) want=2 ;; esac
+	pe="$(od -A n -t u4 -j 60 -N 4 "$1")"
+	got="$(od -A n -t u2 -j $((pe + 92)) -N 2 "$1")"
+	got="${got// /}"
+	[ "$got" = "$want" ] || sproblem="the $2 executable's PE subsystem is $got, not $want (2 GUI, 3 console)"$'\n'
+}
+
+# Compiles the case with -D dotnet-aot into c/P, checks the subsystem of the program $2 (no suffix) hxc leaves there
+# and runs it for at most $1 seconds, setting $ran as run_program does. A compile that fails or a subsystem that is not
+# as it should be sets $aot_problem instead.
 run_aot() {
 	local lim="$1" program="$2" code=0 log
 	set -f
@@ -660,6 +677,11 @@ run_aot() {
 	set +f
 	if [ $code != 0 ]; then
 		aot_problem="the -D dotnet-aot compile failed (exit $code):"$'\n'"$log"$'\n'
+		return
+	fi
+	subsystem_problem "$casedir/c/P/$program.exe" "-D dotnet-aot"
+	if [ -n "$sproblem" ]; then
+		aot_problem="$sproblem"
 		return
 	fi
 	code=0
@@ -707,10 +729,11 @@ run_r2r() {
 	run_program "$casedir/c/P" "$lim" "$file"
 }
 
-# Compiles the case with -D dotnet-exe=$2 (and -D dotnet-r2r for an @r2r case) into d/P and runs the program $3 (no
-# suffix) hxc leaves there for at most $1 seconds, setting $ran as run_program does: a launcher where hxc wrote it,
-# with every fixture library beside it, and a self-contained program alone in d/alone, as it holds its libraries. A
-# compile that fails, or an @r2r assembly with no ReadyToRun code, sets $exe_problem instead.
+# Compiles the case with -D dotnet-exe=$2 (and -D dotnet-r2r for an @r2r case) into d/P, checks the subsystem of the
+# program $3 (no suffix) hxc leaves there and runs it for at most $1 seconds, setting $ran as run_program does: a
+# launcher where hxc wrote it, with every fixture library beside it, and a self-contained program alone in d/alone, as
+# it holds its libraries, native ones included. A compile that fails, a subsystem that is not as it should be, or an
+# @r2r assembly with no ReadyToRun code sets $exe_problem instead.
 run_exe() {
 	local lim="$1" kind="$2" program="$3" code=0 log out dir="$casedir/d/P" r2rdef=()
 	[ $r2r = 1 ] && r2rdef=(-D dotnet-r2r)
@@ -719,6 +742,11 @@ run_exe() {
 	set +f
 	if [ $code != 0 ]; then
 		exe_problem="the -D dotnet-exe=$kind compile failed (exit $code):"$'\n'"$log"$'\n'
+		return
+	fi
+	subsystem_problem "$dir/$program.exe" "-D dotnet-exe=$kind"
+	if [ -n "$sproblem" ]; then
+		exe_problem="$sproblem"
 		return
 	fi
 	if [ $r2r = 1 ]; then

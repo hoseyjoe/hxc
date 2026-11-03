@@ -82,26 +82,67 @@ class Publish {
 		return name + (Sys.systemName() == "Windows" ? ".exe" : "");
 	}
 
+	// -D dotnet-winexe: a GUI program on Windows, which opens no console window. Elsewhere the SDK ignores it.
+	static function outputType(ctx:Context):String {
+		return '    <OutputType>' + (ctx.defines.rawDefined("dotnet_winexe") ? "WinExe" : "Exe") + '</OutputType>';
+	}
+
 	// The assembly is rooted, as the runtime's reflection reaches its members by name, which the compiler can't see.
 	static function aotProject(ctx:Context, name:String, version:Int):String {
 		var items = ['    <TrimmerRootAssembly Include="' + escape(name) + '" />'];
 		var descriptor = descriptorOf(ctx);
 		if (descriptor != null) items.push('    <TrimmerRootDescriptor Include="' + escape(FileSystem.fullPath(descriptor)) + '" />');
-		return projectFile(ctx, name, version, ['    <OutputType>Exe</OutputType>', '    <PublishAot>true</PublishAot>'], items, programName(name));
+		return projectFile(ctx, name, version, [outputType(ctx), '    <PublishAot>true</PublishAot>'], items, programName(name));
 	}
 
 	// For the machine's own OS and CPU. A launcher starts the assembly beside it on the installed .NET, by hxc's
 	// runtimeconfig, so the publish writes none, nor a deps file. A self-contained program is one file that holds the
-	// assembly, the --net-lib assemblies and the runtime, with the runtimeconfig and deps file the publish writes for it.
+	// assembly, the --net-lib assemblies, their native libraries and the runtime, with the runtimeconfig and deps file
+	// the publish writes for it; the native libraries are unpacked to a folder of the user's the first time it runs.
 	static function exeProject(ctx:Context, name:String, version:Int, selfContained:Bool):String {
-		var properties = ['    <OutputType>Exe</OutputType>', "    <RuntimeIdentifier>$(NETCoreSdkPortableRuntimeIdentifier)</RuntimeIdentifier>"];
-		properties = properties.concat(selfContained ? ['    <SelfContained>true</SelfContained>', '    <PublishSingleFile>true</PublishSingleFile>'] : [
+		var properties = [outputType(ctx), "    <RuntimeIdentifier>$(NETCoreSdkPortableRuntimeIdentifier)</RuntimeIdentifier>"];
+		properties = properties.concat(selfContained ? [
+			'    <SelfContained>true</SelfContained>',
+			'    <PublishSingleFile>true</PublishSingleFile>',
+			'    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>'
+		] : [
 			'    <SelfContained>false</SelfContained>',
 			'    <UseAppHost>true</UseAppHost>',
 			'    <GenerateDependencyFile>false</GenerateDependencyFile>',
 			'    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>'
 		]);
-		return projectFile(ctx, name, version, properties, [], programName(name));
+		return projectFile(ctx, name, version, properties, [], programName(name), selfContained ? nativeLibraries(ctx) : []);
+	}
+
+	// A --net-lib assembly's native libraries, where a dotnet build leaves a NuGet package's: runtimes/<rid>/native
+	// beside it for the machine's own OS and CPU, and runtimes/<os>/native for the rest (win for win-x64, linux-musl
+	// for linux-musl-x64). Nothing tells the program to look there, so they go in the publish, as the SDK's own are.
+	static function nativeLibraries(ctx:Context):Array<String> {
+		var dirs = [];
+		for (lib in ctx.netLibs) {
+			if (lib.isStd) continue;
+			var dir = haxe.io.Path.directory(FileSystem.fullPath(lib.filePath));
+			if (dirs.indexOf(dir) < 0) dirs.push(dir);
+		}
+		if (dirs.length == 0) return [];
+		function globs(item:String, rid:String):String {
+			var files = [for (dir in dirs) for (ext in ["dll", "so", "dylib"]) escape(dir) + "/runtimes/" + rid + "/native/*." + ext];
+			return '      <' + item + ' Include="' + files.join(";") + '" />';
+		}
+		return [
+			'  <Target Name="NativeLibraries" AfterTargets="ComputeResolvedFilesToPublishList">',
+			'    <PropertyGroup>',
+			"      <NativeOs>$(RuntimeIdentifier.Substring(0, $(RuntimeIdentifier.LastIndexOf('-'))))</NativeOs>",
+			'    </PropertyGroup>',
+			'    <ItemGroup>',
+			globs("NativeRid", "$(RuntimeIdentifier)"),
+			globs("NativeOs", "$(NativeOs)"),
+			"      <NativeOs Remove=\"@(NativeOs)\" Condition=\"Exists('%(RootDir)%(Directory)../../$(RuntimeIdentifier)/native/%(Filename)%(Extension)')\" />",
+			'      <ResolvedFileToPublish Include="@(NativeRid)" RelativePath="%(Filename)%(Extension)" AssetType="native" CopyToPublishDirectory="PreserveNewest" />',
+			'      <ResolvedFileToPublish Include="@(NativeOs)" RelativePath="%(Filename)%(Extension)" AssetType="native" CopyToPublishDirectory="PreserveNewest" />',
+			'    </ItemGroup>',
+			'  </Target>'
+		];
 	}
 
 	// Framework-dependent, for the machine's own OS and CPU: elsewhere the runtime ignores the ReadyToRun code and
@@ -117,8 +158,11 @@ class Publish {
 	}
 
 	// Joined with "\n" so the file is the same whatever line endings this source was checked out with. The
-	// --net-lib assemblies are references; `published` is copied from the publish back to the output directory.
-	static function projectFile(ctx:Context, name:String, version:Int, properties:Array<String>, items:Array<String>, published:String):String {
+	// --net-lib assemblies are references; `published` is copied from the publish back to the output directory. The
+	// assembly copied into place is touched, so a target that skips work its inputs are older than (the executable's
+	// host, which -D dotnet-winexe changes) runs again when only the project has changed.
+	static function projectFile(ctx:Context, name:String, version:Int, properties:Array<String>, items:Array<String>, published:String,
+			?targets:Array<String>):String {
 		items = items.copy();
 		for (lib in ctx.netLibs) {
 			if (lib.isStd) continue;
@@ -137,10 +181,10 @@ class Publish {
 			'  </PropertyGroup>'
 		]);
 		if (items.length > 0) lines = lines.concat(['  <ItemGroup>', items.join("\n"), '  </ItemGroup>']);
-		return lines.concat([
-			'  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />',
+		return lines.concat(['  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />']).concat(targets == null ? [] : targets).concat([
 			'  <Target Name="CoreCompile">',
 			'    <Copy SourceFiles="../' + escape(name) + '.dll" DestinationFiles="@(IntermediateAssembly)" />',
+			'    <Touch Files="@(IntermediateAssembly)" />',
 			'  </Target>',
 			'  <Target Name="CopyPublished" AfterTargets="Publish">',
 			'    <Copy SourceFiles="publish/' + escape(published) + '" DestinationFolder=".." />',

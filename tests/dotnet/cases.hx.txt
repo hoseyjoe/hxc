@@ -30712,3 +30712,52 @@ class P {
 ===
 [compile]
 dotnet: -D dotnet-exe and -D dotnet-aot can't be used together: -D dotnet-aot's native program is already an executable
+# A self-contained program holds the native libraries a --net-lib assembly has beside it in runtimes/<rid>/native and,
+# for those not there, runtimes/<os>/native, as a NuGet package's are after a dotnet build; `dotnet P.dll` beside the
+# assembly alone finds neither.
+--- exe-self-contained-holds-native-libraries @exe=self-contained @netlib=NativeLib
+@:native("NativeProbe.Probe") extern class Probe {
+	static function Load(name:String):String;
+}
+class P {
+	static function main() {
+		Sys.println(Probe.Load("hxcprobe"));
+		Sys.println(Probe.Load("hxcprobeos"));
+	}
+}
+===
+[run]
+missing hxcprobe
+missing hxcprobeos
+[exe]
+loaded hxcprobe
+loaded hxcprobeos
+# -D dotnet-winexe: on Windows the executable is a GUI program, which opens no console window; run from a console, what
+# it prints still reaches the console's output.
+--- exe-launcher-winexe @exe=launcher + -D dotnet-winexe
+class P {
+	static function main() {
+		Sys.println("windowed");
+	}
+}
+===
+[run]
+windowed
+--- exe-self-contained-winexe @exe=self-contained + -D dotnet-winexe
+class P {
+	static function main() {
+		Sys.println("windowed");
+	}
+}
+===
+[run]
+windowed
+--- aot-winexe @aot + -D dotnet-winexe
+class P {
+	static function main() {
+		Sys.println("windowed");
+	}
+}
+===
+[run]
+windowed
