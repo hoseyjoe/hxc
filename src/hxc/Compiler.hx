@@ -1741,8 +1741,8 @@ class Compiler {
 			// exit 0.
 			abortOnDiagnostics(ctx, platform);
 			// After the callbacks, which can still write to the output, and only from an assembly written without errors.
-			if (dotnetWritten && ctx.defines.rawDefined("dotnet_aot")) {
-				hxc.codegen.dotnet.AotPublish.publish(ctx);
+			if (dotnetWritten && hxc.codegen.dotnet.Publish.wanted(ctx)) {
+				hxc.codegen.dotnet.Publish.publish(ctx);
 				abortOnDiagnostics(ctx, platform);
 			}
 			if (platform == Eval) {

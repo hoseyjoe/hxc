@@ -4,7 +4,7 @@
 #                       [--no-gencs-cache]
 # A case is `--- name [@lib] [@module=pack.Mod] [@dump=items] [@gencs] [@serial] [@stress-fieldlookup]
 # [@stress-arrayforward] [@runtimeconfig] [@netlib[=Name[,Name...]]] [@run-timeout=seconds] [@optimized] [@trimmed]
-# [@aot] [@dotnet-flag] [+ extra hxc args]`, its source, `===`,
+# [@aot] [@r2r] [@dotnet-flag] [+ extra hxc args]`, its source, `===`,
 # and the expected result. The source goes in the module's file; a source line `//// <path>` starts
 # another file, at <path> relative to the case directory (not in a @gencs case, whose source gencs gets
 # as one file). Each case compiles twice into a fresh directory, and its .dll must be
@@ -31,6 +31,10 @@
 # machine restores the runtime pack and ILLink from NuGet. An @aot case is compiled a third time, into c/P with
 # -D dotnet-aot, and the native program hxc leaves there must print what the program printed, or the result gets
 # an [aot] section. It needs a C++ linker, and the first @aot run on a machine restores ILCompiler from NuGet.
+# An @r2r case is compiled a third time too, into c/P with -D dotnet-r2r: the assembly hxc leaves there must hold
+# ReadyToRun code, its debug directory (with -debug) must still match its PDB as the IL one's does, and unless @lib
+# it must print what the program printed, or the result gets an [r2r] section. The first @r2r run on a machine
+# restores Crossgen2 from NuGet.
 # ILVerify's report fails a case, unless the expectation has a [verify] section holding exactly that report.
 # A @gencs case is also compiled by Haxe 4.3.7's gencs (-D no-compilation, built for net10.0 with
 # gencs.csproj.in); a run whose output differs from the hxc run adds a [gencs] section to the result,
@@ -663,11 +667,47 @@ run_aot() {
 	esac
 }
 
+# Compiles the case with -D dotnet-r2r into c/P, checks that the assembly $1 (no directory) hxc leaves there is
+# precompiled and, with -debug, still matches its PDB, and unless @lib runs it there for at most $2 seconds, setting
+# $ran as run_program does. A compile that fails or an assembly that is not as it should be sets $r2r_problem.
+run_r2r() {
+	local file="$1" lim="$2" code=0 log out want
+	set -f
+	log="$("$compiler" --cwd "$casedir_m" -cp . "${main[@]}" "$target" c/P --haxelib-global "${define[@]}" $extra "${netargs[@]}" -D dotnet-r2r 2>&1)" || code=$?
+	set +f
+	if [ $code != 0 ]; then
+		r2r_problem="the -D dotnet-r2r compile failed (exit $code):"$'
+'"$log"$'
+'
+		return
+	fi
+	paths "$casedir/c/P/$file"
+	out="$(exec dotnet "$checkdll" dump "$path_m" r2r 2>&1)"
+	if [ "$out" != "readytorun" ]; then
+		r2r_problem="the -D dotnet-r2r assembly holds no ReadyToRun code: $out"$'
+'
+		return
+	fi
+	if [ $debug = 1 ]; then
+		out="$(exec dotnet "$checkdll" dump "$path_m" debugdir 2>&1)"
+		want="$(exec dotnet "$checkdll" dump "$dll_m" debugdir 2>&1)"
+		if [ "$out" != "$want" ]; then
+			r2r_problem="the -D dotnet-r2r assembly's debug directory is not the IL one's:"$'
+'"$out"$'
+'
+			return
+		fi
+	fi
+	[ $lib = 1 ] && return
+	[ -n "$netlibs" ] && cp "$netlibdir"/*.dll "$casedir/c/P/"
+	run_program "$casedir/c/P" "$lim" "$file"
+}
+
 # Runs case $1 (tags $2, extra args $3, source $4, expected result $5) in directory $6, which must
 # not exist yet, and prints its report.
 run_case() {
 	local name="$1" tags="$2" extra="$3" source="$4" expected="$5"
-	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 trimmed=0 aot=0 limit t n netargs=()
+	local lib=0 module="P" dump="" gencs=0 serial=0 stress="" config=0 optimized=0 trimmed=0 aot=0 r2r=0 limit t n netargs=()
 	local target=--cs define=(-D dotnet)
 	for t in $tags; do
 		case "$t" in
@@ -682,6 +722,7 @@ run_case() {
 			@optimized) optimized=1 ;;
 			@trimmed) trimmed=1 ;;
 			@aot) aot=1 ;;
+			@r2r) r2r=1 ;;
 			@dotnet-flag) target=--dotnet; define=() ;;
 			@netlib | @netlib=?*) ;;
 			*) echo "$name: unknown tag $t" >&2; failed=$((failed + 1)); return ;;
@@ -710,6 +751,12 @@ run_case() {
 	if [ $aot = 1 ] && { [ $lib = 1 ] || [ $config = 1 ]; }; then
 		echo "FAIL $name"
 		echo "@aot compares the program's run with its native build's, and a @lib or @runtimeconfig case does not run"
+		failed=$((failed + 1))
+		return
+	fi
+	if [ $r2r = 1 ] && [ $config = 1 ]; then
+		echo "FAIL $name"
+		echo "@r2r compares the program's run with its precompiled build's, and a @runtimeconfig case does not run"
 		failed=$((failed + 1))
 		return
 	fi
@@ -883,6 +930,19 @@ run_case() {
 					# No [rt] expectation: gencs's is it.
 					expected="${expected}[rt]"$'\n'"$ref"$'\n'
 				fi
+			fi
+		fi
+		if [ $r2r = 1 ]; then
+			local r2r_problem="" r2rout
+			run_r2r "${dll##*/}" "$limit"
+			problem="${problem}${r2r_problem}"
+			if [ -z "$r2r_problem" ] && [ $lib = 0 ]; then
+				normalize "$ran"
+				r2rout="$norm"
+				normalize "$rout"
+				[ "$r2rout" != "$norm" ] && result="${result:+$result$'
+'}[r2r]"$'
+'"$r2rout"
 			fi
 		fi
 		local mode sout

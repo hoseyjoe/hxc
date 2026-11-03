@@ -374,6 +374,10 @@ static class Program {
 				case "debugdir":
 					DumpDebugDirectory(pe, md, path);
 					break;
+				// Whether the assembly holds ReadyToRun code beside its IL: crossgen2 writes a ManagedNativeHeader.
+				case "r2r":
+					Console.WriteLine(pe.PEHeaders.CorHeader!.ManagedNativeHeaderDirectory.Size > 0 ? "readytorun" : "il only");
+					break;
 				case "docs": {
 					var p = Pdb();
 					if (p == null) break;
