@@ -5,11 +5,12 @@ import hxc.ast.Position;
 import hxc.codegen.dotnet.GenerateDotnet.DotnetCtx;
 import hxc.context.Context;
 
-// -D dotnet-aot and -D dotnet-r2r: after the assembly is written and the after-generate callbacks have run,
-// publishes it with the .NET SDK. The project has no C# of its own: the written assembly stands in for the
+// -D dotnet-aot, -D dotnet-r2r and -D dotnet-exe: after the assembly is written and the after-generate callbacks
+// have run, publishes it with the .NET SDK. The project has no C# of its own: the written assembly stands in for the
 // compiler's output. -D dotnet-aot leaves a native program beside the assembly, which starts at hxc's entry
 // point, with its arguments and its STAThread. -D dotnet-r2r puts the assembly back in place with ReadyToRun code
-// beside its IL, so it runs and is referenced as before.
+// beside its IL, so it runs and is referenced as before. -D dotnet-exe leaves a program beside the assembly that
+// starts at the same entry point: a launcher, or one self-contained file.
 class Publish {
 	public static function check(ctx:Context, g:DotnetCtx, isDll:Bool):Void {
 		if (ctx.defines.rawDefined("dotnet_r2r")) {
@@ -17,6 +18,15 @@ class Publish {
 				g.error("-D dotnet-r2r and -D dotnet-aot can't be used together: a native program has no use for an assembly's ReadyToRun code", Position.nullPos);
 			if (ctx.defines.rawDefined("dotnet_debug_jit"))
 				g.error("-D dotnet-r2r and -D dotnet-debug-jit can't be used together: the precompiled code is optimized, which -D dotnet-debug-jit asks the JIT not to do", Position.nullPos);
+		}
+		if (ctx.defines.rawDefined("dotnet_exe")) {
+			var kind = ctx.defines.rawDefinedValueSafe("dotnet_exe");
+			if (kind != "launcher" && kind != "self-contained")
+				g.error("-D dotnet-exe must be launcher or self-contained (not " + kind + ")", Position.nullPos);
+			else if (ctx.defines.rawDefined("dotnet_aot"))
+				g.error("-D dotnet-exe and -D dotnet-aot can't be used together: -D dotnet-aot's native program is already an executable", Position.nullPos);
+			else if (isDll)
+				g.error("-D dotnet-exe needs -main: a library has no entry point for a program to start at", Position.nullPos);
 		}
 		if (!ctx.defines.rawDefined("dotnet_aot")) return;
 		if (isDll) g.error("-D dotnet-aot needs -main: a library has no entry point to start a native program at", Position.nullPos);
@@ -30,28 +40,46 @@ class Publish {
 	}
 
 	public static function wanted(ctx:Context):Bool {
-		return ctx.defines.rawDefined("dotnet_aot") || ctx.defines.rawDefined("dotnet_r2r");
+		return ctx.defines.rawDefined("dotnet_aot") || ctx.defines.rawDefined("dotnet_r2r") || ctx.defines.rawDefined("dotnet_exe");
 	}
 
+	// -D dotnet-exe comes after -D dotnet-r2r, so its program starts or holds the precompiled assembly.
 	public static function publish(ctx:Context):Void {
-		var aot = ctx.defines.rawDefined("dotnet_aot");
-		var define = aot ? "-D dotnet-aot" : "-D dotnet-r2r";
-		var kind = aot ? "aot" : "r2r";
 		var dir = GenerateDotnet.outputDir(ctx);
+		var name = GenerateDotnet.assemblyName(ctx, dir), version = NetSetup.dotnetVersion(ctx);
+		if (ctx.defines.rawDefined("dotnet_aot")) {
+			publishProject(ctx, dir, "aot", "-D dotnet-aot", aotProject(ctx, name, version));
+			return;
+		}
+		if (ctx.defines.rawDefined("dotnet_r2r") && !publishProject(ctx, dir, "r2r", "-D dotnet-r2r", r2rProject(ctx, name, version))) return;
+		if (ctx.defines.rawDefined("dotnet_exe")) {
+			var kind = ctx.defines.rawDefinedValueSafe("dotnet_exe");
+			publishProject(ctx, dir, "exe", "-D dotnet-exe=" + kind, exeProject(ctx, name, version, kind == "self-contained"));
+		}
+	}
+
+	// Writes the project to <dir>/<kind> and publishes it, false if that fails.
+	static function publishProject(ctx:Context, dir:String, kind:String, define:String, content:String):Bool {
 		var project = FileSystem.fullPath(dir + "/" + kind);
 		FileSystem.createDirectory(project);
-		var name = GenerateDotnet.assemblyName(ctx, dir), version = NetSetup.dotnetVersion(ctx);
 		var file = project + "/" + kind + ".csproj";
-		sys.io.File.saveContent(file, aot ? aotProject(ctx, name, version) : r2rProject(ctx, name, version));
+		sys.io.File.saveContent(file, content);
 		var log = project + "/publish.log";
 		var result = run(["publish", file, "-c", "Release", "-nologo", "-v:q", "-nodeReuse:false"]);
 		if (result == null) {
 			ctx.addDiagnostic("dotnet: " + define + " needs the .NET SDK, and `dotnet` could not be started", Position.nullPos);
-			return;
+			return false;
 		}
 		sys.io.File.saveContent(log, result.output);
-		if (result.code != 0)
+		if (result.code != 0) {
 			ctx.addDiagnostic("dotnet: " + define + ": the publish failed (the whole report is in " + log + ")\n" + errorLines(result.output), Position.nullPos);
+			return false;
+		}
+		return true;
+	}
+
+	static function programName(name:String):String {
+		return name + (Sys.systemName() == "Windows" ? ".exe" : "");
 	}
 
 	// The assembly is rooted, as the runtime's reflection reaches its members by name, which the compiler can't see.
@@ -59,8 +87,21 @@ class Publish {
 		var items = ['    <TrimmerRootAssembly Include="' + escape(name) + '" />'];
 		var descriptor = descriptorOf(ctx);
 		if (descriptor != null) items.push('    <TrimmerRootDescriptor Include="' + escape(FileSystem.fullPath(descriptor)) + '" />');
-		var program = name + (Sys.systemName() == "Windows" ? ".exe" : "");
-		return projectFile(ctx, name, version, ['    <OutputType>Exe</OutputType>', '    <PublishAot>true</PublishAot>'], items, program);
+		return projectFile(ctx, name, version, ['    <OutputType>Exe</OutputType>', '    <PublishAot>true</PublishAot>'], items, programName(name));
+	}
+
+	// For the machine's own OS and CPU. A launcher starts the assembly beside it on the installed .NET, by hxc's
+	// runtimeconfig, so the publish writes none, nor a deps file. A self-contained program is one file that holds the
+	// assembly, the --net-lib assemblies and the runtime, with the runtimeconfig and deps file the publish writes for it.
+	static function exeProject(ctx:Context, name:String, version:Int, selfContained:Bool):String {
+		var properties = ['    <OutputType>Exe</OutputType>', "    <RuntimeIdentifier>$(NETCoreSdkPortableRuntimeIdentifier)</RuntimeIdentifier>"];
+		properties = properties.concat(selfContained ? ['    <SelfContained>true</SelfContained>', '    <PublishSingleFile>true</PublishSingleFile>'] : [
+			'    <SelfContained>false</SelfContained>',
+			'    <UseAppHost>true</UseAppHost>',
+			'    <GenerateDependencyFile>false</GenerateDependencyFile>',
+			'    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>'
+		]);
+		return projectFile(ctx, name, version, properties, [], programName(name));
 	}
 
 	// Framework-dependent, for the machine's own OS and CPU: elsewhere the runtime ignores the ReadyToRun code and
