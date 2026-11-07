@@ -20117,6 +20117,28 @@ class P {
 ===
 [compile]
 P.hx:8: characters 11-24 : dotnet: no referenced assembly defines the .NET type Nope.Missing
+# A generator error ends the compile before the onAfterGenerate hooks, as a Haxe generator's error does: a hook
+# that packages the output (an Android project around the assembly) would build from a file never written.
+--- after-generate-hooks-skip-a-failed-output + --macro M.hook()
+@:native("Nope.Missing") extern class Missing {
+	function new():Void;
+}
+
+class P {
+	static function main() {
+		var m = new Missing();
+		trace(m != null);
+	}
+}
+//// M.hx
+class M {
+	public static function hook() {
+		haxe.macro.Context.onAfterGenerate(() -> Sys.println("the hook ran"));
+	}
+}
+===
+[compile]
+P.hx:7: characters 11-24 : dotnet: no referenced assembly defines the .NET type Nope.Missing
 # The reference pack missing when a type needs it: no .NET 99 SDK is installed (not 11, which a machine
 # may have). The extern is netlib-framework-extern's.
 --- netlib-framework-extern-no-pack + -D dotnet-version=99
