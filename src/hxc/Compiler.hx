@@ -1734,6 +1734,11 @@ class Compiler {
 					}
 				}
 			}
+			// Haxe runs the after-generation callbacks only on output that was written: a generator error
+			// aborts its compile first. Here the generators report and carry on, so the abort is made here;
+			// otherwise a callback that packages the output (haxeui-cs's Android project, around the
+			// --dotnet assembly) builds from a file that was never written.
+			abortOnDiagnostics(ctx, platform);
 			hxc.eval.EvalMacro.runAfterGenerateCallbacks();
 			// A generator error (a printed error during generation, e.g. a bad @:native code placeholder)
 			// fails
